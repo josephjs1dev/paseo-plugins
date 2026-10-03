@@ -1,0 +1,39 @@
+model_context_window = 512000
+model_auto_compact_token_limit = 480000
+
+# Allow empty write_stdin polls to wait up to 10 minutes (milliseconds).
+# This raises the wait ceiling; it does not prescribe a polling interval.
+background_terminal_max_timeout = 600000
+
+# Auto-run work inside the project sandbox; ask before other capabilities.
+approval_policy = "on-request"
+default_permissions = "project-only"
+allow_login_shell = false
+
+sandbox_mode = "workspace-write"
+[permissions.project-only]
+description = "Write only inside the active workspace and system temp directories."
+extends = ":workspace"
+
+[permissions.project-only.filesystem.":workspace_roots"]
+".git" = "write"
+
+[permissions.project-only.network]
+enabled = true
+
+[permissions.project-only.network.domains]
+"github.com" = "allow"
+
+[shell_environment_policy]
+inherit = "core"
+ignore_default_excludes = false
+
+[sandbox_workspace_write]
+network_access = true
+
+# Set the subagent wait window to 25 minutes; updates can end a wait early.
+[features.multi_agent_v2]
+enabled = true
+min_wait_timeout_ms = 1500000
+default_wait_timeout_ms = 1500000
+max_wait_timeout_ms = 1500000

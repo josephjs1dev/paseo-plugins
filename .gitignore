@@ -1,0 +1,20 @@
+# Dependencies and generated output
+node_modules/
+dist/
+coverage/
+*.tsbuildinfo
+
+# Local files and setup backups
+.DS_Store
+.artifacts/
+.mcp/
+*.backup.*
+
+# Secrets and credentials
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+credentials*.json
+secrets.yaml

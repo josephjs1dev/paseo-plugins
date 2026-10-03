@@ -1,0 +1,90 @@
+import { defineRpc } from "@getpaseo/plugin";
+import { z } from "zod";
+import { providerSchema } from "./usage";
+
+const count = z.number().finite().nonnegative();
+
+export const totalsSchema = z.object({
+  input: count,
+  cached: count,
+  output: count,
+  reasoning: count,
+  // Recorded model-cost estimate in USD, not a subscription charge.
+  cost: count.nullable(),
+});
+
+export type Totals = z.infer<typeof totalsSchema>;
+
+export const historyRowSchema = z.object({
+  provider: providerSchema,
+  sessionId: z.string().max(160),
+  model: z.string().max(160).nullable().optional(),
+  cwd: z.string().max(4096),
+  day: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+  lastAt: z.string().datetime(),
+  totals: totalsSchema,
+});
+
+export type HistoryRow = z.infer<typeof historyRowSchema>;
+
+export const historyScopeSchema = z.enum(["workspace", "host"]);
+export type HistoryScope = z.infer<typeof historyScopeSchema>;
+
+const modelSummarySchema = z.object({
+  model: z.string().nullable(),
+  totals: totalsSchema,
+  sessionCount: count.int(),
+});
+
+const sessionSummarySchema = z.object({
+  sessionId: z.string(),
+  cwd: z.string().max(4096),
+  lastAt: z.string(),
+  totals: totalsSchema,
+  models: z.array(
+    z.object({ model: z.string().nullable(), totals: totalsSchema }),
+  ),
+});
+
+export const readHistory = defineRpc({
+  name: "usage.history",
+  input: z.object({
+    provider: providerSchema,
+    workspaceId: z.string().min(1).max(160),
+    days: z.union([z.literal(7), z.literal(30), z.literal(90)]),
+    scope: historyScopeSchema.default("workspace"),
+    sessionOffset: z.number().int().min(0).max(100_000).default(0),
+  }),
+  output: z.object({
+    scannedAt: z.string().datetime().nullable(),
+    warning: z.string().max(400),
+    periodEnd: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+    daily: z.array(z.object({ day: z.string(), totals: totalsSchema })).max(90),
+    workspaceDaily: z
+      .array(z.object({ day: z.string(), totals: totalsSchema }))
+      .max(90),
+    workspaceTotals: totalsSchema,
+    workspaceSessionCount: count,
+    workspaceModels: z.array(modelSummarySchema),
+    sessionCount: count.int(),
+    models: z.array(modelSummarySchema),
+    sessions: z.array(sessionSummarySchema).max(20),
+    totals: totalsSchema,
+  }),
+});
+
+export type History = z.infer<typeof readHistory.output>;
+
+export function addTotals(a: Totals, b: Totals): Totals {
+  return {
+    input: a.input + b.input,
+    cached: a.cached + b.cached,
+    output: a.output + b.output,
+    reasoning: a.reasoning + b.reasoning,
+    cost: a.cost === null || b.cost === null ? null : a.cost + b.cost,
+  };
+}
+
+export function emptyTotals(): Totals {
+  return { input: 0, cached: 0, output: 0, reasoning: 0, cost: 0 };
+}

@@ -1,0 +1,32 @@
+{
+  "name": "essentials",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Everyday tools for Paseo",
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "tsx --test tests/**/*.test.ts",
+    "lint": "eslint .",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "check": "npm run typecheck && npm run lint && npm run format:check && npm test",
+    "lint:fix": "eslint . --fix"
+  },
+  "devDependencies": {
+    "@getpaseo/client": "0.9.2",
+    "@getpaseo/plugin": "0.9.2",
+    "@getpaseo/protocol": "0.9.2",
+    "@tanstack/react-query": "5.90.21",
+    "@types/node": "22.19.15",
+    "@types/react": "19.1.17",
+    "eslint": "9.39.1",
+    "prettier": "3.6.2",
+    "react": "19.1.0",
+    "react-native": "0.81.5",
+    "tsx": "4.21.0",
+    "typescript": "5.9.3",
+    "typescript-eslint": "8.48.1",
+    "zod": "4.4.3"
+  }
+}

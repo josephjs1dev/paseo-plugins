@@ -1,0 +1,2 @@
+# Intentionally empty: command-prefix allow rules cannot enforce path scope.
+# Local Git writes are scoped by the project-only profile in ../config.toml.
