@@ -9,10 +9,11 @@ import {
   type Provider,
 } from "../shared/providers";
 import { readUsage, type Usage } from "../shared/usage";
+import { creditBalanceLabel } from "../shared/usage-display";
 import { CodexReset } from "./codex-reset";
 import { QuotaWindow } from "./quota-window";
 import { ProviderLogo } from "./provider-logo";
-import { HistoryAction } from "./history-controls";
+import { HistoryAction, HistoryValue } from "./history-controls";
 
 type UsagePopoverProps = PluginButtonContentProps & {
   initialProvider: Provider;
@@ -154,13 +155,20 @@ function UsageDetails(props: UsagePopoverProps & { provider: Provider }) {
         <QuotaWindow key={quota.name + index} quota={quota} theme={theme} />
       ))}
       {provider === "codex" && usage && (
-        <CodexReset
-          theme={theme}
-          host={host}
-          layout={props.layout}
-          usage={usage}
-          onUsageChange={props.onUsageChange}
-        />
+        <View style={{ gap: 16 }}>
+          <HistoryValue
+            theme={theme}
+            label="Credit balance"
+            value={creditBalanceLabel(usage.credits)}
+          />
+          <CodexReset
+            theme={theme}
+            host={host}
+            layout={props.layout}
+            usage={usage}
+            onUsageChange={props.onUsageChange}
+          />
+        </View>
       )}
       <View
         style={{

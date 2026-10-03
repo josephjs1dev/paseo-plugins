@@ -1,3 +1,25 @@
+import type { Usage } from "./usage";
+
+export function creditBalanceLabel(credits: Usage["credits"]): string {
+  if (!credits) {
+    return "Unavailable";
+  }
+
+  if (credits.unlimited) {
+    return "Unlimited";
+  }
+
+  if (credits.balance !== null) {
+    return new Intl.NumberFormat(undefined, {
+      maximumFractionDigits: 6,
+    }).format(credits.balance);
+  }
+
+  return credits.hasCredits
+    ? "Available · balance unavailable"
+    : "No credits available";
+}
+
 export function remainingPercent(usedPercent: number): number {
   return Math.max(0, Math.min(100, 100 - usedPercent));
 }

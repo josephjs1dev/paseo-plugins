@@ -18,7 +18,7 @@ export default function contribute(server: PluginServerContext) {
   server.handle(
     readHistory,
     async (
-      { provider, workspaceId, days, sessionOffset, scope },
+      { provider, workspaceId, days, sessionOffset, scope, refresh },
       { paseo },
     ) => {
       const workspace = await paseo.workspaces.ref(workspaceId).refresh();
@@ -34,6 +34,7 @@ export default function contribute(server: PluginServerContext) {
           days,
           sessionOffset,
           scope,
+          refresh ?? false,
         );
       } catch {
         throw new Error(
@@ -43,9 +44,9 @@ export default function contribute(server: PluginServerContext) {
     },
   );
 
-  return () => {
+  return async () => {
     resetter.close();
     reader.close();
-    history.close();
+    await history.close();
   };
 }

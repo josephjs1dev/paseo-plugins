@@ -1,4 +1,33 @@
-import { addTotals, emptyTotals, type Totals } from "./history";
+import {
+  addTotals,
+  emptyTotals,
+  type CreditEstimate,
+  type Totals,
+} from "./history";
+
+export function formatCredits(amount: number | null | undefined): string {
+  if (amount == null) {
+    return "Unavailable";
+  }
+
+  if (amount > 0 && amount < 0.0001) {
+    return "< 0.0001";
+  }
+
+  return new Intl.NumberFormat(undefined, { maximumFractionDigits: 4 }).format(
+    amount,
+  );
+}
+
+export function formatCreditEstimate(
+  estimate: CreditEstimate | undefined,
+): string {
+  const amount = formatCredits(estimate?.amount);
+
+  return estimate?.amount != null && estimate.unpricedTokens > 0
+    ? amount + " (partial)"
+    : amount;
+}
 
 export const totalTokens = (totals: Totals) => totals.input + totals.output;
 export const exactTokens = (value: number) => value.toLocaleString();

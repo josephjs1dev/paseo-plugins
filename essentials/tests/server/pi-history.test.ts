@@ -170,6 +170,7 @@ test("rescanning Pi backfills cached null costs and combines estimates with nati
       join(logDirectory, "one.jsonl"),
       entries.map((entry) => JSON.stringify(entry)).join("\n"),
     );
+    await store.refresh();
     const result = await store.read("opencode-go", "/workspace", 7);
     assert.equal(result.warning, "");
     assert.equal(result.sessionCount, 2);
@@ -188,7 +189,7 @@ test("rescanning Pi backfills cached null costs and combines estimates with nati
         .cost,
       0.5,
     );
-    store.close();
+    await store.close();
     const reloaded = createHistoryStore(cacheDirectory, async () => []);
 
     try {
@@ -196,10 +197,10 @@ test("rescanning Pi backfills cached null costs and combines estimates with nati
       assert.deepEqual(saved.totals, result.totals);
       assert.equal(saved.sessionCount, 2);
     } finally {
-      reloaded.close();
+      await reloaded.close();
     }
   } finally {
-    store.close();
+    await store.close();
     await rm(directory, { recursive: true, force: true });
   }
 });
@@ -226,7 +227,7 @@ test("provider histories share a Pi scan and retain separate native and Pi sessi
     assert.equal(codex.workspaceSessionCount, 2);
     assert.equal(go.workspaceSessionCount, 2);
     assert.equal(codex.totals.input, 34);
-    store.close();
+    await store.close();
     const reloaded = createHistoryStore(
       directory,
       createLocalHistoryCollector(
@@ -241,10 +242,10 @@ test("provider histories share a Pi scan and retain separate native and Pi sessi
         34,
       );
     } finally {
-      reloaded.close();
+      await reloaded.close();
     }
   } finally {
-    store.close();
+    await store.close();
     await rm(directory, { recursive: true, force: true });
   }
 });
@@ -257,7 +258,7 @@ test("a failed native collector preserves its cached usage while importing fresh
 
   try {
     await initial.read("codex", "/workspace", 7);
-    initial.close();
+    await initial.close();
     const store = createHistoryStore(
       directory,
       createLocalHistoryCollector(
@@ -269,16 +270,17 @@ test("a failed native collector preserves its cached usage while importing fresh
     );
 
     try {
+      await store.refresh();
       const result = await store.read("codex", "/workspace", 7);
       assert.equal(result.workspaceSessionCount, 2);
       assert.equal(result.totals.input, 34);
       assert.match(result.warning, /previously stored/);
       assert.equal(result.warning.includes("private failure"), false);
     } finally {
-      store.close();
+      await store.close();
     }
   } finally {
-    initial.close();
+    await initial.close();
     await rm(directory, { recursive: true, force: true });
   }
 });

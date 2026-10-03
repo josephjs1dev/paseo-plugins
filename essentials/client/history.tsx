@@ -5,8 +5,7 @@ import { Pressable, Text, View } from "react-native";
 import type { History, Totals } from "../shared/history";
 import {
   compactTokens,
-  exactTokens,
-  formatCost,
+  formatCreditEstimate,
   totalTokens,
 } from "../shared/history-display";
 import {
@@ -15,149 +14,9 @@ import {
   HistoryValue,
 } from "./history-controls";
 
+import { TokenDetails } from "./history-totals";
+
 type Themed = Pick<PluginHostProps, "theme">;
-
-function TokenDetails({ theme, totals }: Themed & { totals: Totals }) {
-  const cachedShare =
-    totals.input > 0 ? ((100 * totals.cached) / totals.input).toFixed(1) : "0";
-
-  return (
-    <View style={{ gap: 4 }}>
-      <HistoryValue
-        theme={theme}
-        label="Input"
-        value={exactTokens(totals.input)}
-      />
-      <HistoryValue
-        theme={theme}
-        nested
-        label={"Cached · " + cachedShare + "% of input"}
-        value={exactTokens(totals.cached)}
-      />
-      <HistoryValue
-        theme={theme}
-        label="Output"
-        value={exactTokens(totals.output)}
-      />
-      <HistoryValue
-        theme={theme}
-        nested
-        label="Reasoning · included in output"
-        value={exactTokens(totals.reasoning)}
-      />
-      <HistoryValue
-        theme={theme}
-        label="Total tokens"
-        value={exactTokens(totalTokens(totals))}
-      />
-      {totals.cost !== null && (
-        <HistoryValue
-          theme={theme}
-          label="Estimated cost"
-          value={formatCost(totals.cost)}
-        />
-      )}
-    </View>
-  );
-}
-
-export function TokenBreakdown({ theme, totals }: Themed & { totals: Totals }) {
-  const [expanded, setExpanded] = useState(false);
-
-  return (
-    <View style={{ gap: expanded ? 12 : 0 }}>
-      <Pressable
-        accessibilityRole="button"
-        accessibilityState={{ expanded }}
-        onPress={() => setExpanded(!expanded)}
-        style={{
-          minHeight: 40,
-          flexDirection: "row",
-          alignItems: "center",
-          gap: 6,
-        }}
-      >
-        <Icon
-          name={expanded ? "ChevronDown" : "ChevronRight"}
-          size={14}
-          color={theme.colors.foregroundMuted}
-        />
-        <Text
-          style={{
-            color: theme.colors.foregroundMuted,
-            fontSize: 12,
-            lineHeight: 18,
-          }}
-        >
-          Exact token counts
-        </Text>
-      </Pressable>
-      {expanded && <TokenDetails theme={theme} totals={totals} />}
-    </View>
-  );
-}
-
-export function UsageSummary({
-  theme,
-  totals,
-  compact,
-}: Themed & { totals: Totals; compact: boolean }) {
-  const stats = [
-    { label: "Total tokens", value: totalTokens(totals) },
-    { label: "Input", value: totals.input },
-    { label: "Output", value: totals.output },
-  ];
-
-  return (
-    <View
-      style={{
-        backgroundColor: theme.colors.surface1,
-        borderRadius: 10,
-        padding: compact ? 16 : 24,
-      }}
-    >
-      <View
-        style={{
-          flexDirection: "row",
-          flexWrap: "wrap",
-          gap: compact ? 16 : 32,
-        }}
-      >
-        {stats.map(({ label, value }, index) => (
-          <View
-            key={label}
-            style={{ flex: 1, minWidth: compact ? 72 : 120, gap: 6 }}
-          >
-            <Text
-              style={{
-                color: theme.colors.foregroundMuted,
-                fontSize: 12,
-                lineHeight: 18,
-              }}
-            >
-              {label}
-            </Text>
-            <Text
-              selectable
-              style={{
-                color: theme.colors.foreground,
-                fontSize: compact ? 22 : 30,
-                lineHeight: compact ? 30 : 38,
-                fontWeight: index === 0 ? "600" : "400",
-                fontVariant: ["tabular-nums"],
-              }}
-            >
-              {compactTokens(value)}
-            </Text>
-          </View>
-        ))}
-      </View>
-      <View style={{ marginTop: 12 }}>
-        <TokenBreakdown theme={theme} totals={totals} />
-      </View>
-    </View>
-  );
-}
 
 function ModelRow({
   theme,
@@ -165,11 +24,13 @@ function ModelRow({
   totals,
   compact,
   sessionCount,
+  showCredits,
 }: Themed & {
   model: string | null;
   totals: Totals;
   compact: boolean;
   sessionCount?: number;
+  showCredits: boolean;
 }) {
   const [expanded, setExpanded] = useState(false);
   const name = model ?? "Unknown model";
@@ -222,6 +83,11 @@ function ModelRow({
         <Text style={{ ...numberStyle, fontWeight: "600" }}>
           {compactTokens(totalTokens(totals))}
         </Text>
+        {showCredits && (
+          <Text style={numberStyle}>
+            {formatCreditEstimate(totals.creditEstimate)}
+          </Text>
+        )}
         <Icon
           name={expanded ? "ChevronDown" : "ChevronRight"}
           size={14}
@@ -268,6 +134,9 @@ export function ModelUsage({
     width: 88,
     textAlign: "right" as const,
   };
+  const showCredits = models.some(
+    (entry) => entry.totals.creditEstimate !== undefined,
+  );
 
   return (
     <View>
@@ -291,6 +160,7 @@ export function ModelUsage({
           </>
         )}
         <Text style={labelStyle}>Tokens</Text>
+        {showCredits && <Text style={labelStyle}>Est. credits</Text>}
       </View>
       {models.map((entry) => (
         <ModelRow
@@ -298,6 +168,7 @@ export function ModelUsage({
           theme={theme}
           {...entry}
           compact={compact}
+          showCredits={showCredits}
         />
       ))}
       {models.length === 0 && (

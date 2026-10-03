@@ -3,12 +3,18 @@ import { join } from "node:path";
 import { z } from "zod";
 
 import { historyRowSchema } from "../shared/history";
+import { providerSchema } from "../shared/providers";
 
 const MAX_HISTORY_BYTES = 32 * 1024 * 1024;
 const savedHistorySchema = z.object({
   version: z.literal(1),
   scannedAt: z.string().datetime(),
   rows: z.array(historyRowSchema).max(100_000),
+  updatedThrough: z.string().datetime().optional(),
+  warningProviders: z.array(providerSchema).max(2).optional(),
+  backfillWarnings: z
+    .partialRecord(providerSchema, z.string().datetime())
+    .optional(),
 });
 
 export type SavedHistory = z.infer<typeof savedHistorySchema>;
@@ -46,6 +52,7 @@ export async function readSavedHistory(
 export async function writeSavedHistory(
   directory: string,
   history: SavedHistory,
+  signal?: AbortSignal,
 ): Promise<void> {
   const validated = savedHistorySchema.parse(history);
   const path = join(directory, "history.json");
@@ -54,7 +61,15 @@ export async function writeSavedHistory(
     `history-${process.pid}-${Date.now()}.tmp`,
   );
 
+  function checkCancelled() {
+    if (signal?.aborted) {
+      throw new Error("Cancelled");
+    }
+  }
+
+  checkCancelled();
   await mkdir(directory, { recursive: true, mode: 0o700 });
+  checkCancelled();
 
   if ((await lstat(directory)).isSymbolicLink()) {
     throw new Error("Storage directory must not be a symlink");
@@ -70,6 +85,7 @@ export async function writeSavedHistory(
       await file.close();
     }
 
+    checkCancelled();
     await rename(temporaryPath, path);
   } finally {
     await rm(temporaryPath, { force: true });

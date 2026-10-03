@@ -2,7 +2,11 @@ import { spawn } from "node:child_process";
 import { homedir } from "node:os";
 import { join } from "node:path";
 
-import { normalizeCodex, normalizeCodexResetCredits } from "../../shared/quota";
+import {
+  normalizeCodex,
+  normalizeCodexCredits,
+  normalizeCodexResetCredits,
+} from "../../shared/quota";
 import {
   resetAttemptSchema,
   resetResponseSchema,
@@ -18,18 +22,24 @@ export const codexAdapter: ProviderAdapter = {
 
     return {
       windows: normalizeCodex(response),
+      credits: normalizeCodexCredits(response),
       resetCredits: normalizeCodexResetCredits(response),
     };
   },
 
-  readHistory(since, signal) {
+  readHistory(since, signal, modifiedSince) {
     const root = process.env.CODEX_HOME ?? join(homedir(), ".codex");
     const directories = [
       join(root, "sessions"),
       join(root, "archived_sessions"),
     ];
 
-    return collectCodex(directories, since, signal);
+    return collectCodex(
+      directories,
+      since,
+      signal,
+      modifiedSince === undefined ? undefined : { modifiedSince },
+    );
   },
 
   describeError() {

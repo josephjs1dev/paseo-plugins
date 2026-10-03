@@ -22,7 +22,11 @@ export function createUsageReader(
     try {
       const quota = await fetchQuota(provider, controller.signal);
 
-      if (!quota.windows.length && quota.resetCredits == null) {
+      if (
+        !quota.windows.length &&
+        quota.resetCredits == null &&
+        quota.credits == null
+      ) {
         throw new Error("No quota windows");
       }
 

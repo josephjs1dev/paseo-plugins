@@ -3,6 +3,7 @@ import { test } from "node:test";
 
 import {
   normalizeCodex,
+  normalizeCodexCredits,
   normalizeCodexResetCredits,
   normalizeGo,
 } from "../../shared/quota";
@@ -18,6 +19,86 @@ const goWindow = {
   percent: 42,
   resetsAt: "2027-01-15T08:00:00Z",
 };
+
+test("Codex credit balances preserve zero, fractions, unlimited, and unavailable states", () => {
+  const credits = { hasCredits: true, unlimited: false, balance: "2500.5" };
+  assert.deepEqual(normalizeCodexCredits({ rateLimits: { credits } }), {
+    ...credits,
+    balance: 2500.5,
+  });
+  assert.deepEqual(
+    normalizeCodexCredits({
+      rateLimits: { credits: { ...credits, hasCredits: false, balance: "0" } },
+    }),
+    { ...credits, hasCredits: false, balance: 0 },
+  );
+  assert.deepEqual(
+    normalizeCodexCredits({
+      rateLimits: { credits: { ...credits, unlimited: true, balance: null } },
+    }),
+    { ...credits, unlimited: true, balance: null },
+  );
+  assert.deepEqual(
+    normalizeCodexCredits({
+      rateLimits: { credits: { ...credits, balance: null } },
+    }),
+    { ...credits, balance: null },
+  );
+  assert.equal(normalizeCodexCredits({}), null);
+  assert.equal(normalizeCodexCredits({ rateLimits: { credits: null } }), null);
+});
+
+test("Codex credit lookup selects the Codex bucket and ignores unrelated limits", () => {
+  const credits = { hasCredits: true, unlimited: false, balance: "100" };
+  assert.equal(
+    normalizeCodexCredits({ rateLimitsByLimitId: { other: { credits } } }),
+    null,
+  );
+  assert.deepEqual(
+    normalizeCodexCredits({
+      rateLimits: { credits: { ...credits, balance: "999" } },
+      rateLimitsByLimitId: { codex: { credits } },
+    }),
+    { ...credits, balance: 100 },
+  );
+  assert.equal(
+    normalizeCodexCredits({
+      rateLimits: { credits },
+      rateLimitsByLimitId: { codex: { credits: null } },
+    }),
+    null,
+  );
+});
+
+test("malformed optional credit metadata does not discard valid quota windows", () => {
+  for (const balance of [
+    "",
+    "-1",
+    "NaN",
+    "Infinity",
+    "abc",
+    42,
+    "9".repeat(81),
+  ]) {
+    const response = {
+      rateLimits: {
+        primary: codexWindow,
+        credits: { hasCredits: true, unlimited: false, balance },
+      },
+    };
+    assert.equal(normalizeCodexCredits(response), null);
+    assert.equal(normalizeCodex(response)[0]?.usedPercent, 25);
+  }
+
+  assert.equal(
+    normalizeCodexCredits({
+      rateLimits: {
+        credits: { hasCredits: "true", unlimited: false, balance: "1" },
+      },
+    }),
+    null,
+  );
+});
 
 test("Codex reset counts distinguish unsupported, zero, and truncated credit details", () => {
   assert.equal(normalizeCodexResetCredits({}), null);

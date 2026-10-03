@@ -22,11 +22,51 @@ History is collected locally on each daemon. The normalized history cache stores
 usage metadata without prompts, responses, or credentials. Missing quota or cost
 information is shown as unavailable. Recorded costs are estimates in USD.
 
+Codex history also shows **Estimated credits** in the daily chart, summary,
+model rows, and session details. Estimates use the recorded model, uncached
+input, cached input, and output (including reasoning) at published Standard
+credit rates checked on **2026-10-03**. This is a model-usage estimate; speed,
+included plan allowances, discounts, and actual billing adjustments are excluded.
+Unknown models, including `codex-auto-review`, remain unpriced. Combined estimates
+show **partial** and the share of tokens priced when only some models have rates.
+Known zero estimates remain zero; entirely unpriced usage shows **Unavailable**.
+Existing model-aware cached history gets estimates without needing its source
+logs again. Recorded USD costs remain separate, and credit estimates are derived
+on read so a rate-card update does not overwrite recorded history.
+See [OpenAI's Codex credit rates](https://learn.chatgpt.com/docs/pricing#token-rates).
+
 ## Requirements and installation
 
 Follow the [installation guide](../README.md#install-paseo-essentials).
 Requires Paseo daemon and app **0.9.2+**, and Node **22.13+** for OpenCode SQLite
 history.
+
+Usage history shows one vertical bar per UTC day for 7 or 30 days. Hovering,
+keyboard focus, or tapping a bar shows that day's total; storage still retains
+90 days. Codex history reads both plain `.jsonl` and compressed `.jsonl.zst`
+logs from `CODEX_HOME/sessions` and `archived_sessions`, using the default
+`~/.codex` when `CODEX_HOME` is unset. Reading compressed logs requires Node
+22.15+ on the daemon; older runtimes report an incomplete scan instead of
+silently skipping those files. Source logs are never decompressed on disk.
+Codex scans process recent logs first and keep completed imports if a scan
+limit or unreadable file prevents a full refresh. Unscanned history stays in
+the 90-day cache, and the usage view reports that history may be incomplete.
+
+Usage views show cached results immediately and refresh behind the current view.
+The client keeps each host/workspace/provider/period/scope selection cached for
+24 hours after closing it. Saved daemon history survives plugin reloads; a first
+scan is awaited only when there is no saved history. Stale scans run in the
+background at most every five minutes, with one shared scan across views. Refresh
+forces a background check, and the open view polls briefly until it finishes.
+
+After a recent successful scan, collectors select sessions updated within the
+last day. After a longer gap or failed scan, the update window stretches back to
+the last successful checkpoint so usage is not skipped. Each selected JSONL log
+is still read for its full retained snapshot; OpenCode rereads every retained
+message in a touched session, including when only an older message was updated.
+These snapshots replace their previous daily totals, keeping unrelated cached
+history and avoiding partial-day losses or double counting. Incomplete first
+scans establish recent coverage separately and keep their older-backlog warning.
 
 For quota lookup, configure accounts on the daemon machine:
 

@@ -1,5 +1,5 @@
 import { z } from "zod";
-import type { Usage } from "./usage";
+import { creditsSchema, type Usage } from "./usage";
 
 const windowSchema = z.object({
   usedPercent: z.number().finite().nonnegative(),
@@ -21,6 +21,41 @@ const codexSchema = z.object({
   rateLimits: bucketSchema.nullable().optional(),
   rateLimitsByLimitId: z.record(z.string().max(100), bucketSchema).optional(),
 });
+
+const creditSnapshotSchema = z.object({
+  hasCredits: z.boolean(),
+  unlimited: z.boolean(),
+  balance: z
+    .string()
+    .max(80)
+    .regex(/^\d+(?:\.\d+)?$/)
+    .transform(Number)
+    .pipe(z.number().finite().nonnegative())
+    .nullable(),
+});
+
+/** Credit metadata is optional; malformed details must not hide valid quota windows. */
+export function normalizeCodexCredits(input: unknown): Usage["credits"] {
+  const creditBucket = z.object({ credits: z.unknown().optional() });
+  const response = z
+    .object({
+      rateLimits: creditBucket.nullish(),
+      rateLimitsByLimitId: z.record(z.string(), creditBucket).optional(),
+    })
+    .safeParse(input);
+
+  if (!response.success) {
+    return null;
+  }
+
+  const { rateLimits, rateLimitsByLimitId } = response.data;
+  const bucket = rateLimitsByLimitId?.codex ?? rateLimits;
+  const parsed = creditSnapshotSchema
+    .pipe(creditsSchema)
+    .safeParse(bucket?.credits);
+
+  return parsed.success ? parsed.data : null;
+}
 
 export function normalizeCodexResetCredits(
   input: unknown,

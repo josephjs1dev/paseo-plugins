@@ -10,12 +10,17 @@ import {
   providerIds,
   type Provider,
 } from "../shared/providers";
-import { compactTokens, totalTokens } from "../shared/history-display";
+import {
+  compactTokens,
+  formatCreditEstimate,
+  totalTokens,
+} from "../shared/history-display";
 import {
   HistoryAction,
   HistoryChoice,
   HistoryOptions,
   HistorySection,
+  HistoryValue,
 } from "./history-controls";
 import { ModelUsage, SessionUsage } from "./history";
 import { useHistoryQuery } from "./history-query";
@@ -118,7 +123,7 @@ export function WorkspaceUsage({
         <HistoryAction
           theme={theme}
           onPress={() => {
-            void query.refetch();
+            void query.refresh();
           }}
         >
           Usage unavailable · retry
@@ -130,7 +135,7 @@ export function WorkspaceUsage({
             <Text
               style={{ color: colors.foreground, fontSize: 13, lineHeight: 20 }}
             >
-              History may be incomplete. Showing saved usage.
+              History may be incomplete. Showing available and saved usage.
             </Text>
           )}
           <View
@@ -171,6 +176,15 @@ export function WorkspaceUsage({
             >
               {data.workspaceSessionCount} sessions
             </Text>
+            {provider === "codex" && (
+              <HistoryValue
+                theme={theme}
+                label="Estimated credits"
+                value={formatCreditEstimate(
+                  data.workspaceTotals.creditEstimate,
+                )}
+              />
+            )}
           </View>
           <HistorySection theme={theme} title="Models">
             <ModelUsage

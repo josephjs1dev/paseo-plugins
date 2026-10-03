@@ -1,12 +1,124 @@
 import assert from "node:assert/strict";
-import { mkdtemp, readFile, rm, writeFile, stat } from "node:fs/promises";
+import {
+  mkdir,
+  mkdtemp,
+  readFile,
+  rm,
+  writeFile,
+  stat,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
+import * as zlib from "node:zlib";
 import { DatabaseSync } from "node:sqlite";
 import { collectCodex, collectGo } from "../../server/history-sources";
 import { createHistoryStore } from "../../server/history";
 import { readHistory, type HistoryRow } from "../../shared/history";
+
+function codexLog(sessionId: string, input: number, timestamp: string) {
+  return (
+    [
+      { type: "session_meta", payload: { id: sessionId, cwd: "/workspace" } },
+      { type: "turn_context", payload: { model: "model-codex" } },
+      {
+        timestamp,
+        type: "event_msg",
+        payload: {
+          type: "token_count",
+          info: {
+            total_token_usage: { input_tokens: input, output_tokens: 20 },
+          },
+        },
+      },
+    ]
+      .map((row) => JSON.stringify(row))
+      .join("\n") + "\n"
+  );
+}
+
+test(
+  "compressed Codex logs recover yesterday's tokens from active and archived history",
+  { skip: typeof zlib.zstdCompressSync !== "function" },
+  async () => {
+    const directory = await mkdtemp(join(tmpdir(), "paseo-codex-compressed-"));
+    const timestamp = new Date(Date.now() - 86_400_000).toISOString();
+    const active = join(
+      directory,
+      "sessions",
+      ...timestamp.slice(0, 10).split("-"),
+    );
+    const archived = join(directory, "archived_sessions");
+
+    try {
+      await mkdir(active, { recursive: true });
+      await mkdir(archived);
+      const data = zlib.zstdCompressSync(codexLog("yesterday", 100, timestamp));
+      const path = join(active, "rollout.jsonl.zst");
+      const copy = join(archived, "archived.jsonl.zst");
+      await writeFile(path, data);
+      await writeFile(copy, data);
+      const { rows } = await collectCodex(
+        [join(directory, "sessions"), archived],
+        0,
+        new AbortController().signal,
+      );
+      assert.equal(rows.length, 1);
+      assert.equal(rows[0]?.day, timestamp.slice(0, 10));
+      assert.equal(rows[0]?.totals.input, 100);
+      assert.equal(rows[0]?.totals.output, 20);
+      assert.equal(rows[0]?.model, "model-codex");
+      assert.deepEqual(await readFile(path), data);
+      assert.deepEqual(await readFile(copy), data);
+      const store = createHistoryStore(
+        join(directory, "store"),
+        async (provider) => (provider === "codex" ? rows : []),
+      );
+
+      try {
+        const result = await store.read("codex", "/workspace", 7);
+        assert.equal(result.workspaceDaily[0]?.day, timestamp.slice(0, 10));
+        assert.equal(result.workspaceTotals.input, 100);
+        assert.equal(result.warning, "");
+        assert.equal(readHistory.output.safeParse(result).success, true);
+      } finally {
+        await store.close();
+      }
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  },
+);
+
+test(
+  "plain Codex logs take precedence over stale compressed siblings",
+  { skip: typeof zlib.zstdCompressSync !== "function" },
+  async () => {
+    const directory = await mkdtemp(join(tmpdir(), "paseo-codex-siblings-"));
+    const timestamp = new Date().toISOString();
+
+    try {
+      await writeFile(
+        join(directory, "rollout.jsonl"),
+        codexLog("plain", 100, timestamp),
+      );
+      await writeFile(
+        join(directory, "rollout.jsonl.zst"),
+        zlib.zstdCompressSync(codexLog("stale", 999, timestamp)),
+      );
+      const { rows } = await collectCodex(
+        [directory],
+        0,
+        new AbortController().signal,
+      );
+      assert.equal(rows.length, 1);
+      assert.equal(rows[0]?.sessionId, "plain");
+      assert.equal(rows[0]?.totals.input, 100);
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  },
+);
 
 test("Codex cumulative log events become daily deltas, not repeated session totals", async () => {
   const directory = await mkdtemp(join(tmpdir(), "nestkit-codex-history-"));
@@ -43,7 +155,7 @@ test("Codex cumulative log events become daily deltas, not repeated session tota
       join(directory, "a.jsonl"),
       entries.map((row) => JSON.stringify(row)).join("\n") + '\n{"partial":',
     );
-    const rows = await collectCodex(
+    const { rows } = await collectCodex(
       [directory],
       0,
       new AbortController().signal,
@@ -155,10 +267,11 @@ test("history survives reload, filters workspace sessions, and retains data afte
       (await stat(join(directory, "history.json"))).mode & 0o777,
       0o600,
     );
-    store.close();
+    await store.close();
     const reloaded = createHistoryStore(directory, async () => {
       throw new Error("private source failure");
     });
+    await reloaded.refresh();
     const stale = await reloaded.read("codex", "/workspace", 30);
     assert.equal(stale.totals.input, 200);
     assert.equal(stale.workspaceTotals.input, 100);
@@ -166,7 +279,7 @@ test("history survives reload, filters workspace sessions, and retains data afte
     assert.equal(stale.workspaceModels[0]?.model, "model-a");
     assert.match(stale.warning, /previously stored data/);
     assert.equal(stale.warning.includes("private source failure"), false);
-    reloaded.close();
+    await reloaded.close();
   } finally {
     await rm(directory, { recursive: true, force: true });
   }
@@ -195,7 +308,7 @@ test("provider and workspace readers share scans and cached local history", asyn
     ) as { rows: unknown[] };
     assert.deepEqual(saved.rows, []);
   } finally {
-    store.close();
+    await store.close();
     await rm(directory, { recursive: true, force: true });
   }
 });
@@ -214,7 +327,7 @@ test("corrupt stored history is preserved", async () => {
       await readFile(join(directory, "history.json"), "utf8"),
       "broken data",
     );
-    store.close();
+    await store.close();
   } finally {
     await rm(directory, { recursive: true, force: true });
   }
@@ -248,7 +361,12 @@ test("scopes and pages share source scans, retain rows and warnings, and satisfy
       store.read("opencode-go", "/workspace", 7, 0, "host"),
       store.read("opencode-go", "/workspace", 7, 20, "host"),
     ]);
-    assert.deepEqual(collected.sort(), ["codex", "opencode-go"]);
+    assert.deepEqual(collected.sort(), [
+      "codex",
+      "codex",
+      "opencode-go",
+      "opencode-go",
+    ]);
     assert.equal(workspace.sessionCount, 0);
     assert.equal(host.sessionCount, 25);
     assert.equal(host.sessions.length, 20);
@@ -281,13 +399,13 @@ test("scopes and pages share source scans, retain rows and warnings, and satisfy
       (await store.read("codex", "/workspace", 7, 0, "host")).sessionCount,
       0,
     );
-    assert.equal(collected.length, 2);
+    assert.equal(collected.length, 4);
     assert.equal(
       await readFile(join(directory, "history.json"), "utf8"),
       before,
     );
     assert.deepEqual((JSON.parse(before) as { rows: HistoryRow[] }).rows, rows);
-    store.close();
+    await store.close();
     const reloaded = createHistoryStore(directory, async () => {
       throw new Error("source failure");
     });
@@ -305,10 +423,10 @@ test("scopes and pages share source scans, retain rows and warnings, and satisfy
       assert.equal(stale.warning, host.warning);
       assert.equal(readHistory.output.safeParse(stale).success, true);
     } finally {
-      reloaded.close();
+      await reloaded.close();
     }
   } finally {
-    store.close();
+    await store.close();
     await rm(directory, { recursive: true, force: true });
   }
 });

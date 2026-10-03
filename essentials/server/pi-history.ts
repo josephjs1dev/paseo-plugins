@@ -27,6 +27,13 @@ export function collectPi(
   since: number,
   signal: AbortSignal,
   roots = [piHistoryDirectory()],
+  modifiedSince?: number,
 ) {
-  return collectJsonl(roots, since, signal, createPiHistoryParser);
+  return collectJsonl(
+    roots,
+    since,
+    signal,
+    createPiHistoryParser,
+    modifiedSince,
+  );
 }

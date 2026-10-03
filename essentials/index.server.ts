@@ -6,8 +6,8 @@ export default function contribute(context: PluginServerContext) {
   const cleanupProviderUsage = contributeProviderUsage(context);
   const cleanupMaintenance = contributeMaintenance(context);
 
-  return () => {
+  return async () => {
     cleanupMaintenance();
-    cleanupProviderUsage();
+    await cleanupProviderUsage();
   };
 }

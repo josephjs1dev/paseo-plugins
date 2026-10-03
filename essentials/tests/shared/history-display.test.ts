@@ -21,28 +21,19 @@ test("7 days shows seven UTC daily buckets", () => {
   );
 });
 
-test("30 days keeps all days in four full weeks and a labeled two-day remainder", () => {
+test("30 days shows one bucket per day including the full month boundary", () => {
   const buckets = historyBuckets(daily, 30, "2026-09-26");
-  assert.equal(buckets.length, 5);
-  assert.deepEqual(
-    buckets.map((bucket) => bucket.totals.input),
-    [200, 700, 700, 700, 700],
-  );
+  assert.equal(buckets.length, 30);
+  assert.ok(buckets.every((bucket) => bucket.startDay === bucket.endDay));
+  assert.ok(buckets.every((bucket) => bucket.totals.input === 100));
   assert.equal(buckets[0]?.startDay, "2026-08-28");
-  assert.equal(buckets[0]?.endDay, "2026-08-29");
-  assert.equal(buckets[4]?.startDay, "2026-09-20");
-  assert.equal(buckets[4]?.endDay, "2026-09-26");
-});
-
-test("90 days shows three 30-day buckets, not calendar months", () => {
-  const buckets = historyBuckets(daily, 90, "2026-09-26");
-  assert.equal(buckets.length, 3);
-  assert.deepEqual(
-    buckets.map((bucket) => bucket.totals.input),
-    [3000, 3000, 3000],
+  assert.equal(buckets[0]?.endDay, "2026-08-28");
+  assert.equal(buckets[29]?.startDay, "2026-09-26");
+  assert.equal(buckets[29]?.endDay, "2026-09-26");
+  assert.equal(
+    buckets.reduce((sum, bucket) => sum + bucket.totals.input, 0),
+    3000,
   );
-  assert.equal(buckets[0]?.startDay, "2026-06-29");
-  assert.equal(buckets[2]?.endDay, "2026-09-26");
 });
 
 test("empty intervals and unknown costs stay distinguishable across year boundaries", () => {

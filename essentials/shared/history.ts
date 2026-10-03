@@ -4,6 +4,13 @@ import { providerSchema } from "./usage";
 
 const count = z.number().finite().nonnegative();
 
+const creditEstimateSchema = z.object({
+  amount: count.nullable(),
+  pricedTokens: count,
+  unpricedTokens: count,
+});
+export type CreditEstimate = z.infer<typeof creditEstimateSchema>;
+
 export const totalsSchema = z.object({
   input: count,
   cached: count,
@@ -11,6 +18,7 @@ export const totalsSchema = z.object({
   reasoning: count,
   // Recorded model-cost estimate in USD, not a subscription charge.
   cost: count.nullable(),
+  creditEstimate: creditEstimateSchema.optional(),
 });
 
 export type Totals = z.infer<typeof totalsSchema>;
@@ -54,10 +62,12 @@ export const readHistory = defineRpc({
     days: z.union([z.literal(7), z.literal(30), z.literal(90)]),
     scope: historyScopeSchema.default("workspace"),
     sessionOffset: z.number().int().min(0).max(100_000).default(0),
+    refresh: z.boolean().optional(),
   }),
   output: z.object({
     scannedAt: z.string().datetime().nullable(),
     warning: z.string().max(400),
+    refreshing: z.boolean().optional(),
     periodEnd: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
     daily: z.array(z.object({ day: z.string(), totals: totalsSchema })).max(90),
     workspaceDaily: z
@@ -82,6 +92,31 @@ export function addTotals(a: Totals, b: Totals): Totals {
     output: a.output + b.output,
     reasoning: a.reasoning + b.reasoning,
     cost: a.cost === null || b.cost === null ? null : a.cost + b.cost,
+    ...(a.creditEstimate !== undefined || b.creditEstimate !== undefined
+      ? { creditEstimate: addCreditEstimates(a, b) }
+      : {}),
+  };
+}
+
+function addCreditEstimates(a: Totals, b: Totals): CreditEstimate {
+  const missing = (totals: Totals): CreditEstimate => ({
+    amount: null,
+    pricedTokens: 0,
+    unpricedTokens: totals.input + totals.output,
+  });
+  const first = a.creditEstimate ?? missing(a);
+  const second = b.creditEstimate ?? missing(b);
+  const pricedTokens = first.pricedTokens + second.pricedTokens;
+  const unpricedTokens = first.unpricedTokens + second.unpricedTokens;
+
+  return {
+    amount:
+      (pricedTokens === 0 && unpricedTokens > 0) ||
+      (first.amount === null && second.amount === null)
+        ? null
+        : (first.amount ?? 0) + (second.amount ?? 0),
+    pricedTokens,
+    unpricedTokens,
   };
 }
 

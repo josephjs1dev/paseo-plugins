@@ -116,6 +116,26 @@ test("plugin cleanup cancels in-flight provider work", async () => {
   assert.equal((await pending).status, "unavailable");
 });
 
+test("credit-only Codex accounts return their balance and share the quota cache", async () => {
+  let calls = 0;
+  const credits = { hasCredits: true, unlimited: false, balance: 2500.5 };
+  const reader = createUsageReader(async () => {
+    calls++;
+
+    return { windows: [], credits };
+  });
+
+  try {
+    const usage = await reader.read("codex");
+    assert.equal(usage.status, "ok");
+    assert.deepEqual(usage.credits, credits);
+    assert.deepEqual(await reader.read("codex"), usage);
+    assert.equal(calls, 1);
+  } finally {
+    reader.close();
+  }
+});
+
 test("Codex handshakes and reads limits without starting an agent turn", async () => {
   const directory = await mkdtemp(join(tmpdir(), "nestkit-usage-test-"));
   const binary = join(directory, "fake-codex");

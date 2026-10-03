@@ -1,7 +1,5 @@
-import { createReadStream } from "node:fs";
 import { readdir, stat } from "node:fs/promises";
 import { join } from "node:path";
-import { createInterface } from "node:readline";
 
 import type { HistoryRow } from "../shared/history";
 import { aggregateRows } from "../shared/history-analysis";
@@ -9,36 +7,89 @@ import {
   createCodexHistoryParser,
   parseGoHistoryRow,
 } from "../shared/history-parsers";
+import { readHistoryLines } from "./history-log";
 
 const MAX_LOG_FILES = 5_000;
 const MAX_SCAN_BYTES = 512 * 1024 * 1024;
 const MAX_LOG_BYTES = 128 * 1024 * 1024;
 const MAX_DATABASE_ROWS = 100_000;
 
-export async function collectCodex(
+export interface HistoryCollection {
+  rows: HistoryRow[];
+  incomplete: boolean;
+}
+
+interface ScanLimits {
+  maxScanBytes?: number;
+  modifiedSince?: number;
+}
+
+type CreateParser = (
+  since: number,
+  seen: Set<string>,
+) => (line: string) => HistoryRow | undefined;
+
+export function collectCodex(
   roots: string[],
   since: number,
   signal: AbortSignal,
-): Promise<HistoryRow[]> {
-  return collectJsonl(roots, since, signal, createCodexHistoryParser);
+  limits?: ScanLimits,
+): Promise<HistoryCollection> {
+  return scanJsonl(roots, since, signal, createCodexHistoryParser, limits);
 }
 
 export async function collectJsonl(
   roots: string[],
   since: number,
   signal: AbortSignal,
-  createParser: (
-    since: number,
-    seen: Set<string>,
-  ) => (line: string) => HistoryRow | undefined,
+  createParser: CreateParser,
+  modifiedSince?: number,
 ): Promise<HistoryRow[]> {
+  const result = await scanJsonl(
+    roots,
+    since,
+    signal,
+    createParser,
+    modifiedSince === undefined ? {} : { modifiedSince },
+  );
+
+  if (result.incomplete) {
+    throw new Error("History scan incomplete");
+  }
+
+  return result.rows;
+}
+
+/** Import complete logs newest-first; skipped logs keep their saved snapshots. */
+async function scanJsonl(
+  roots: string[],
+  since: number,
+  signal: AbortSignal,
+  createParser: CreateParser,
+  limits: ScanLimits = {},
+): Promise<HistoryCollection> {
   const rows: HistoryRow[] = [];
-  const seen = new Set<string>();
-  let fileCount = 0;
+  const files: { path: string; size: number; modified: number }[] = [];
+  let seen = new Set<string>();
+  let incomplete = false;
   let byteCount = 0;
+  const maxScanBytes = Math.min(
+    limits.maxScanBytes ?? MAX_SCAN_BYTES,
+    MAX_SCAN_BYTES,
+  );
+
+  function checkCancelled() {
+    if (signal.aborted) {
+      throw new Error("Cancelled");
+    }
+  }
 
   async function walk(directory: string, depth: number): Promise<void> {
+    checkCancelled();
+
     if (depth > 5) {
+      incomplete = true;
+
       return;
     }
 
@@ -47,16 +98,25 @@ export async function collectJsonl(
     try {
       entries = await readdir(directory, { withFileTypes: true });
     } catch (error) {
-      if ((error as NodeJS.ErrnoException).code === "ENOENT") {
-        return;
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
+        incomplete = true;
       }
 
-      throw error;
+      return;
     }
 
+    const plainFiles = new Set(
+      entries.filter((entry) => entry.isFile()).map((entry) => entry.name),
+    );
+    entries.sort((left, right) => right.name.localeCompare(left.name));
+
     for (const entry of entries) {
-      if (signal.aborted) {
-        throw new Error("Cancelled");
+      checkCancelled();
+
+      if (files.length >= MAX_LOG_FILES) {
+        incomplete = true;
+
+        return;
       }
 
       const path = join(directory, entry.name);
@@ -66,42 +126,24 @@ export async function collectJsonl(
         continue;
       }
 
-      if (!entry.isFile() || !entry.name.endsWith(".jsonl")) {
-        continue;
-      }
-
-      const info = await stat(path);
-
-      if (info.mtimeMs < since) {
-        continue;
-      }
-
-      fileCount += 1;
-      byteCount += info.size;
+      const compressed = entry.name.endsWith(".jsonl.zst");
 
       if (
-        fileCount > MAX_LOG_FILES ||
-        byteCount > MAX_SCAN_BYTES ||
-        info.size > MAX_LOG_BYTES
+        !entry.isFile() ||
+        (!entry.name.endsWith(".jsonl") && !compressed) ||
+        (compressed && plainFiles.has(entry.name.slice(0, -4)))
       ) {
-        throw new Error("History scan limit reached");
+        continue;
       }
 
-      const parseLine = createParser(since, seen);
-      const stream = createReadStream(path, { encoding: "utf8", signal });
-      const lines = createInterface({ input: stream, crlfDelay: Infinity });
-
       try {
-        for await (const line of lines) {
-          const row = parseLine(line);
+        const info = await stat(path);
 
-          if (row) {
-            rows.push(row);
-          }
+        if (info.mtimeMs >= (limits.modifiedSince ?? since)) {
+          files.push({ path, size: info.size, modified: info.mtimeMs });
         }
-      } finally {
-        lines.close();
-        stream.destroy();
+      } catch {
+        incomplete = true;
       }
     }
   }
@@ -110,13 +152,56 @@ export async function collectJsonl(
     await walk(root, 0);
   }
 
-  return aggregateRows(rows);
+  files.sort(
+    (left, right) =>
+      right.modified - left.modified || left.path.localeCompare(right.path),
+  );
+
+  for (const file of files) {
+    checkCancelled();
+
+    if (file.size > MAX_LOG_BYTES || file.size > maxScanBytes - byteCount) {
+      incomplete = true;
+      continue;
+    }
+
+    // A failed or truncated file must not commit usage or poison deduplication
+    // for an intact copy in another directory.
+    const fileSeen = new Set(seen);
+    const fresh: HistoryRow[] = [];
+    const parseLine = createParser(since, fileSeen);
+
+    try {
+      for await (const line of readHistoryLines(file.path, {
+        signal,
+        maxBytes: Math.min(MAX_LOG_BYTES, maxScanBytes - byteCount),
+        onBytesRead: (size) => {
+          byteCount += size;
+        },
+      })) {
+        const row = parseLine(line);
+
+        if (row) {
+          fresh.push(row);
+        }
+      }
+
+      rows.push(...fresh);
+      seen = fileSeen;
+    } catch {
+      checkCancelled();
+      incomplete = true;
+    }
+  }
+
+  return { rows: aggregateRows(rows), incomplete };
 }
 
 export async function collectGo(
   databasePath: string,
   since: number,
   signal: AbortSignal,
+  modifiedSince?: number,
 ): Promise<HistoryRow[]> {
   try {
     await stat(databasePath);
@@ -149,6 +234,31 @@ export async function collectGo(
 
     const rows: HistoryRow[] = [];
     const modernSessions = new Set<string>();
+    const changes: string[] = [];
+    const changedParams: number[] = [];
+
+    if (modifiedSince !== undefined) {
+      // Reread the retained snapshot of each updated session, not just its new
+      // messages. Replacing a day's aggregate with a partial day loses usage.
+      for (const table of ["session_message", "message"] as const) {
+        if (!tables.includes(table)) {
+          continue;
+        }
+
+        const columns = database.prepare(`PRAGMA table_info(${table})`).all();
+        const hasUpdated = columns.some(
+          (column) => column.name === "time_updated",
+        );
+        changes.push(
+          `SELECT session_id FROM ${table} WHERE time_created >= ?${hasUpdated ? " OR time_updated >= ?" : ""}`,
+        );
+        changedParams.push(modifiedSince);
+
+        if (hasUpdated) {
+          changedParams.push(modifiedSince);
+        }
+      }
+    }
 
     for (const table of ["session_message", "message"] as const) {
       if (!tables.includes(table)) {
@@ -156,8 +266,8 @@ export async function collectGo(
       }
 
       const result = database
-        .prepare(goUsageQuery(table))
-        .iterate(since, "opencode-go");
+        .prepare(goUsageQuery(table, changes.join(" UNION ")))
+        .iterate(since, "opencode-go", ...changedParams);
       let rowCount = 0;
 
       for (const raw of result) {
@@ -191,7 +301,10 @@ export async function collectGo(
   }
 }
 
-function goUsageQuery(table: "session_message" | "message"): string {
+function goUsageQuery(
+  table: "session_message" | "message",
+  changedSessions: string,
+): string {
   const providerPath =
     table === "session_message" ? "$.model.providerID" : "$.providerID";
   const assistantFilter =
@@ -220,6 +333,7 @@ function goUsageQuery(table: "session_message" | "message"): string {
       AND ${assistantFilter}
       AND json_extract(m.data, '${providerPath}') = ?
       AND json_extract(m.data, '$.tokens') IS NOT NULL
+      ${changedSessions ? `AND m.session_id IN (${changedSessions})` : ""}
     LIMIT ${MAX_DATABASE_ROWS + 1}
   `;
 }

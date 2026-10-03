@@ -31,14 +31,14 @@ export const opencodeGoAdapter: ProviderAdapter = {
     return { windows: normalizeGo(response) };
   },
 
-  readHistory(since, signal) {
+  readHistory(since, signal, modifiedSince) {
     const dataHome =
       process.env.XDG_DATA_HOME ?? join(homedir(), ".local", "share");
     const databasePath =
       process.env.OPENCODE_USAGE_DB ??
       join(dataHome, "opencode", "opencode.db");
 
-    return collectGo(databasePath, since, signal);
+    return collectGo(databasePath, since, signal, modifiedSince);
   },
 
   describeError(error) {
