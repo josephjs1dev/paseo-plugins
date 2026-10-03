@@ -35,7 +35,7 @@ do not load the other persona as a fallback.
 
 ## Repository guide
 
-Read [README.md](README.md) for the plugin catalog and development workflow.
+Read [README.md](README.md) for the plugin catalog and installation workflow.
 Before changing Essentials, read [its README](essentials/README.md).
 For frontend work, also read
 [Frontend Coding Styles](.codex/rules/typescript/frontend-styles.md).
@@ -55,7 +55,7 @@ Run `git diff --check` for changes across the repository.
 
 ## Canonical instructions
 
-Edit `AGENTS.md` directly and preserve the `CLAUDE.md` symlink.
+Edit `AGENTS.md` directly; it is the canonical project instruction file.
 
 ## Commit and push
 

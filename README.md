@@ -1,78 +1,54 @@
 # Paseo Plugins
 
-A collection of Paseo plugins, with each plugin kept in its own directory and
-installed independently.
+Plugins for [Paseo](https://paseo.sh), installed independently on each daemon.
 
-## Plugins
+## Available plugins
 
-| Plugin                                | What it provides                                                                                                              |
-| ------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------- |
-| [Paseo Essentials](essentials/README.md) | Codex and OpenCode Go subscription limits, token history including Pi sessions, workspace usage views, and CLI/model maintenance. |
+| Plugin                                   | Features                                                                                                                    |
+| ---------------------------------------- | --------------------------------------------------------------------------------------------------------------------------- |
+| [Paseo Essentials](essentials/README.md) | Codex and OpenCode Go subscription limits, token history including Pi sessions, workspace usage, and CLI/model maintenance. |
 
-## Repository layout
+## Install Paseo Essentials
 
-```text
-paseo-plugins/
-  AGENTS.md                     # project guidance and local rule references
-  CLAUDE.md -> AGENTS.md         # shared agent entrypoint
-  .codex/rules/                 # security and TypeScript/frontend rules
-  essentials/
-    paseo-plugin.json           # plugin ID and supported Paseo version
-    index.client.tsx            # Paseo app contributions
-    index.server.ts             # daemon-side contributions
-    client/                     # React Native UI
-    server/                     # processes, provider adapters, and persistence
-    shared/                     # runtime-neutral contracts and parsing
-    tests/                      # client, server, and shared checks
-    package.json
-    package-lock.json
-```
+Use Paseo **0.9.2 or later** on both the daemon and app. For OpenCode SQLite
+history, the daemon needs Node **22.13 or later**.
 
-## Develop Paseo Essentials
+1. On the target daemon, enable **Settings → Plugins → Enable plugins**.
+   Plugins run trusted, unsandboxed code with the daemon user's access.
+2. Clone this repository and install the plugin on that daemon's machine:
 
-From this repository's root:
+   ```bash
+   git clone https://github.com/josephjs1dev/paseo-plugins.git
+   cd paseo-plugins/essentials
+   paseo plugin install "$PWD"
+   paseo plugin ls
+   ```
 
-```bash
-cd essentials
-npm ci --ignore-scripts
-npm run check
-```
+   If you already have a checkout, run the last two commands from `essentials/`.
+   Paseo supplies the runtime libraries; npm setup is only needed for development.
 
-`npm run check` runs TypeScript checking, ESLint, the Prettier check, and tests.
-Use `npm run format` to format plugin files. Each plugin owns its package and
-lockfile; run its commands inside that plugin's directory.
+3. Confirm `essentials` shows **running**, then select that host in Paseo.
+   Open a workspace for **Provider usage** and **Workspace usage**, or open
+   **CLIs & Models (hostname)** from the sidebar.
 
-## Install and reload
+Quota lookup uses accounts configured on the daemon: sign in to Codex with
+ChatGPT, or connect OpenCode Go with `/connect`. See the
+[Essentials README](essentials/README.md) for features and requirements.
 
-Paseo Essentials requires Paseo 0.9.2 or later. With plugins enabled on the target
-daemon, run from the plugin directory on that host:
+## Update or troubleshoot
+
+From the repository checkout on the daemon machine:
 
 ```bash
-paseo plugin install "$PWD"
-paseo plugin ls
-```
-
-After editing and checking the plugin:
-
-```bash
+git pull
 paseo plugin reload essentials
+paseo plugin ls
 paseo plugin logs essentials
 ```
 
-Installation is per daemon. See the [Essentials README](essentials/README.md)
-for feature behavior, history sources, configuration, and verification guidance.
-The [Paseo plugin quickstart](https://paseo.sh/docs/plugins) and
-[plugin reference](https://paseo.sh/docs/plugins/reference) document the runtime.
+Keep the checkout at its installed path. Installation is per daemon; repeat it
+for each host you use. Reload the plugin after source updates.
 
-## Add another plugin
-
-Create a separate directory at the repository root, with its own unique manifest
-ID, package, lockfile, README, and checks. Keep app code in `client/`, daemon code in
-`server/`, and runtime-neutral contracts in `shared/`. Add the plugin to the table
-above. Install and reload each plugin by its own ID.
-
-## Agent guidance
-
-Read [AGENTS.md](AGENTS.md) before making changes. This project includes nestkit's
-security rules and TypeScript coding rules, including the frontend companion.
-It relies on existing user-installed skills and has no project MCP server setup.
+For contributing, see the [development guidelines](essentials/README.md#development)
+and [AGENTS.md](AGENTS.md). See the [Paseo plugin guide](https://paseo.sh/docs/plugins)
+for installation and management details.
