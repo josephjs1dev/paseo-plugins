@@ -1,3 +1,4 @@
+import { fakeCollectors } from "../history-fixtures";
 import assert from "node:assert/strict";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -12,12 +13,23 @@ import type { HistoryRow } from "../../shared/history";
 
 const NOW = Date.parse("2026-10-03T12:00:00Z");
 const DAY = 86_400_000;
+function collectorStates(checkpoint: number, incomplete = false) {
+  const updatedThrough = new Date(checkpoint).toISOString();
+
+  return {
+    codex: { updatedThrough, incomplete },
+    pi: { updatedThrough, incomplete: false },
+    opencode: { updatedThrough, incomplete: false },
+  };
+}
+
 const iso = (time: number) => new Date(time).toISOString();
 function row(input = 100): HistoryRow {
   const time = NOW - 2 * DAY;
 
   return {
-    provider: "codex",
+    provider: "chatgpt",
+    harness: "codex",
     sessionId: "one",
     cwd: "/workspace",
     model: "gpt-6.1-sol",
@@ -39,9 +51,9 @@ function deferred() {
 
 async function seed(directory: string, checkpoint = NOW - 6 * 60_000) {
   await writeSavedHistory(directory, {
-    version: 1,
+    version: 2,
     scannedAt: iso(NOW - 6 * 60_000),
-    updatedThrough: iso(checkpoint),
+    collectors: collectorStates(checkpoint),
     rows: [row()],
   });
 }
@@ -56,34 +68,34 @@ test(
     await seed(directory);
     const store = createHistoryStore(
       directory,
-      async (provider) => {
-        if (provider !== "codex") {
-          return [];
+      fakeCollectors(async (harness) => {
+        if (harness !== "codex") {
+          return { rows: [], incomplete: false };
         }
 
         calls++;
         await gate.promise;
 
-        return [row(150)];
-      },
+        return { rows: [row(150)], incomplete: false };
+      }),
       () => NOW,
     );
 
     try {
-      const cached = await store.read("codex", "/workspace", 7);
+      const cached = await store.read("chatgpt", "/workspace", 7);
       assert.equal(cached.workspaceTotals.input, 100);
       assert.equal(cached.refreshing, true);
-      const other = await store.read("codex", "/workspace", 30, 0, "host");
+      const other = await store.read("chatgpt", "/workspace", 30, 0, "host");
       assert.equal(other.totals.input, 100);
       assert.equal(calls, 1);
       gate.release();
       await store.refresh();
-      const fresh = await store.read("codex", "/workspace", 7);
+      const fresh = await store.read("chatgpt", "/workspace", 7);
       assert.equal(fresh.workspaceTotals.input, 150);
       assert.equal(fresh.refreshing, false);
       assert.equal(calls, 1);
       assert.equal(
-        (await readSavedHistory(directory))?.updatedThrough,
+        (await readSavedHistory(directory))?.collectors.codex?.updatedThrough,
         iso(NOW),
       );
     } finally {
@@ -98,11 +110,10 @@ test("fresh disk cache survives reload without rescanning or writing", async () 
   const directory = await mkdtemp(join(tmpdir(), "paseo-cache-reload-"));
   let calls = 0;
   await writeSavedHistory(directory, {
-    version: 1,
+    version: 2,
     scannedAt: iso(NOW - 60_000),
-    updatedThrough: iso(NOW - 60_000),
+    collectors: collectorStates(NOW - 60_000, true),
     rows: [row()],
-    warningProviders: ["codex"],
   });
   const before = await readFile(join(directory, "history.json"));
 
@@ -110,16 +121,16 @@ test("fresh disk cache survives reload without rescanning or writing", async () 
     for (let attempt = 0; attempt < 2; attempt++) {
       const store = createHistoryStore(
         directory,
-        async () => {
+        fakeCollectors(async () => {
           calls++;
 
-          return [];
-        },
+          return { rows: [], incomplete: false };
+        }),
         () => NOW,
       );
 
       try {
-        const result = await store.read("codex", "/workspace", 7);
+        const result = await store.read("chatgpt", "/workspace", 7);
         assert.equal(result.workspaceTotals.input, 100);
         assert.equal(result.refreshing, false);
         assert.match(result.warning, /previously stored/);
@@ -142,13 +153,13 @@ test("recent checkpoints scan one day of updates and stale checkpoints cover the
   const windows: { since: number; modified: number | undefined }[] = [];
   const store = createHistoryStore(
     directory,
-    async (provider, since, _signal, modified) => {
-      if (provider === "codex") {
+    fakeCollectors(async (harness, since, _signal, modified) => {
+      if (harness === "codex") {
         windows.push({ since, modified });
       }
 
-      return [];
-    },
+      return { rows: [], incomplete: false };
+    }),
     () => clock,
   );
 
@@ -183,9 +194,9 @@ test("failed scans retain the checkpoint so recovery cannot skip usage", async (
   const windows: (number | undefined)[] = [];
   const store = createHistoryStore(
     directory,
-    async (provider, _since, _signal, modified) => {
-      if (provider !== "codex") {
-        return [];
+    fakeCollectors(async (harness, _since, _signal, modified) => {
+      if (harness !== "codex") {
+        return { rows: [], incomplete: false };
       }
 
       windows.push(modified);
@@ -194,18 +205,18 @@ test("failed scans retain the checkpoint so recovery cannot skip usage", async (
         throw new Error("private source detail");
       }
 
-      return [row(150)];
-    },
+      return { rows: [row(150)], incomplete: false };
+    }),
     () => clock,
   );
 
   try {
     await store.refresh();
     assert.equal(
-      (await readSavedHistory(directory))?.updatedThrough,
+      (await readSavedHistory(directory))?.collectors.codex?.updatedThrough,
       iso(checkpoint),
     );
-    const cached = await store.read("codex", "/workspace", 7);
+    const cached = await store.read("chatgpt", "/workspace", 7);
     assert.equal(cached.workspaceTotals.input, 100);
     assert.match(cached.warning, /previously stored/);
     assert.ok(!cached.warning.includes("private"));
@@ -214,11 +225,11 @@ test("failed scans retain the checkpoint so recovery cannot skip usage", async (
     await store.refresh();
     assert.equal(windows[1], checkpoint - 1000);
     assert.equal(
-      (await readSavedHistory(directory))?.updatedThrough,
+      (await readSavedHistory(directory))?.collectors.codex?.updatedThrough,
       iso(clock),
     );
     assert.equal(
-      (await store.read("codex", "/workspace", 7)).workspaceTotals.input,
+      (await store.read("chatgpt", "/workspace", 7)).workspaceTotals.input,
       150,
     );
   } finally {
@@ -233,27 +244,30 @@ test("bounded bootstrap establishes recent coverage and keeps backlog warnings",
   const windows: (number | undefined)[] = [];
   const store = createHistoryStore(
     directory,
-    async (provider, since, _signal, modified) => {
-      if (provider !== "codex") {
-        return [];
+    fakeCollectors(async (harness, since, _signal, modified) => {
+      if (harness !== "codex") {
+        return { rows: [], incomplete: false };
       }
 
       windows.push(modified);
 
       return { rows: [row()], incomplete: modified === since };
-    },
+    }),
     () => clock,
   );
 
   try {
-    await store.read("codex", "/workspace", 7);
+    await store.read("chatgpt", "/workspace", 7);
     assert.deepEqual(windows, [NOW - 90 * DAY, NOW - DAY]);
-    assert.equal((await readSavedHistory(directory))?.updatedThrough, iso(NOW));
+    assert.equal(
+      (await readSavedHistory(directory))?.collectors.codex?.updatedThrough,
+      iso(NOW),
+    );
     clock += 6 * 60_000;
     await store.refresh();
     assert.equal(windows[2], clock - DAY);
     assert.match(
-      (await store.read("codex", "/workspace", 7)).warning,
+      (await store.read("chatgpt", "/workspace", 7)).warning,
       /previously stored/,
     );
   } finally {
@@ -268,22 +282,32 @@ test("closing a background scan cancels it without replacing the saved cache", a
   const before = await readFile(join(directory, "history.json"));
   const store = createHistoryStore(
     directory,
-    async (provider, _since, signal) => {
-      if (provider !== "codex") {
-        return [];
+    fakeCollectors(async (harness, _since, signal) => {
+      if (harness !== "codex") {
+        return { rows: [], incomplete: false };
       }
 
-      return new Promise<HistoryRow[]>((_resolve, reject) => {
-        signal.addEventListener("abort", () => reject(new Error("cancelled")), {
-          once: true,
-        });
-      });
-    },
+      return {
+        rows: await new Promise<HistoryRow[]>((_resolve, reject) => {
+          signal.addEventListener(
+            "abort",
+            () => reject(new Error("cancelled")),
+            {
+              once: true,
+            },
+          );
+        }),
+        incomplete: false,
+      };
+    }),
     () => NOW,
   );
 
   try {
-    assert.equal((await store.read("codex", "/workspace", 7)).refreshing, true);
+    assert.equal(
+      (await store.read("chatgpt", "/workspace", 7)).refreshing,
+      true,
+    );
     await store.close();
     assert.deepEqual(await readFile(join(directory, "history.json")), before);
   } finally {

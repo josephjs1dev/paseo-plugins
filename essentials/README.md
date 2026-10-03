@@ -1,12 +1,12 @@
 # Paseo Essentials
 
-Usage tracking and CLI/model maintenance for Paseo, covering Codex, OpenCode Go,
-and token history from Pi sessions.
+Usage tracking and CLI/model maintenance for Paseo. Usage is grouped by provider
+(ChatGPT or OpenCode Go) and collected from the Codex, Pi, and OpenCode harnesses.
 
 ## Features
 
-- **Provider usage:** subscription quota and reset times for Codex and OpenCode Go.
-  Codex also shows credit balance and banked resets when supported; **Use reset**
+- **Provider usage:** subscription quota and reset times for ChatGPT and OpenCode Go.
+  ChatGPT also shows Codex credit balance and banked resets when supported; **Use reset**
   asks for confirmation before consuming a banked reset.
 - **Workspace usage:** token totals by model and recent sessions for the current
   workspace.
@@ -14,6 +14,7 @@ and token history from Pi sessions.
   recorded cost estimates across this workspace or all local workspaces on the
   selected host. Browse 7 or 30 days; history is retained for 90 days. Includes
   native Codex/OpenCode logs and Pi's `openai-codex` and `opencode-go` sessions.
+  Provider totals combine harnesses; session rows identify Codex, Pi, or OpenCode.
 - **CLIs & Models (hostname):** check and apply supported Codex, OpenCode, and Pi
   CLI updates, and refresh the host's model catalog. Available from the sidebar
   and Command Center without an open workspace.
@@ -22,7 +23,7 @@ History is collected locally on each daemon. The normalized history cache stores
 usage metadata without prompts, responses, or credentials. Missing quota or cost
 information is shown as unavailable. Recorded costs are estimates in USD.
 
-Codex history also shows **Estimated credits** in the daily chart, summary,
+ChatGPT history from Codex and Pi also shows **Estimated credits** in the daily chart, summary,
 model rows, and session details. Estimates use the recorded model, uncached
 input, cached input, and output (including reasoning) at published Standard
 credit rates checked on **2026-10-03**. This is a model-usage estimate; speed,
@@ -61,7 +62,8 @@ forces a background check, and the open view polls briefly until it finishes.
 
 After a recent successful scan, collectors select sessions updated within the
 last day. After a longer gap or failed scan, the update window stretches back to
-the last successful checkpoint so usage is not skipped. Each selected JSONL log
+that collector's last successful checkpoint so usage is not skipped. Checkpoints
+and scan warnings are tracked independently per harness. Each selected JSONL log
 is still read for its full retained snapshot; OpenCode rereads every retained
 message in a touched session, including when only an older message was updated.
 These snapshots replace their previous daily totals, keeping unrelated cached
@@ -70,10 +72,14 @@ scans establish recent coverage separately and keep their older-backlog warning.
 
 For quota lookup, configure accounts on the daemon machine:
 
-- **Codex:** CLI on PATH, signed in with ChatGPT. Set `PASEO_USAGE_CODEX_BIN` for
+- **ChatGPT:** Codex CLI on PATH, signed in with ChatGPT. Set `PASEO_USAGE_CODEX_BIN` for
   a custom executable. API-key billing does not provide subscription quota.
 - **OpenCode Go:** connect with `/connect`, or set `OPENCODE_GO_API_KEY` in the
   daemon environment. Set `OPENCODE_GO_AUTH_FILE` for a custom auth file.
+
+Existing version 1 history caches migrate automatically to version 2 at the same
+location. Migration preserves cached records, identifies legacy Pi sessions, and
+starts a full retained-window scan for each harness.
 
 Pi history works without native Codex or OpenCode installations. Set
 `PI_USAGE_SESSION_DIR` or `OPENCODE_USAGE_DB` in the daemon environment for
@@ -101,8 +107,14 @@ processes/HTTP responses, without real credentials.
 
 Keep runtime boundaries intact, return cleanup functions from contributions,
 and pin dependencies with changes to `package-lock.json`. To add a usage
-provider, register it in `shared/providers.ts`, implement its adapter in
-`server/providers/`, and register it in `server/providers/index.ts`.
+harness collector, add its metadata in `shared/harnesses.ts`, implement a
+`UsageCollector` in `server/collectors/`, and register it in
+`server/collectors/index.ts`. Every collector returns the same validated
+`HistoryCollection` containing provider- and harness-attributed rows. Quota lookup
+is optional: Codex supplies ChatGPT limits, OpenCode supplies OpenCode Go limits,
+and Pi collects history only. Each collector owns its source paths and account
+I/O; pure source normalization stays in `shared/history-parsers.ts`. Provider metadata in `shared/providers.ts` describes
+subscription groups, rather than history sources.
 
 After validation, run `paseo plugin reload essentials` and inspect
 `paseo plugin logs essentials`. Live verification is separate from automated

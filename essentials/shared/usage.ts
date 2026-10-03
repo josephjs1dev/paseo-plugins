@@ -35,7 +35,12 @@ export const usageSchema = z.object({
 });
 
 export type Usage = z.infer<typeof usageSchema>;
-export type Quota = Pick<Usage, "windows" | "resetCredits" | "credits">;
+export const quotaSchema = usageSchema.pick({
+  windows: true,
+  resetCredits: true,
+  credits: true,
+});
+export type Quota = z.infer<typeof quotaSchema>;
 
 export const readUsage = defineRpc({
   name: "usage.read",

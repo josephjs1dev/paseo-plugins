@@ -11,14 +11,11 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
 
-import { collectPi, piHistoryDirectory } from "../../server/pi-history";
-import { collectGo } from "../../server/history-sources";
-import {
-  createHistoryStore,
-  createLocalHistoryCollector,
-} from "../../server/history";
+import { collectPi, piHistoryDirectory } from "../../server/collectors/pi";
+import { collectOpenCode } from "../../server/history-sources";
+import { createHistoryStore } from "../../server/history";
 import type { HistoryRow } from "../../shared/history";
-import { writeSavedHistory } from "../../server/history-files";
+import { fakeCollectors } from "../history-fixtures";
 
 test("Pi resolves daemon environment session path overrides", () => {
   assert.equal(
@@ -71,10 +68,10 @@ test("Pi scans nested JSONL read-only, deduplicates copies, skips links and tole
     await writeFile(join(directory, "copy.jsonl"), data);
     await symlink(directory, join(nested, "loop"));
     const signal = new AbortController().signal;
-    const rows = await collectPi(0, signal, [directory, nested]);
+    const { rows } = await collectPi(0, signal, [directory, nested]);
     assert.equal(rows.length, 2);
     assert.deepEqual(rows.map((row) => row.provider).sort(), [
-      "codex",
+      "chatgpt",
       "opencode-go",
     ]);
     assert.equal(
@@ -83,13 +80,13 @@ test("Pi scans nested JSONL read-only, deduplicates copies, skips links and tole
     );
     assert.equal(JSON.stringify(rows).includes("private prompt"), false);
     assert.equal(await readFile(path, "utf8"), data);
+    assert.deepEqual(await collectPi(0, signal, [join(directory, "missing")]), {
+      rows: [],
+      incomplete: false,
+    });
     assert.deepEqual(
-      await collectPi(0, signal, [join(directory, "missing")]),
-      [],
-    );
-    assert.deepEqual(
-      await collectGo(join(directory, "missing.db"), 0, signal),
-      [],
+      await collectOpenCode(join(directory, "missing.db"), 0, signal),
+      { rows: [], incomplete: false },
     );
     const controller = new AbortController();
     controller.abort();
@@ -102,11 +99,16 @@ test("Pi scans nested JSONL read-only, deduplicates copies, skips links and tole
   }
 });
 
-function row(provider: HistoryRow["provider"], sessionId: string): HistoryRow {
+function row(
+  provider: HistoryRow["provider"],
+  harness: HistoryRow["harness"],
+  sessionId = "one",
+): HistoryRow {
   const timestamp = new Date().toISOString();
 
   return {
     provider,
+    harness,
     sessionId,
     cwd: "/workspace",
     model: "model-a",
@@ -116,13 +118,13 @@ function row(provider: HistoryRow["provider"], sessionId: string): HistoryRow {
   };
 }
 
-test("rescanning Pi backfills cached null costs and combines estimates with native usage without double-counting", async () => {
-  const directory = await mkdtemp(join(tmpdir(), "nestkit-pi-cost-"));
+test("rescanning migrated Pi usage updates costs without double-counting native sessions", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "paseo-pi-cost-"));
   const cacheDirectory = join(directory, "cache");
   const logDirectory = join(directory, "logs");
-  const native = row("opencode-go", "native");
+  const native = row("opencode-go", "opencode");
   native.totals.cost = 0.75;
-  const legacy = row("opencode-go", "pi:one");
+  const legacy = row("opencode-go", "pi");
   legacy.totals = {
     input: 34,
     cached: 10,
@@ -133,42 +135,55 @@ test("rescanning Pi backfills cached null costs and combines estimates with nati
   const timestamp = legacy.lastAt;
   const store = createHistoryStore(
     cacheDirectory,
-    createLocalHistoryCollector(
-      async (provider) => (provider === "opencode-go" ? [native] : []),
-      (since, signal) => collectPi(since, signal, [logDirectory]),
-    ),
+    fakeCollectors(async (harness, since, signal) => {
+      if (harness === "pi") {
+        return collectPi(since, signal, [logDirectory]);
+      }
+
+      return {
+        rows: harness === "opencode" ? [native] : [],
+        incomplete: false,
+      };
+    }),
   );
 
   try {
+    await mkdir(cacheDirectory);
+    await writeFile(
+      join(cacheDirectory, "history.json"),
+      JSON.stringify({
+        version: 1,
+        scannedAt: timestamp,
+        rows: [native, { ...legacy, sessionId: "pi:one" }].map(
+          ({ harness: _harness, ...record }) => record,
+        ),
+      }),
+    );
     await mkdir(logDirectory);
-    await writeSavedHistory(cacheDirectory, {
-      version: 1,
-      scannedAt: timestamp,
-      rows: [native, legacy],
-    });
-    const entries = [
-      { type: "session", id: "one", cwd: "/workspace", timestamp },
-      ...[0.125, 0.375].map((total, index) => ({
-        type: "message",
-        id: String(index),
-        timestamp,
-        message: {
-          role: "assistant",
-          provider: "opencode-go",
-          model: "model-a",
-          usage: {
-            input: 10,
-            output: 20,
-            cacheRead: 5,
-            cacheWrite: 2,
-            cost: { total },
-          },
-        },
-      })),
-    ];
     await writeFile(
       join(logDirectory, "one.jsonl"),
-      entries.map((entry) => JSON.stringify(entry)).join("\n"),
+      [
+        { type: "session", id: "one", cwd: "/workspace", timestamp },
+        ...[0.125, 0.375].map((total, index) => ({
+          type: "message",
+          id: String(index),
+          timestamp,
+          message: {
+            role: "assistant",
+            provider: "opencode-go",
+            model: "model-a",
+            usage: {
+              input: 10,
+              output: 20,
+              cacheRead: 5,
+              cacheWrite: 2,
+              cost: { total },
+            },
+          },
+        })),
+      ]
+        .map((entry) => JSON.stringify(entry))
+        .join("\n"),
     );
     await store.refresh();
     const result = await store.read("opencode-go", "/workspace", 7);
@@ -185,12 +200,14 @@ test("rescanning Pi backfills cached null costs and combines estimates with nati
     assert.equal(result.daily[0]?.totals.cost, 1.25);
     assert.equal(result.models[0]?.totals.cost, 1.25);
     assert.equal(
-      result.sessions.find((session) => session.sessionId === "pi:one")?.totals
-        .cost,
+      result.sessions.find((session) => session.harness === "pi")?.totals.cost,
       0.5,
     );
     await store.close();
-    const reloaded = createHistoryStore(cacheDirectory, async () => []);
+    const reloaded = createHistoryStore(
+      cacheDirectory,
+      fakeCollectors(async () => ({ rows: [], incomplete: false })),
+    );
 
     try {
       const saved = await reloaded.read("opencode-go", "/workspace", 7);
@@ -205,42 +222,55 @@ test("rescanning Pi backfills cached null costs and combines estimates with nati
   }
 });
 
-test("provider histories share a Pi scan and retain separate native and Pi sessions after reload", async () => {
-  const directory = await mkdtemp(join(tmpdir(), "nestkit-pi-store-"));
+test("both provider views share a Pi collector scan and retain harness identity after reload", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "paseo-pi-store-"));
   let piScans = 0;
-  const collect = createLocalHistoryCollector(
-    async (provider) => [row(provider, "one")],
-    async () => {
-      piScans += 1;
+  const collectors = fakeCollectors(async (harness) => {
+    if (harness === "pi") {
+      piScans++;
 
-      return [row("codex", "pi:one"), row("opencode-go", "pi:one")];
-    },
-  );
-  const store = createHistoryStore(directory, collect);
+      return {
+        rows: [row("chatgpt", "pi"), row("opencode-go", "pi")],
+        incomplete: false,
+      };
+    }
+
+    return {
+      rows: [row(harness === "codex" ? "chatgpt" : "opencode-go", harness)],
+      incomplete: false,
+    };
+  });
+  const store = createHistoryStore(directory, collectors);
 
   try {
-    const [codex, go] = await Promise.all([
-      store.read("codex", "/workspace", 7),
+    const [chatgpt, go] = await Promise.all([
+      store.read("chatgpt", "/workspace", 7),
       store.read("opencode-go", "/workspace", 7),
     ]);
     assert.equal(piScans, 1);
-    assert.equal(codex.workspaceSessionCount, 2);
+    assert.equal(chatgpt.workspaceSessionCount, 2);
     assert.equal(go.workspaceSessionCount, 2);
-    assert.equal(codex.totals.input, 34);
-    await store.close();
-    const reloaded = createHistoryStore(
-      directory,
-      createLocalHistoryCollector(
-        async (provider) => [row(provider, "one")],
-        async () => [row("codex", "pi:one"), row("opencode-go", "pi:one")],
-      ),
+    assert.equal(chatgpt.totals.input, 34);
+    assert.deepEqual(
+      new Set(chatgpt.sessions.map((s) => s.harness)),
+      new Set(["codex", "pi"]),
     );
+    assert.ok(chatgpt.sessions.every((s) => s.sessionId === "one"));
+    await store.refresh();
+    assert.equal(piScans, 2);
+    assert.equal(
+      (await store.read("chatgpt", "/workspace", 7)).totals.input,
+      34,
+    );
+    await store.close();
+    const reloaded = createHistoryStore(directory, collectors);
 
     try {
       assert.equal(
-        (await reloaded.read("codex", "/workspace", 7)).totals.input,
-        34,
+        (await reloaded.read("chatgpt", "/workspace", 7)).sessionCount,
+        2,
       );
+      assert.equal(piScans, 2);
     } finally {
       await reloaded.close();
     }
@@ -251,61 +281,88 @@ test("provider histories share a Pi scan and retain separate native and Pi sessi
 });
 
 test("a failed native collector preserves its cached usage while importing fresh Pi usage", async () => {
-  const directory = await mkdtemp(join(tmpdir(), "nestkit-pi-partial-"));
-  const initial = createHistoryStore(directory, async (provider) => [
-    row(provider, "native"),
-  ]);
+  const directory = await mkdtemp(join(tmpdir(), "paseo-pi-partial-"));
+  let failNative = false;
+  const store = createHistoryStore(
+    directory,
+    fakeCollectors(async (harness) => {
+      if (harness === "codex" && failNative) {
+        throw new Error("private failure");
+      }
+
+      if (harness === "codex") {
+        return { rows: [row("chatgpt", "codex")], incomplete: false };
+      }
+
+      return {
+        rows: harness === "pi" && failNative ? [row("chatgpt", "pi")] : [],
+        incomplete: false,
+      };
+    }),
+  );
 
   try {
-    await initial.read("codex", "/workspace", 7);
-    await initial.close();
-    const store = createHistoryStore(
-      directory,
-      createLocalHistoryCollector(
-        async () => {
-          throw new Error("private failure");
-        },
-        async () => [row("codex", "pi:one")],
-      ),
+    await store.refresh();
+    failNative = true;
+    await store.refresh();
+    const result = await store.read("chatgpt", "/workspace", 7);
+    assert.equal(result.workspaceSessionCount, 2);
+    assert.equal(result.totals.input, 34);
+    assert.match(result.warning, /previously stored/);
+    assert.ok(!result.warning.includes("private failure"));
+    assert.equal(
+      (await store.read("opencode-go", "/workspace", 7)).warning,
+      "",
     );
-
-    try {
-      await store.refresh();
-      const result = await store.read("codex", "/workspace", 7);
-      assert.equal(result.workspaceSessionCount, 2);
-      assert.equal(result.totals.input, 34);
-      assert.match(result.warning, /previously stored/);
-      assert.equal(result.warning.includes("private failure"), false);
-    } finally {
-      await store.close();
-    }
   } finally {
-    await initial.close();
+    await store.close();
     await rm(directory, { recursive: true, force: true });
   }
 });
 
-test("Pi failure does not block native history and the next scan retries Pi", async () => {
-  let calls = 0;
-  const collect = createLocalHistoryCollector(
-    async (provider) => [row(provider, "native")],
-    async () => {
-      calls += 1;
-
-      if (calls === 1) {
-        throw new Error("private Pi failure");
-      }
-
-      return [row("codex", "pi:one")];
+test("incomplete Pi scans retain complete sibling files without committing malformed snapshots", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "paseo-pi-incomplete-"));
+  const timestamp = new Date().toISOString();
+  const content = [
+    { type: "session", id: "one", cwd: "/workspace", timestamp },
+    {
+      type: "message",
+      id: "entry",
+      timestamp,
+      message: {
+        role: "assistant",
+        provider: "openai-codex",
+        model: "model-a",
+        usage: { input: 10, output: 20 },
+      },
     },
-  );
-  const signal = new AbortController().signal;
-  const failed = await collect("codex", 0, signal);
-  assert.ok(!Array.isArray(failed));
-  assert.equal(failed.incomplete, true);
-  assert.equal(failed.rows.length, 1);
-  const retried = await collect("codex", 1, signal);
-  assert.ok(!Array.isArray(retried));
-  assert.equal(retried.incomplete, false);
-  assert.equal(retried.rows.length, 2);
+  ]
+    .map((entry) => JSON.stringify(entry))
+    .join("\n");
+
+  try {
+    const good = join(directory, "good.jsonl");
+    await writeFile(good, content);
+    await writeFile(
+      join(directory, "bad.jsonl"),
+      content +
+        "\n" +
+        JSON.stringify({
+          type: "session",
+          id: "",
+          cwd: "/workspace",
+          timestamp,
+        }),
+    );
+    const result = await collectPi(0, new AbortController().signal, [
+      directory,
+    ]);
+    assert.equal(result.incomplete, true);
+    assert.equal(result.rows.length, 1);
+    assert.equal(result.rows[0]?.totals.input, 10);
+    assert.equal(result.rows[0]?.harness, "pi");
+    assert.equal(await readFile(good, "utf8"), content);
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
 });

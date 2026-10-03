@@ -1,3 +1,4 @@
+import type { Harness } from "./harnesses";
 import {
   addTotals,
   emptyTotals,
@@ -96,4 +97,12 @@ export function formatCost(value: number | null): string {
     minimumFractionDigits: 2,
     maximumFractionDigits: value < 1 ? 4 : 2,
   }).format(value);
+}
+
+/** Session IDs are local to a harness. */
+export function sessionKey(session: {
+  harness: Harness;
+  sessionId: string;
+}): string {
+  return JSON.stringify([session.harness, session.sessionId]);
 }

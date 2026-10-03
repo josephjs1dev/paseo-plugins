@@ -4,8 +4,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
 import { DatabaseSync } from "node:sqlite";
-import { collectCodex, collectGo } from "../../server/history-sources";
-import { collectPi } from "../../server/pi-history";
+import { collectCodex, collectOpenCode } from "../../server/history-sources";
+import { collectPi } from "../../server/collectors/pi";
 
 const NOW = Date.now();
 const DAY = 86_400_000;
@@ -90,7 +90,7 @@ test("Pi updated-file scans retain every message in that session snapshot", asyn
         .map((x) => JSON.stringify(x))
         .join("\n"),
     );
-    const rows = await collectPi(
+    const { rows } = await collectPi(
       NOW - 90 * DAY,
       new AbortController().signal,
       [directory],
@@ -153,7 +153,7 @@ test("OpenCode incremental scans use updated sessions and preserve canonical v2 
     );
     db.close();
     const before = await readFile(path);
-    const rows = await collectGo(
+    const { rows } = await collectOpenCode(
       path,
       NOW - 90 * DAY,
       new AbortController().signal,
@@ -206,7 +206,7 @@ test("legacy OpenCode schemas without update timestamps still return complete to
     }
 
     db.close();
-    const rows = await collectGo(
+    const { rows } = await collectOpenCode(
       path,
       NOW - 90 * DAY,
       new AbortController().signal,

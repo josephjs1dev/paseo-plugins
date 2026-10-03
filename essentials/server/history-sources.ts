@@ -1,7 +1,7 @@
 import { readdir, stat } from "node:fs/promises";
 import { join } from "node:path";
 
-import type { HistoryRow } from "../shared/history";
+import type { HistoryRow, HistoryCollection } from "../shared/history";
 import { aggregateRows } from "../shared/history-analysis";
 import {
   createCodexHistoryParser,
@@ -13,11 +13,6 @@ const MAX_LOG_FILES = 5_000;
 const MAX_SCAN_BYTES = 512 * 1024 * 1024;
 const MAX_LOG_BYTES = 128 * 1024 * 1024;
 const MAX_DATABASE_ROWS = 100_000;
-
-export interface HistoryCollection {
-  rows: HistoryRow[];
-  incomplete: boolean;
-}
 
 interface ScanLimits {
   maxScanBytes?: number;
@@ -38,26 +33,20 @@ export function collectCodex(
   return scanJsonl(roots, since, signal, createCodexHistoryParser, limits);
 }
 
-export async function collectJsonl(
+export function collectJsonl(
   roots: string[],
   since: number,
   signal: AbortSignal,
   createParser: CreateParser,
   modifiedSince?: number,
-): Promise<HistoryRow[]> {
-  const result = await scanJsonl(
+): Promise<HistoryCollection> {
+  return scanJsonl(
     roots,
     since,
     signal,
     createParser,
     modifiedSince === undefined ? {} : { modifiedSince },
   );
-
-  if (result.incomplete) {
-    throw new Error("History scan incomplete");
-  }
-
-  return result.rows;
 }
 
 /** Import complete logs newest-first; skipped logs keep their saved snapshots. */
@@ -197,17 +186,21 @@ async function scanJsonl(
   return { rows: aggregateRows(rows), incomplete };
 }
 
-export async function collectGo(
+export async function collectOpenCode(
   databasePath: string,
   since: number,
   signal: AbortSignal,
   modifiedSince?: number,
-): Promise<HistoryRow[]> {
+): Promise<HistoryCollection> {
+  if (signal.aborted) {
+    throw new Error("Cancelled");
+  }
+
   try {
     await stat(databasePath);
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === "ENOENT") {
-      return [];
+      return { rows: [], incomplete: false };
     }
 
     throw error;
@@ -295,7 +288,7 @@ export async function collectGo(
       }
     }
 
-    return aggregateRows(rows);
+    return { rows: aggregateRows(rows), incomplete: false };
   } finally {
     database.close();
   }

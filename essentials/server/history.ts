@@ -1,13 +1,12 @@
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 import type { HistoryScope } from "../shared/history";
-import type { HistoryRow } from "../shared/history";
 import { summarizeHistory } from "../shared/history-analysis";
 import type { Provider } from "../shared/usage";
-import { providerAdapters } from "./providers";
-import { collectPi } from "./pi-history";
+import { usageCollectors } from "./collectors";
+import type { UsageCollector } from "./collectors/types";
 import { withCodexCreditEstimate } from "../shared/codex-credit-estimate";
-import { createHistoryCache, type CollectHistory } from "./history-cache";
+import { createHistoryCache } from "./history-cache";
 
 const SCAN_WARNING =
   "Could not refresh all local usage records. Showing available sources and previously stored data, if available.";
@@ -20,10 +19,10 @@ export function historyDirectory(): string {
 
 export function createHistoryStore(
   directory = historyDirectory(),
-  collect: CollectHistory = createLocalHistoryCollector(),
+  collectors: readonly UsageCollector[] = Object.values(usageCollectors),
   now: () => number = Date.now,
 ) {
-  const cache = createHistoryCache(directory, collect, now);
+  const cache = createHistoryCache(directory, collectors, now);
 
   return {
     async read(
@@ -62,73 +61,5 @@ export function createHistoryStore(
     },
     refresh: cache.refresh,
     close: cache.close,
-  };
-}
-
-/** Scan Pi once per store refresh; failure of one harness cannot hide another. */
-export function createLocalHistoryCollector(
-  native = (
-    provider: Provider,
-    since: number,
-    signal: AbortSignal,
-    modifiedSince?: number,
-  ) => providerAdapters[provider].readHistory(since, signal, modifiedSince),
-  pi = (since: number, signal: AbortSignal, modifiedSince?: number) =>
-    collectPi(since, signal, undefined, modifiedSince),
-): CollectHistory {
-  let piScan:
-    | {
-        since: number;
-        modifiedSince: number | undefined;
-        signal: AbortSignal;
-        result: Promise<PromiseSettledResult<HistoryRow[]>>;
-      }
-    | undefined;
-
-  return async (provider, since, signal, modifiedSince) => {
-    if (
-      !piScan ||
-      piScan.since !== since ||
-      piScan.modifiedSince !== modifiedSince ||
-      piScan.signal !== signal
-    ) {
-      piScan = {
-        since,
-        modifiedSince,
-        signal,
-        result: Promise.resolve()
-          .then(() => pi(since, signal, modifiedSince))
-          .then(
-            (value) => ({ status: "fulfilled" as const, value }),
-            (reason: unknown) => ({ status: "rejected" as const, reason }),
-          ),
-      };
-    }
-
-    const piResultPromise = piScan.result;
-    const [nativeResult] = await Promise.allSettled([
-      Promise.resolve().then(() =>
-        native(provider, since, signal, modifiedSince),
-      ),
-    ]);
-    const piResult = await piResultPromise;
-    const nativeCollection =
-      nativeResult?.status === "fulfilled" ? nativeResult.value : undefined;
-
-    return {
-      rows: [
-        ...(Array.isArray(nativeCollection)
-          ? nativeCollection
-          : (nativeCollection?.rows ?? [])),
-        ...(piResult.status === "fulfilled"
-          ? piResult.value.filter((row) => row.provider === provider)
-          : []),
-      ],
-      incomplete:
-        nativeResult?.status === "rejected" ||
-        piResult.status === "rejected" ||
-        (!Array.isArray(nativeCollection) &&
-          (nativeCollection?.incomplete ?? false)),
-    };
   };
 }

@@ -40,7 +40,7 @@ export function estimateCodexCredits(
 
 /** Derive estimates on read, including older caches with recorded model names. */
 export function withCodexCreditEstimate(row: HistoryRow): HistoryRow {
-  return row.provider === "codex"
+  return row.provider === "chatgpt"
     ? {
         ...row,
         totals: {

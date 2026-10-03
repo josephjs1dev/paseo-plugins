@@ -1,3 +1,4 @@
+import { fakeCollectors } from "../history-fixtures";
 import assert from "node:assert/strict";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -14,7 +15,8 @@ test("history derives credits for older cached rows across days, models, session
   const directory = await mkdtemp(join(tmpdir(), "paseo-history-credits-"));
   const timestamp = new Date(Date.now() - 86_400_000).toISOString();
   const known: HistoryRow = {
-    provider: "codex",
+    provider: "chatgpt",
+    harness: "codex",
     sessionId: "one",
     model: "gpt-6.1-sol",
     cwd: "/workspace",
@@ -37,14 +39,18 @@ test("history derives credits for older cached rows across days, models, session
 
   try {
     await writeSavedHistory(directory, {
-      version: 1,
+      version: 2,
+      collectors: {},
       scannedAt: timestamp,
       rows: [known, unknown],
     });
-    const store = createHistoryStore(directory, async () => []);
+    const store = createHistoryStore(
+      directory,
+      fakeCollectors(async () => ({ rows: [], incomplete: false })),
+    );
 
     try {
-      const workspace = await store.read("codex", "/workspace", 7);
+      const workspace = await store.read("chatgpt", "/workspace", 7);
       assert.equal(workspace.workspaceTotals.creditEstimate?.amount, 51.25);
       assert.equal(
         workspace.workspaceDaily[0]?.totals.creditEstimate?.amount,
@@ -56,7 +62,7 @@ test("history derives credits for older cached rows across days, models, session
         workspace.sessions[0]?.models[0]?.totals.creditEstimate?.amount,
         51.25,
       );
-      const host = await store.read("codex", "/workspace", 7, 0, "host");
+      const host = await store.read("chatgpt", "/workspace", 7, 0, "host");
       assert.deepEqual(host.totals.creditEstimate, {
         amount: 51.25,
         pricedTokens: 1_100_000,

@@ -161,13 +161,13 @@ test("Codex supports all named buckets without duplicating the legacy bucket", (
     1,
   );
   const usage = usageSchema.parse({
-    provider: "codex",
+    provider: "chatgpt",
     status: "ok",
     message: "",
     checkedAt: new Date().toISOString(),
     windows,
   });
-  assert.equal(usageLabel(usage), "Codex · 20% left");
+  assert.equal(usageLabel(usage), "ChatGPT · 20% left");
 });
 
 test("Go preserves quota percentages and normalizes reset time zones", () => {

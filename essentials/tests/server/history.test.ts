@@ -1,3 +1,4 @@
+import { fakeCollectors } from "../history-fixtures";
 import assert from "node:assert/strict";
 import {
   mkdir,
@@ -12,7 +13,7 @@ import { join } from "node:path";
 import { test } from "node:test";
 import * as zlib from "node:zlib";
 import { DatabaseSync } from "node:sqlite";
-import { collectCodex, collectGo } from "../../server/history-sources";
+import { collectCodex, collectOpenCode } from "../../server/history-sources";
 import { createHistoryStore } from "../../server/history";
 import { readHistory, type HistoryRow } from "../../shared/history";
 
@@ -72,11 +73,14 @@ test(
       assert.deepEqual(await readFile(copy), data);
       const store = createHistoryStore(
         join(directory, "store"),
-        async (provider) => (provider === "codex" ? rows : []),
+        fakeCollectors(async (harness) => ({
+          rows: harness === "codex" ? rows : [],
+          incomplete: false,
+        })),
       );
 
       try {
-        const result = await store.read("codex", "/workspace", 7);
+        const result = await store.read("chatgpt", "/workspace", 7);
         assert.equal(result.workspaceDaily[0]?.day, timestamp.slice(0, 10));
         assert.equal(result.workspaceTotals.input, 100);
         assert.equal(result.warning, "");
@@ -218,7 +222,11 @@ test("OpenCode v1 and v2 history is read-only, provider-filtered, and migration-
     );
     db.close();
     const before = await readFile(path);
-    const rows = await collectGo(path, 0, new AbortController().signal);
+    const { rows } = await collectOpenCode(
+      path,
+      0,
+      new AbortController().signal,
+    );
     assert.equal(rows.length, 1);
     assert.equal(rows[0]?.totals.input, 17);
     assert.equal(rows[0]?.totals.output, 23);
@@ -241,7 +249,8 @@ test("history survives reload, filters workspace sessions, and retains data afte
   const directory = await mkdtemp(join(tmpdir(), "nestkit-history-store-"));
   const now = new Date().toISOString();
   const row: HistoryRow = {
-    provider: "codex",
+    provider: "chatgpt",
+    harness: "codex",
     sessionId: "one",
     model: "model-a",
     cwd: "/workspace",
@@ -251,12 +260,17 @@ test("history survives reload, filters workspace sessions, and retains data afte
   };
 
   try {
-    const store = createHistoryStore(directory, async (provider) =>
-      provider === "codex"
-        ? [row, { ...row, sessionId: "two", cwd: "/other" }]
-        : [],
+    const store = createHistoryStore(
+      directory,
+      fakeCollectors(async (harness) => ({
+        rows:
+          harness === "codex"
+            ? [row, { ...row, sessionId: "two", cwd: "/other" }]
+            : [],
+        incomplete: false,
+      })),
     );
-    const result = await store.read("codex", "/workspace", 7);
+    const result = await store.read("chatgpt", "/workspace", 7);
     assert.equal(result.sessions.length, 1);
     assert.equal(result.totals.input, 200);
     assert.equal(result.totals.cost, null);
@@ -268,11 +282,14 @@ test("history survives reload, filters workspace sessions, and retains data afte
       0o600,
     );
     await store.close();
-    const reloaded = createHistoryStore(directory, async () => {
-      throw new Error("private source failure");
-    });
+    const reloaded = createHistoryStore(
+      directory,
+      fakeCollectors(async () => {
+        throw new Error("private source failure");
+      }),
+    );
     await reloaded.refresh();
-    const stale = await reloaded.read("codex", "/workspace", 30);
+    const stale = await reloaded.read("chatgpt", "/workspace", 30);
     assert.equal(stale.totals.input, 200);
     assert.equal(stale.workspaceTotals.input, 100);
     assert.equal(stale.workspaceDaily[0]?.totals.input, 100);
@@ -288,21 +305,24 @@ test("history survives reload, filters workspace sessions, and retains data afte
 test("provider and workspace readers share scans and cached local history", async () => {
   const directory = await mkdtemp(join(tmpdir(), "nestkit-history-cache-"));
   const collected: string[] = [];
-  const store = createHistoryStore(directory, async (provider) => {
-    collected.push(provider);
+  const store = createHistoryStore(
+    directory,
+    fakeCollectors(async (harness) => {
+      collected.push(harness);
 
-    return [];
-  });
+      return { rows: [], incomplete: false };
+    }),
+  );
 
   try {
     await Promise.all([
-      store.read("codex", "/workspace", 7),
+      store.read("chatgpt", "/workspace", 7),
       store.read("opencode-go", "/workspace", 30),
-      store.read("codex", "/other", 90),
+      store.read("chatgpt", "/other", 90),
     ]);
-    assert.deepEqual(collected.sort(), ["codex", "opencode-go"]);
-    await store.read("codex", "/workspace", 30, 20);
-    assert.equal(collected.length, 2);
+    assert.deepEqual(collected.sort(), ["codex", "opencode", "pi"]);
+    await store.read("chatgpt", "/workspace", 30, 20);
+    assert.equal(collected.length, 3);
     const saved = JSON.parse(
       await readFile(join(directory, "history.json"), "utf8"),
     ) as { rows: unknown[] };
@@ -318,9 +338,12 @@ test("corrupt stored history is preserved", async () => {
 
   try {
     await writeFile(join(directory, "history.json"), "broken data");
-    const store = createHistoryStore(directory, async () => []);
+    const store = createHistoryStore(
+      directory,
+      fakeCollectors(async () => ({ rows: [], incomplete: false })),
+    );
     await assert.rejects(
-      store.read("codex", "/workspace", 7),
+      store.read("chatgpt", "/workspace", 7),
       /not overwritten/,
     );
     assert.equal(
@@ -339,21 +362,25 @@ test("scopes and pages share source scans, retain rows and warnings, and satisfy
   const collected: string[] = [];
   const rows: HistoryRow[] = Array.from({ length: 25 }, (_, index) => ({
     provider: "opencode-go",
-    sessionId: index % 2 ? `pi:${index}` : `native-${index}`,
+    harness: index % 2 ? "pi" : "opencode",
+    sessionId: String(index),
     model: "model-go",
     cwd: index % 2 ? "/other/worktree" : "/other/project",
     day: now.slice(0, 10),
     lastAt: now,
     totals: { input: 100, cached: 10, output: 25, reasoning: 2, cost: 0.5 },
   }));
-  const store = createHistoryStore(directory, async (provider) => {
-    collected.push(provider);
+  const store = createHistoryStore(
+    directory,
+    fakeCollectors(async (harness) => {
+      collected.push(harness);
 
-    return {
-      rows: provider === "opencode-go" ? rows : [],
-      incomplete: provider === "opencode-go",
-    };
-  });
+      return {
+        rows: rows.filter((row) => row.harness === harness),
+        incomplete: harness === "opencode",
+      };
+    }),
+  );
 
   try {
     const [workspace, host, second] = await Promise.all([
@@ -361,12 +388,7 @@ test("scopes and pages share source scans, retain rows and warnings, and satisfy
       store.read("opencode-go", "/workspace", 7, 0, "host"),
       store.read("opencode-go", "/workspace", 7, 20, "host"),
     ]);
-    assert.deepEqual(collected.sort(), [
-      "codex",
-      "codex",
-      "opencode-go",
-      "opencode-go",
-    ]);
+    assert.deepEqual(collected.sort(), ["codex", "opencode", "opencode", "pi"]);
     assert.equal(workspace.sessionCount, 0);
     assert.equal(host.sessionCount, 25);
     assert.equal(host.sessions.length, 20);
@@ -396,7 +418,7 @@ test("scopes and pages share source scans, retain rows and warnings, and satisfy
       0,
     );
     assert.equal(
-      (await store.read("codex", "/workspace", 7, 0, "host")).sessionCount,
+      (await store.read("chatgpt", "/workspace", 7, 0, "host")).sessionCount,
       0,
     );
     assert.equal(collected.length, 4);
@@ -404,11 +426,19 @@ test("scopes and pages share source scans, retain rows and warnings, and satisfy
       await readFile(join(directory, "history.json"), "utf8"),
       before,
     );
-    assert.deepEqual((JSON.parse(before) as { rows: HistoryRow[] }).rows, rows);
+    assert.deepEqual(
+      (JSON.parse(before) as { rows: HistoryRow[] }).rows.sort(
+        (a, b) => Number(a.sessionId) - Number(b.sessionId),
+      ),
+      rows,
+    );
     await store.close();
-    const reloaded = createHistoryStore(directory, async () => {
-      throw new Error("source failure");
-    });
+    const reloaded = createHistoryStore(
+      directory,
+      fakeCollectors(async () => {
+        throw new Error("source failure");
+      }),
+    );
 
     try {
       const stale = await reloaded.read(

@@ -9,17 +9,17 @@ test("opening history targets the correct workspace and preserves other tab filt
   assert.equal(navigation.getSnapshot("workspace-a"), initial);
   navigation.open("workspace-a", "opencode-go", 30, "host");
   const first = navigation.getSnapshot("workspace-a");
-  navigation.open("workspace-b", "codex", 7);
+  navigation.open("workspace-b", "chatgpt", 7);
   assert.deepEqual(opened, ["workspace-a", "workspace-b"]);
   assert.equal(navigation.getSnapshot("workspace-a"), first);
   assert.deepEqual(first, { provider: "opencode-go", days: 30, scope: "host" });
   assert.deepEqual(navigation.getSnapshot("workspace-b"), {
-    provider: "codex",
+    provider: "chatgpt",
     days: 7,
     scope: "workspace",
   });
   navigation.select("workspace-b", {
-    provider: "codex",
+    provider: "chatgpt",
     days: 7,
     scope: "host",
   });
@@ -34,7 +34,7 @@ test("popup navigation replaces scope in the owning tab and keeps other hosts is
   const secondHost = createHistoryNavigation(() => {});
   secondHost.open("workspace-a", "opencode-go", 30, "host");
   const otherHostSelection = secondHost.getSnapshot("workspace-a");
-  firstHost.open("workspace-a", "codex", 7, "host");
+  firstHost.open("workspace-a", "chatgpt", 7, "host");
   assert.equal(firstHost.getSnapshot("workspace-a").scope, "host");
   firstHost.open("workspace-a", "opencode-go", 30, "workspace");
   assert.deepEqual(firstHost.getSnapshot("workspace-a"), {

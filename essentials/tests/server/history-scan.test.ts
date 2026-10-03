@@ -1,3 +1,4 @@
+import { fakeCollectors } from "../history-fixtures";
 import assert from "node:assert/strict";
 import { randomBytes } from "node:crypto";
 import { mkdtemp, rm, utimes, writeFile } from "node:fs/promises";
@@ -6,10 +7,7 @@ import { join } from "node:path";
 import { test } from "node:test";
 import * as zlib from "node:zlib";
 import { collectCodex } from "../../server/history-sources";
-import {
-  createHistoryStore,
-  createLocalHistoryCollector,
-} from "../../server/history";
+import { createHistoryStore } from "../../server/history";
 import { writeSavedHistory } from "../../server/history-files";
 import type { HistoryRow } from "../../shared/history";
 
@@ -62,7 +60,8 @@ test("a bounded scan imports yesterday first and retains older saved usage", asy
     assert.equal(result.rows[0]?.totals.input, 100);
 
     const cached: HistoryRow = {
-      provider: "codex",
+      provider: "chatgpt",
+      harness: "codex",
       sessionId: "old",
       cwd: "/workspace",
       model: null,
@@ -72,7 +71,8 @@ test("a bounded scan imports yesterday first and retains older saved usage", asy
     };
     const storage = join(directory, "store");
     await writeSavedHistory(storage, {
-      version: 1,
+      version: 2,
+      collectors: {},
       scannedAt: older,
       rows: [
         cached,
@@ -86,15 +86,14 @@ test("a bounded scan imports yesterday first and retains older saved usage", asy
     });
     const store = createHistoryStore(
       storage,
-      createLocalHistoryCollector(
-        async (provider) => (provider === "codex" ? result : []),
-        async () => [],
+      fakeCollectors(async (harness) =>
+        harness === "codex" ? result : { rows: [], incomplete: false },
       ),
     );
 
     try {
       await store.refresh();
-      const history = await store.read("codex", "/workspace", 7);
+      const history = await store.read("chatgpt", "/workspace", 7);
       assert.equal(history.workspaceTotals.input, 600);
       assert.equal(history.workspaceSessionCount, 2);
       assert.equal(

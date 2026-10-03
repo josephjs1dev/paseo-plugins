@@ -265,7 +265,7 @@ export default function contribute(client: PluginClientContext) {
     onSelect({ workspace }) {
       historyNavigation.open(
         workspace.id,
-        buttons.get(workspace.id)?.provider ?? "codex",
+        buttons.get(workspace.id)?.provider ?? "chatgpt",
       );
     },
   });

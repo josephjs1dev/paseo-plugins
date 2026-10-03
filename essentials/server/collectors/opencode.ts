@@ -2,10 +2,9 @@ import { open } from "node:fs/promises";
 import { z } from "zod";
 import { homedir } from "node:os";
 import { join } from "node:path";
-
 import { normalizeGo } from "../../shared/quota";
-import { collectGo } from "../history-sources";
-import type { ProviderAdapter } from "./types";
+import { collectOpenCode } from "../history-sources";
+import type { UsageCollector } from "./types";
 
 const errorMessages: Record<string, string> = {
   "go-key":
@@ -16,37 +15,48 @@ const errorMessages: Record<string, string> = {
     "This key does not have an active OpenCode Go subscription.",
 };
 
-export const opencodeGoAdapter: ProviderAdapter = {
-  async readQuota(signal) {
-    let key: string;
-
-    try {
-      key = await readGoKey();
-    } catch {
-      throw new Error("go-key");
-    }
-
-    const response = await readGoLimits(key, signal);
-
-    return { windows: normalizeGo(response) };
-  },
-
-  readHistory(since, signal, modifiedSince) {
+export const opencodeCollector: UsageCollector = {
+  harness: "opencode",
+  providers: ["opencode-go"],
+  async collectHistory({ since, signal, modifiedSince }) {
     const dataHome =
       process.env.XDG_DATA_HOME ?? join(homedir(), ".local", "share");
-    const databasePath =
+    const database =
       process.env.OPENCODE_USAGE_DB ??
       join(dataHome, "opencode", "opencode.db");
 
-    return collectGo(databasePath, since, signal, modifiedSince);
+    try {
+      return await collectOpenCode(database, since, signal, modifiedSince);
+    } catch {
+      if (signal.aborted) {
+        throw new Error("Cancelled");
+      }
+
+      // An unfinished database snapshot must not replace a cached session day.
+      return { rows: [], incomplete: true };
+    }
   },
+  quota: {
+    provider: "opencode-go",
+    async read(signal) {
+      let key: string;
 
-  describeError(error) {
-    const code = error instanceof Error ? error.message : "";
+      try {
+        key = await readGoKey();
+      } catch {
+        throw new Error("go-key");
+      }
 
-    return (
-      errorMessages[code] ?? "OpenCode Go usage unavailable. Try again shortly."
-    );
+      return { windows: normalizeGo(await readGoLimits(key, signal)) };
+    },
+    describeError(error) {
+      const code = error instanceof Error ? error.message : "";
+
+      return (
+        errorMessages[code] ??
+        "OpenCode Go usage unavailable. Try again shortly."
+      );
+    },
   },
 };
 
@@ -60,7 +70,7 @@ const responseErrors: Record<number, string> = {
   403: "go-subscription",
 };
 
-export async function readGoKey(): Promise<string> {
+async function readGoKey(): Promise<string> {
   if (process.env.OPENCODE_GO_API_KEY) {
     return keySchema.parse(process.env.OPENCODE_GO_API_KEY);
   }

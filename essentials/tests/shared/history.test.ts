@@ -14,7 +14,8 @@ import {
 } from "../../shared/history-analysis";
 
 const row: HistoryRow = {
-  provider: "codex",
+  provider: "chatgpt",
+  harness: "codex",
   sessionId: "session-one",
   cwd: "/workspace",
   day: "2026-09-25",
@@ -68,7 +69,7 @@ test("summaries filter providers and dates while matching workspace sessions sep
   ];
 
   const summary = summarizeHistory(rows, {
-    provider: "codex",
+    provider: "chatgpt",
     firstDay: "2026-09-20",
     matchesWorkspace: (directory) => directory === "/workspace",
   });
@@ -95,7 +96,7 @@ test("workspace costs include every matching session before the recent-list limi
     totals: { ...row.totals, cost: 100 },
   });
   const summary = summarizeHistory(rows, {
-    provider: "codex",
+    provider: "chatgpt",
     firstDay: "2026-09-20",
     matchesWorkspace: (directory) => directory === "/workspace",
   });
@@ -115,7 +116,7 @@ test("missing workspace costs remain unknown while a different workspace stays c
       { ...row, cwd: "/other", totals: { ...row.totals, cost: 5 } },
     ],
     {
-      provider: "codex",
+      provider: "chatgpt",
       firstDay: "2026-09-20",
       matchesWorkspace: (directory) => directory === "/other",
     },
@@ -134,7 +135,7 @@ test("model breakdowns preserve switching sessions and pagination does not trunc
   }));
   rows.push({ ...row, sessionId: "s-0", model: "model-b" });
   const summary = summarizeHistory(rows, {
-    provider: "codex",
+    provider: "chatgpt",
     firstDay: "2026-09-20",
     sessionOffset: 20,
     matchesWorkspace: () => true,
@@ -153,7 +154,7 @@ test("model breakdowns preserve switching sessions and pagination does not trunc
     100,
   );
   const firstPage = summarizeHistory(rows, {
-    provider: "codex",
+    provider: "chatgpt",
     firstDay: "2026-09-20",
     matchesWorkspace: () => true,
   });
@@ -177,13 +178,14 @@ test("model-aware daily snapshots replace legacy rows without double-counting", 
   assert.deepEqual(mergeHistoryRows(merged, [], 0), merged);
 });
 
-for (const provider of ["codex", "opencode-go"] as const) {
+for (const provider of ["chatgpt", "opencode-go"] as const) {
   test(`${provider}: host scope includes native and Pi sessions when the owning workspace is empty`, () => {
+    const nativeHarness = provider === "chatgpt" ? "codex" : "opencode";
     const rows: HistoryRow[] = Array.from({ length: 25 }, (_, index) => ({
       ...row,
       provider,
-      sessionId:
-        (index % 2 ? "pi:" : "") + `s-${String(index).padStart(2, "0")}`,
+      harness: index % 2 ? "pi" : nativeHarness,
+      sessionId: `s-${String(index).padStart(2, "0")}`,
       cwd: index % 2 ? "/other/worktree" : "/other/project",
       model: "model-a",
     }));
@@ -208,7 +210,7 @@ for (const provider of ["codex", "opencode-go"] as const) {
     const excluded: HistoryRow[] = [
       {
         ...switching,
-        provider: provider === "codex" ? "opencode-go" : "codex",
+        provider: provider === "chatgpt" ? "opencode-go" : "chatgpt",
       },
       { ...switching, sessionId: "expired", day: "2026-09-01" },
       { ...switching, sessionId: "future", day: "2026-09-26" },
@@ -245,8 +247,12 @@ for (const provider of ["codex", "opencode-go"] as const) {
         switching.sessionId,
         ...rows
           .slice(1, 25)
-          .map((entry) => entry.sessionId)
-          .sort(),
+          .sort((a, b) =>
+            JSON.stringify([a.harness, a.sessionId]).localeCompare(
+              JSON.stringify([b.harness, b.sessionId]),
+            ),
+          )
+          .map((entry) => entry.sessionId),
       ],
     );
     assert.deepEqual(
@@ -310,7 +316,7 @@ for (const provider of ["codex", "opencode-go"] as const) {
 }
 
 test("history RPC defaults scope and validates scoped responses and bounded directories", () => {
-  const input = { provider: "codex", workspaceId: "workspace", days: 7 };
+  const input = { provider: "chatgpt", workspaceId: "workspace", days: 7 };
   assert.equal(readHistory.input.parse(input).scope, "workspace");
   assert.equal(
     readHistory.input.parse({ ...input, scope: "host" }).scope,
@@ -322,7 +328,7 @@ test("history RPC defaults scope and validates scoped responses and bounded dire
   );
   const response = {
     ...summarizeHistory([row], {
-      provider: "codex",
+      provider: "chatgpt",
       firstDay: row.day,
       scope: "host",
       matchesWorkspace: () => false,

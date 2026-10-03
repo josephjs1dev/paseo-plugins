@@ -1,9 +1,11 @@
+import { harnessDefinitions } from "../shared/harnesses";
 import { useState } from "react";
 import type { PluginHostProps } from "@getpaseo/plugin/client";
 import { Icon } from "@getpaseo/plugin/client/react-native";
 import { Pressable, Text, View } from "react-native";
 import type { History, Totals } from "../shared/history";
 import {
+  sessionKey,
   compactTokens,
   formatCreditEstimate,
   totalTokens,
@@ -193,6 +195,7 @@ export function SessionUsage({
   showDirectory = false,
 }: Themed & { session: History["sessions"][number]; showDirectory?: boolean }) {
   const [expanded, setExpanded] = useState(false);
+  const harnessName = harnessDefinitions[session.harness].name;
   const date = new Date(session.lastAt).toLocaleDateString(undefined, {
     month: "short",
     day: "numeric",
@@ -207,7 +210,7 @@ export function SessionUsage({
     >
       <Pressable
         accessibilityRole="button"
-        accessibilityLabel={"Session " + session.sessionId}
+        accessibilityLabel={harnessName + " session " + session.sessionId}
         accessibilityState={{ expanded }}
         onPress={() => setExpanded(!expanded)}
         style={({ pressed }) => ({
@@ -229,7 +232,7 @@ export function SessionUsage({
               fontWeight: "500",
             }}
           >
-            {date} · {session.sessionId.slice(0, 16)}
+            {harnessName} · {date} · {session.sessionId.slice(0, 16)}
           </Text>
           <Text
             numberOfLines={1}
@@ -292,7 +295,7 @@ export function SessionUsage({
               lineHeight: 18,
             }}
           >
-            {session.sessionId}
+            {harnessName} · {session.sessionId}
           </Text>
           {showDirectory && (
             <Text
@@ -362,7 +365,7 @@ export function HistorySessions({
       <View>
         {sessions.map((session) => (
           <SessionUsage
-            key={session.sessionId}
+            key={sessionKey(session)}
             theme={theme}
             session={session}
             showDirectory={showDirectory}

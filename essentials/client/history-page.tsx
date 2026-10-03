@@ -66,7 +66,7 @@ function HistoryResults({
   const [compact, setCompact] = useState(layout.compact);
   const [sessionOffset, setSessionOffset] = useState(0);
   const [metric, setMetric] = useState<"tokens" | "cost" | "credits">(
-    provider === "codex" ? "credits" : "tokens",
+    provider === "chatgpt" ? "credits" : "tokens",
   );
   const queryClient = useQueryClient();
   const query = useHistoryQuery(
@@ -269,14 +269,14 @@ function HistoryResults({
                 theme={theme}
                 totals={totals}
                 compact={compact}
-                showCredits={provider === "codex"}
+                showCredits={provider === "chatgpt"}
               />
               <HistorySection
                 theme={theme}
                 title="Activity"
                 description={periodLabel}
                 trailing={
-                  hasCost || provider === "codex" ? (
+                  hasCost || provider === "chatgpt" ? (
                     <HistoryOptions theme={theme} label="Chart metric">
                       <HistoryChoice
                         theme={theme}
@@ -285,7 +285,7 @@ function HistoryResults({
                       >
                         Tokens
                       </HistoryChoice>
-                      {provider === "codex" && (
+                      {provider === "chatgpt" && (
                         <HistoryChoice
                           theme={theme}
                           selected={activeMetric === "credits"}
@@ -347,7 +347,7 @@ function HistoryResults({
                 }}
               >
                 Times are grouped by UTC day. History is retained for 90 days.{" "}
-                {provider === "codex"
+                {provider === "chatgpt"
                   ? "Credit estimates use Standard model rates checked " +
                     CODEX_CREDIT_RATE_DATE +
                     ". Speed and plan adjustments are excluded. Partial estimates cover priced models only; they are not billed charges. "

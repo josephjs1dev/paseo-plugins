@@ -3,9 +3,9 @@ import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
-import { readCodexLimits } from "../../server/providers/codex";
+import { readCodexLimits } from "../../server/collectors/codex";
 import { normalizeCodex, normalizeGo } from "../../shared/quota";
-import { readGoLimits } from "../../server/providers/opencode-go";
+import { readGoLimits } from "../../server/collectors/opencode";
 import { createUsageReader } from "../../server/usage";
 import { usageLabel } from "../../shared/usage";
 
@@ -88,16 +88,16 @@ test("usage cache deduplicates requests and retries failures after one minute", 
     () => clock,
   );
   const [first, second] = await Promise.all([
-    reader.read("codex"),
-    reader.read("codex"),
+    reader.read("chatgpt"),
+    reader.read("chatgpt"),
   ]);
   assert.equal(calls, 1);
   assert.deepEqual(first, second);
   assert.equal(first.status, "unavailable");
   assert.equal(JSON.stringify(first).includes("secret-token"), false);
-  assert.equal(usageLabel(first), "Codex · —");
+  assert.equal(usageLabel(first), "ChatGPT · —");
   clock = 60_001;
-  await reader.read("codex");
+  await reader.read("chatgpt");
   assert.equal(calls, 2);
   reader.close();
 });
@@ -111,7 +111,7 @@ test("plugin cleanup cancels in-flight provider work", async () => {
         });
       }),
   );
-  const pending = reader.read("codex");
+  const pending = reader.read("chatgpt");
   reader.close();
   assert.equal((await pending).status, "unavailable");
 });
@@ -126,10 +126,10 @@ test("credit-only Codex accounts return their balance and share the quota cache"
   });
 
   try {
-    const usage = await reader.read("codex");
+    const usage = await reader.read("chatgpt");
     assert.equal(usage.status, "ok");
     assert.deepEqual(usage.credits, credits);
-    assert.deepEqual(await reader.read("codex"), usage);
+    assert.deepEqual(await reader.read("chatgpt"), usage);
     assert.equal(calls, 1);
   } finally {
     reader.close();

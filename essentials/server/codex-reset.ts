@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { z } from "zod";
-import { readCodexLimits, redeemCodexReset } from "./providers/codex";
+import { readCodexLimits, redeemCodexReset } from "./collectors/codex";
 import type { createUsageReader } from "./usage";
 import type { ResetAttempt, ResetOutcome } from "../shared/codex-reset";
 import type { Usage } from "../shared/usage";
@@ -137,8 +137,8 @@ export function createCodexResetter(
             controller.signal,
           );
           // Invalidate even for noCredit/nothingToReset: the old count may be stale.
-          reader.invalidate("codex");
-          const usage = await reader.read("codex");
+          reader.invalidate("chatgpt");
+          const usage = await reader.read("chatgpt");
           activeKey = null;
 
           return { outcome, usage };

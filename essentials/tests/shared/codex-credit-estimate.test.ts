@@ -89,8 +89,9 @@ test("partial credit totals retain known estimates and explicit unpriced coverag
 
 test("recorded USD costs remain intact and other providers keep their own history", () => {
   const row: HistoryRow = {
-    provider: "codex",
-    sessionId: "pi:one",
+    provider: "chatgpt",
+    harness: "pi",
+    sessionId: "one",
     model: "gpt-6.1-sol",
     cwd: "/workspace",
     day: "2026-10-03",

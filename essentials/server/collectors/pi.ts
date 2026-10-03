@@ -1,8 +1,17 @@
 import { homedir } from "node:os";
 import { join } from "node:path";
+import { createPiHistoryParser } from "../../shared/history-parsers";
+import type { HistoryCollection } from "../../shared/history";
+import { collectJsonl } from "../history-sources";
+import type { UsageCollector } from "./types";
 
-import { createPiHistoryParser } from "../shared/pi-history";
-import { collectJsonl } from "./history-sources";
+export const piCollector: UsageCollector = {
+  harness: "pi",
+  providers: ["chatgpt", "opencode-go"],
+  collectHistory({ since, signal, modifiedSince }) {
+    return collectPi(since, signal, undefined, modifiedSince);
+  },
+};
 
 function expandHome(path: string): string {
   if (path === "~") {
@@ -28,7 +37,7 @@ export function collectPi(
   signal: AbortSignal,
   roots = [piHistoryDirectory()],
   modifiedSince?: number,
-) {
+): Promise<HistoryCollection> {
   return collectJsonl(
     roots,
     since,

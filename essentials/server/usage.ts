@@ -1,5 +1,6 @@
 import type { Provider, Usage, Quota } from "../shared/usage";
-import { providerAdapters } from "./providers";
+import { quotaCapability } from "./collectors";
+import { quotaSchema } from "../shared/usage";
 
 const CACHE_DURATION_MS = 60_000;
 
@@ -12,7 +13,7 @@ interface CachedUsage {
 
 export function createUsageReader(
   fetchQuota: FetchQuota = (provider, signal) =>
-    providerAdapters[provider].readQuota(signal),
+    quotaCapability(provider).read(signal),
   now: () => number = Date.now,
 ) {
   const controller = new AbortController();
@@ -20,7 +21,9 @@ export function createUsageReader(
 
   async function fetchUsage(provider: Provider): Promise<Usage> {
     try {
-      const quota = await fetchQuota(provider, controller.signal);
+      const quota = quotaSchema.parse(
+        await fetchQuota(provider, controller.signal),
+      );
 
       if (
         !quota.windows.length &&
@@ -41,7 +44,7 @@ export function createUsageReader(
       return {
         provider,
         status: "unavailable",
-        message: providerAdapters[provider].describeError(error),
+        message: quotaCapability(provider).describeError(error),
         windows: [],
         checkedAt: new Date(now()).toISOString(),
       };

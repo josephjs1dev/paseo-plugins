@@ -1,49 +1,49 @@
 import { spawn } from "node:child_process";
-import { homedir } from "node:os";
-import { join } from "node:path";
-
-import {
-  normalizeCodex,
-  normalizeCodexCredits,
-  normalizeCodexResetCredits,
-} from "../../shared/quota";
 import {
   resetAttemptSchema,
   resetResponseSchema,
   type ResetAttempt,
 } from "../../shared/codex-reset";
+import { homedir } from "node:os";
+import { join } from "node:path";
+import {
+  normalizeCodex,
+  normalizeCodexCredits,
+  normalizeCodexResetCredits,
+} from "../../shared/quota";
 import { collectCodex } from "../history-sources";
-import type { ProviderAdapter } from "./types";
+import type { UsageCollector } from "./types";
 
-export const codexAdapter: ProviderAdapter = {
-  async readQuota(signal) {
-    const binary = process.env.PASEO_USAGE_CODEX_BIN ?? "codex";
-    const response = await readCodexLimits(signal, binary);
-
-    return {
-      windows: normalizeCodex(response),
-      credits: normalizeCodexCredits(response),
-      resetCredits: normalizeCodexResetCredits(response),
-    };
-  },
-
-  readHistory(since, signal, modifiedSince) {
+export const codexCollector: UsageCollector = {
+  harness: "codex",
+  providers: ["chatgpt"],
+  collectHistory({ since, signal, modifiedSince }) {
     const root = process.env.CODEX_HOME ?? join(homedir(), ".codex");
-    const directories = [
-      join(root, "sessions"),
-      join(root, "archived_sessions"),
-    ];
 
     return collectCodex(
-      directories,
+      [join(root, "sessions"), join(root, "archived_sessions")],
       since,
       signal,
       modifiedSince === undefined ? undefined : { modifiedSince },
     );
   },
+  quota: {
+    provider: "chatgpt",
+    async read(signal) {
+      const response = await readCodexLimits(
+        signal,
+        process.env.PASEO_USAGE_CODEX_BIN ?? "codex",
+      );
 
-  describeError() {
-    return "Codex limits unavailable. Check the Codex CLI and ChatGPT sign-in on this host.";
+      return {
+        windows: normalizeCodex(response),
+        credits: normalizeCodexCredits(response),
+        resetCredits: normalizeCodexResetCredits(response),
+      };
+    },
+    describeError() {
+      return "ChatGPT limits unavailable. Check the Codex CLI and ChatGPT sign-in on this host.";
+    },
   },
 };
 

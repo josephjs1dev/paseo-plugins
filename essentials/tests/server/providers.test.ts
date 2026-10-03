@@ -5,7 +5,7 @@ import { providerIds } from "../../shared/providers";
 import { readUsage } from "../../shared/usage";
 import { createUsageReader } from "../../server/usage";
 
-test("provider RPC validation rejects unknown adapters before dispatch", () => {
+test("provider RPC validation rejects unknown providers before dispatch", () => {
   assert.equal(
     readUsage.input.safeParse({ provider: "unknown-provider" }).success,
     false,
@@ -16,7 +16,7 @@ test("provider RPC validation rejects unknown adapters before dispatch", () => {
   }
 });
 
-test("registered providers use separate caches and sanitize their own errors", async () => {
+test("registered providers use separate caches and sanitize collector quota errors", async () => {
   const calls: string[] = [];
   const reader = createUsageReader(async (provider) => {
     calls.push(provider);

@@ -6,8 +6,8 @@ interface ProviderDefinition {
 }
 
 export const providerDefinitions = {
-  codex: {
-    name: "Codex",
+  chatgpt: {
+    name: "ChatGPT",
     icon: "Gauge",
   },
   "opencode-go": {

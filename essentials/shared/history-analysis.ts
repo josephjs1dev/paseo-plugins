@@ -5,9 +5,12 @@ import {
   type HistoryScope,
   type Totals,
 } from "./history";
-import type { Provider } from "./usage";
+import type { Provider } from "./providers";
+import type { Harness } from "./harnesses";
+import { sessionKey } from "./history-display";
 
 interface SessionSummary {
+  harness: Harness;
   sessionId: string;
   cwd: string;
   lastAt: string;
@@ -30,6 +33,7 @@ export function aggregateRows(rows: readonly HistoryRow[]): HistoryRow[] {
   for (const row of rows) {
     const key = JSON.stringify([
       row.provider,
+      row.harness,
       row.sessionId,
       row.day,
       row.model ?? null,
@@ -60,7 +64,9 @@ export function mergeHistoryRows(
 ): HistoryRow[] {
   const merged = new Map<string, HistoryRow>();
   const refreshedDays = new Set(
-    fresh.map((row) => JSON.stringify([row.provider, row.sessionId, row.day])),
+    fresh.map((row) =>
+      JSON.stringify([row.provider, row.harness, row.sessionId, row.day]),
+    ),
   );
 
   for (const row of previous) {
@@ -68,13 +74,21 @@ export function mergeHistoryRows(
     // Otherwise legacy unknown-model rows would double-count freshly parsed rows.
     if (
       Date.parse(row.lastAt) < since ||
-      refreshedDays.has(JSON.stringify([row.provider, row.sessionId, row.day]))
+      refreshedDays.has(
+        JSON.stringify([row.provider, row.harness, row.sessionId, row.day]),
+      )
     ) {
       continue;
     }
 
     merged.set(
-      JSON.stringify([row.provider, row.sessionId, row.day, row.model ?? null]),
+      JSON.stringify([
+        row.provider,
+        row.harness,
+        row.sessionId,
+        row.day,
+        row.model ?? null,
+      ]),
       row,
     );
   }
@@ -86,6 +100,7 @@ export function mergeHistoryRows(
 
     const key = JSON.stringify([
       row.provider,
+      row.harness,
       row.sessionId,
       row.day,
       row.model ?? null,
@@ -153,7 +168,7 @@ export function summarizeHistory(
       .sort(
         (left, right) =>
           right.lastAt.localeCompare(left.lastAt) ||
-          left.sessionId.localeCompare(right.sessionId),
+          sessionKey(left).localeCompare(sessionKey(right)),
       )
       .slice(options.sessionOffset ?? 0, (options.sessionOffset ?? 0) + 20)
       .map((session) => ({
@@ -181,7 +196,7 @@ function addScopeRow(
   summary: ReturnType<typeof createScopeSummary>,
   row: HistoryRow,
 ) {
-  const previous = summary.sessions.get(row.sessionId);
+  const previous = summary.sessions.get(sessionKey(row));
   const model = row.model ?? null;
   const sessionModels = previous?.models ?? new Map<string | null, Totals>();
   sessionModels.set(
@@ -193,9 +208,10 @@ function addScopeRow(
     sessions: new Set<string>(),
   };
   modelSummary.totals = addTotals(modelSummary.totals, row.totals);
-  modelSummary.sessions.add(row.sessionId);
+  modelSummary.sessions.add(sessionKey(row));
   summary.models.set(model, modelSummary);
-  summary.sessions.set(row.sessionId, {
+  summary.sessions.set(sessionKey(row), {
+    harness: row.harness,
     sessionId: row.sessionId,
     cwd: previous && previous.lastAt > row.lastAt ? previous.cwd : row.cwd,
     lastAt: latestTimestamp(previous?.lastAt ?? row.lastAt, row.lastAt),

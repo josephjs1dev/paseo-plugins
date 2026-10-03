@@ -11,6 +11,7 @@ import {
   type Provider,
 } from "../shared/providers";
 import {
+  sessionKey,
   compactTokens,
   formatCreditEstimate,
   totalTokens,
@@ -176,7 +177,7 @@ export function WorkspaceUsage({
             >
               {data.workspaceSessionCount} sessions
             </Text>
-            {provider === "codex" && (
+            {provider === "chatgpt" && (
               <HistoryValue
                 theme={theme}
                 label="Estimated credits"
@@ -206,7 +207,7 @@ export function WorkspaceUsage({
             <View>
               {data.sessions.slice(0, 5).map((session) => (
                 <SessionUsage
-                  key={session.sessionId}
+                  key={sessionKey(session)}
                   theme={theme}
                   session={session}
                 />

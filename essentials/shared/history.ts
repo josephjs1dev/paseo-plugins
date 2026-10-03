@@ -1,6 +1,7 @@
 import { defineRpc } from "@getpaseo/plugin";
 import { z } from "zod";
-import { providerSchema } from "./usage";
+import { providerSchema } from "./providers";
+import { harnessSchema } from "./harnesses";
 
 const count = z.number().finite().nonnegative();
 
@@ -25,6 +26,7 @@ export type Totals = z.infer<typeof totalsSchema>;
 
 export const historyRowSchema = z.object({
   provider: providerSchema,
+  harness: harnessSchema,
   sessionId: z.string().max(160),
   model: z.string().max(160).nullable().optional(),
   cwd: z.string().max(4096),
@@ -34,6 +36,12 @@ export const historyRowSchema = z.object({
 });
 
 export type HistoryRow = z.infer<typeof historyRowSchema>;
+
+export const historyCollectionSchema = z.object({
+  rows: z.array(historyRowSchema).max(100_000),
+  incomplete: z.boolean(),
+});
+export type HistoryCollection = z.infer<typeof historyCollectionSchema>;
 
 export const historyScopeSchema = z.enum(["workspace", "host"]);
 export type HistoryScope = z.infer<typeof historyScopeSchema>;
@@ -45,6 +53,7 @@ const modelSummarySchema = z.object({
 });
 
 const sessionSummarySchema = z.object({
+  harness: harnessSchema,
   sessionId: z.string(),
   cwd: z.string().max(4096),
   lastAt: z.string(),

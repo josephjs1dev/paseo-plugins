@@ -3,21 +3,91 @@ import { join } from "node:path";
 import { z } from "zod";
 
 import { historyRowSchema } from "../shared/history";
-import { providerSchema } from "../shared/providers";
+import { harnessIds, harnessSchema, type Harness } from "../shared/harnesses";
 
 const MAX_HISTORY_BYTES = 32 * 1024 * 1024;
+const collectorStateSchema = z.object({
+  updatedThrough: z.string().datetime().optional(),
+  incomplete: z.boolean(),
+  backfillWarningAt: z.string().datetime().optional(),
+});
+export type CollectorState = z.infer<typeof collectorStateSchema>;
 const savedHistorySchema = z.object({
-  version: z.literal(1),
+  version: z.literal(2),
   scannedAt: z.string().datetime(),
   rows: z.array(historyRowSchema).max(100_000),
+  collectors: z.partialRecord(harnessSchema, collectorStateSchema),
+});
+export type SavedHistory = z.infer<typeof savedHistorySchema>;
+
+const legacyProviderSchema = z.enum(["codex", "opencode-go"]);
+const legacyHistorySchema = z.object({
+  version: z.literal(1),
+  scannedAt: z.string().datetime(),
+  rows: z
+    .array(
+      historyRowSchema
+        .omit({ harness: true })
+        .extend({ provider: legacyProviderSchema }),
+    )
+    .max(100_000),
   updatedThrough: z.string().datetime().optional(),
-  warningProviders: z.array(providerSchema).max(2).optional(),
+  warningProviders: z.array(legacyProviderSchema).max(2).optional(),
   backfillWarnings: z
-    .partialRecord(providerSchema, z.string().datetime())
+    .partialRecord(legacyProviderSchema, z.string().datetime())
     .optional(),
 });
 
-export type SavedHistory = z.infer<typeof savedHistorySchema>;
+const legacyProvidersByHarness = {
+  codex: ["codex"],
+  pi: ["codex", "opencode-go"],
+  opencode: ["opencode-go"],
+} as const;
+
+function migrateHistory(
+  legacy: z.infer<typeof legacyHistorySchema>,
+): SavedHistory {
+  const migrated: SavedHistory = {
+    version: 2,
+    scannedAt: legacy.scannedAt,
+    collectors: {},
+    rows: legacy.rows.map((row) => {
+      const isPi = row.sessionId.startsWith("pi:");
+      let harness: Harness = row.provider === "codex" ? "codex" : "opencode";
+
+      if (isPi) {
+        harness = "pi";
+      }
+
+      return {
+        ...row,
+        provider: row.provider === "codex" ? "chatgpt" : "opencode-go",
+        harness,
+        sessionId: isPi ? row.sessionId.slice(3) : row.sessionId,
+      };
+    }),
+  };
+
+  for (const harness of harnessIds) {
+    const providers = legacyProvidersByHarness[harness];
+    const incomplete = providers.some((provider) =>
+      legacy.warningProviders?.includes(provider),
+    );
+    const backfillWarnings = providers.flatMap((provider) => {
+      const timestamp = legacy.backfillWarnings?.[provider];
+
+      return timestamp ? [timestamp] : [];
+    });
+    migrated.collectors[harness] = {
+      incomplete,
+      ...(incomplete || backfillWarnings.length > 0
+        ? { backfillWarningAt: backfillWarnings.sort()[0] ?? legacy.scannedAt }
+        : {}),
+    };
+  }
+
+  return migrated;
+}
 
 export async function readSavedHistory(
   directory: string,
@@ -37,7 +107,11 @@ export async function readSavedHistory(
 
     const contents = await readFile(path, "utf8");
 
-    return savedHistorySchema.parse(JSON.parse(contents));
+    const saved = z
+      .union([savedHistorySchema, legacyHistorySchema])
+      .parse(JSON.parse(contents));
+
+    return saved.version === 1 ? migrateHistory(saved) : saved;
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === "ENOENT") {
       return;

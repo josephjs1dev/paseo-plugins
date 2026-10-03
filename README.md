@@ -4,9 +4,9 @@ Plugins for [Paseo](https://paseo.sh), installed independently on each daemon.
 
 ## Available plugins
 
-| Plugin                                   | Features                                                                                                                    |
-| ---------------------------------------- | --------------------------------------------------------------------------------------------------------------------------- |
-| [Paseo Essentials](essentials/README.md) | Codex and OpenCode Go subscription limits, token history including Pi sessions, workspace usage, and CLI/model maintenance. |
+| Plugin                                   | Features                                                                                                                       |
+| ---------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------ |
+| [Paseo Essentials](essentials/README.md) | ChatGPT and OpenCode Go subscription limits, history from Codex, Pi, and OpenCode, workspace usage, and CLI/model maintenance. |
 
 ## Install Paseo Essentials
 

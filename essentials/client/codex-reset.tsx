@@ -48,7 +48,7 @@ export function CodexReset({
       return consume({ ...attempt, confirmed: true });
     },
     onSuccess: async (result) => {
-      const queryKey = ["nestkit-usage", host.id, "codex"];
+      const queryKey = ["nestkit-usage", host.id, "chatgpt"];
       await cache.cancelQueries({ queryKey });
       cache.setQueryData(queryKey, result.usage);
       cache.removeQueries({

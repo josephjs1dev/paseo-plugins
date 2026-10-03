@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { createPiHistoryParser } from "../../shared/pi-history";
+import { createPiHistoryParser } from "../../shared/history-parsers";
 
 const timestamp = "2026-09-25T10:00:00.000Z";
 const header = {
@@ -51,8 +51,8 @@ test("Pi attributes each request by provider and model, with cache and reasoning
   const codex = read(message("first"));
   const go = read(message("second", "opencode-go", "model-go"));
   const nextCodex = read(message("third"));
-  assert.equal(codex?.provider, "codex");
-  assert.equal(codex?.sessionId, "pi:one");
+  assert.equal(codex?.provider, "chatgpt");
+  assert.equal(codex?.sessionId, "one");
   assert.equal(go?.provider, "opencode-go");
   assert.equal(go?.model, "model-go");
   assert.deepEqual(codex?.totals, {
@@ -135,7 +135,7 @@ test("Pi forks exclude inherited usage even when the parent file is absent", () 
     ...message("fresh"),
     timestamp: "2026-09-25T11:01:00Z",
   });
-  assert.equal(fresh?.sessionId, "pi:fork");
+  assert.equal(fresh?.sessionId, "fork");
   assert.equal(fresh?.totals.input, 17);
 });
 
@@ -191,7 +191,7 @@ test("Pi counts explicit usage and built-in summary calls when usage is recorded
     model: "model-a",
     usage,
   });
-  assert.equal(extra?.provider, "codex");
+  assert.equal(extra?.provider, "chatgpt");
   assert.equal(extra?.totals.cost, 0.125);
   assert.equal(
     read({
@@ -210,4 +210,14 @@ test("Pi counts explicit usage and built-in summary calls when usage is recorded
     usage,
   });
   assert.equal(branch?.totals.cost, 0.125);
+});
+
+test("Pi preserves source session IDs up to the shared 160-character limit", () => {
+  const id = "s".repeat(160);
+  const parse = createPiHistoryParser(0, new Set());
+  parse(JSON.stringify({ ...header, id }));
+  const result = parse(JSON.stringify(message("entry")));
+  assert.equal(result?.sessionId, id);
+  assert.equal(result?.harness, "pi");
+  assert.throws(() => parse(JSON.stringify({ ...header, id: id + "s" })));
 });

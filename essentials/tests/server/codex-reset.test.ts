@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
 import { createCodexResetter } from "../../server/codex-reset";
-import { redeemCodexReset } from "../../server/providers/codex";
+import { redeemCodexReset } from "../../server/collectors/codex";
 import { createUsageReader } from "../../server/usage";
 import {
   consumeCodexReset,
@@ -79,7 +79,7 @@ test("preparing/cancelling spends nothing; duplicate confirmations spend once an
   });
 
   try {
-    assert.equal((await reader.read("codex")).windows[0]?.usedPercent, 100);
+    assert.equal((await reader.read("chatgpt")).windows[0]?.usedPercent, 100);
     const attempt = await resetter.prepare();
     assert.deepEqual(await resetter.prepare(), attempt);
     assert.equal(redemptions, 0);
@@ -196,7 +196,7 @@ for (const outcome of ["nothingToReset", "noCredit"] as const) {
     });
 
     try {
-      await reader.read("codex");
+      await reader.read("chatgpt");
       const result = await resetter.consume(await resetter.prepare());
       assert.equal(result.outcome, outcome);
       assert.deepEqual(result.usage.windows, current.windows);

@@ -7,7 +7,7 @@ export interface HistorySelection {
 }
 
 const initialSelection: HistorySelection = {
-  provider: "codex",
+  provider: "chatgpt",
   days: 7,
   scope: "workspace",
 };

@@ -1,25 +1,13 @@
 import type { ComponentType } from "react";
 import { Icon } from "@getpaseo/plugin/client/react-native";
-import { Image, View } from "react-native";
+import { View } from "react-native";
 
 import { providerDefinitions, type Provider } from "../shared/providers";
-import { codexLogoUri } from "./assets/codex-logo";
 
 interface LogoProps {
   size: number;
   color: string;
   backgroundColor: string;
-}
-
-function CodexLogo({ size, color }: LogoProps) {
-  return (
-    <Image
-      accessible={false}
-      source={{ uri: codexLogoUri }}
-      resizeMode="contain"
-      style={{ width: size, height: size, tintColor: color }}
-    />
-  );
 }
 
 function OpenCodeLogo({ size, color, backgroundColor }: LogoProps) {
@@ -52,7 +40,6 @@ function OpenCodeLogo({ size, color, backgroundColor }: LogoProps) {
 }
 
 const providerLogos: Partial<Record<Provider, ComponentType<LogoProps>>> = {
-  codex: CodexLogo,
   "opencode-go": OpenCodeLogo,
 };
 

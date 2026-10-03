@@ -7,11 +7,11 @@ import {
 import { readHistory } from "../../shared/history";
 
 test("request scopes match cache keys and omitted scope stays workspace-only", () => {
-  const workspace = historyQueryOptions("host-a", "workspace-a", "codex", 7);
+  const workspace = historyQueryOptions("host-a", "workspace-a", "chatgpt", 7);
   const explicit = historyQueryOptions(
     "host-a",
     "workspace-a",
-    "codex",
+    "chatgpt",
     7,
     0,
     "workspace",
@@ -19,7 +19,7 @@ test("request scopes match cache keys and omitted scope stays workspace-only", (
   const host = historyQueryOptions(
     "host-a",
     "workspace-a",
-    "codex",
+    "chatgpt",
     7,
     0,
     "host",
@@ -27,7 +27,7 @@ test("request scopes match cache keys and omitted scope stays workspace-only", (
   assert.deepEqual(workspace, explicit);
   assert.notDeepEqual(host.queryKey, workspace.queryKey);
   assert.deepEqual(host.input, {
-    provider: "codex",
+    provider: "chatgpt",
     workspaceId: "workspace-a",
     days: 7,
     sessionOffset: 0,
@@ -41,7 +41,7 @@ test("filter identity resets results for every filter but keeps pagination insid
   const first = historyQueryOptions(
     "host-a",
     "workspace-a",
-    "codex",
+    "chatgpt",
     7,
     0,
     "host",
@@ -49,7 +49,7 @@ test("filter identity resets results for every filter but keeps pagination insid
   const page = historyQueryOptions(
     "host-a",
     "workspace-a",
-    "codex",
+    "chatgpt",
     7,
     20,
     "host",
@@ -59,11 +59,11 @@ test("filter identity resets results for every filter but keeps pagination insid
   assert.equal(page.input.sessionOffset, 20);
 
   for (const changed of [
-    historyQueryOptions("host-b", "workspace-a", "codex", 7, 0, "host"),
-    historyQueryOptions("host-a", "workspace-b", "codex", 7, 0, "host"),
+    historyQueryOptions("host-b", "workspace-a", "chatgpt", 7, 0, "host"),
+    historyQueryOptions("host-a", "workspace-b", "chatgpt", 7, 0, "host"),
     historyQueryOptions("host-a", "workspace-a", "opencode-go", 7, 0, "host"),
-    historyQueryOptions("host-a", "workspace-a", "codex", 30, 0, "host"),
-    historyQueryOptions("host-a", "workspace-a", "codex", 7, 0, "workspace"),
+    historyQueryOptions("host-a", "workspace-a", "chatgpt", 30, 0, "host"),
+    historyQueryOptions("host-a", "workspace-a", "chatgpt", 7, 0, "workspace"),
   ]) {
     assert.notDeepEqual(first.filterKey, changed.filterKey);
     assert.notDeepEqual(first.queryKey, changed.queryKey);

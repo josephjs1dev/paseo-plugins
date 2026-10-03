@@ -154,7 +154,7 @@ function UsageDetails(props: UsagePopoverProps & { provider: Provider }) {
       {usage?.windows.map((quota, index) => (
         <QuotaWindow key={quota.name + index} quota={quota} theme={theme} />
       ))}
-      {provider === "codex" && usage && (
+      {provider === "chatgpt" && usage && (
         <View style={{ gap: 16 }}>
           <HistoryValue
             theme={theme}
