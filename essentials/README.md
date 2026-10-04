@@ -6,7 +6,8 @@ Usage tracking and CLI/model maintenance for Paseo. Usage is grouped by provider
 ## Features
 
 - **Provider usage:** subscription quota and reset times for ChatGPT and OpenCode Go.
-  ChatGPT also shows Codex credit balance and banked resets when supported; **Use reset**
+  ChatGPT also shows Codex credit balance, banked resets, and their earliest upcoming
+  expiry in your local timezone when available; **Use reset**
   asks for confirmation before consuming a banked reset.
 - **Workspace usage:** token totals by model and recent sessions for the current
   workspace.

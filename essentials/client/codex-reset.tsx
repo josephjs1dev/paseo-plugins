@@ -31,6 +31,7 @@ export function CodexReset({
   const hasAttempt =
     cache.getQueryData(["nestkit-codex-reset-attempt", host.id]) !== undefined;
   const count = usage.resetCredits?.availableCount;
+  const earliestExpiresAt = usage.resetCredits?.earliestExpiresAt;
   const available = usage.status === "ok" && count != null && count > 0;
   const mutation = useMutation({
     mutationKey: ["nestkit-codex-reset", host.id],
@@ -103,6 +104,25 @@ export function CodexReset({
               ? "Unavailable for this account or Codex version"
               : `${count} available · account-wide`}
           </Text>
+          {earliestExpiresAt && (
+            <Text
+              style={{
+                color: colors.foregroundMuted,
+                fontSize: 12,
+                lineHeight: 18,
+              }}
+            >
+              Earliest expiry:{" "}
+              {new Date(earliestExpiresAt).toLocaleString(undefined, {
+                year: "numeric",
+                month: "short",
+                day: "numeric",
+                hour: "numeric",
+                minute: "2-digit",
+                timeZoneName: "short",
+              })}
+            </Text>
+          )}
         </View>
         <ResetButton
           theme={theme}

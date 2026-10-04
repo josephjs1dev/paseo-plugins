@@ -59,18 +59,63 @@ export function normalizeCodexCredits(input: unknown): Usage["credits"] {
 
 export function normalizeCodexResetCredits(
   input: unknown,
+  now = Date.now(),
 ): Usage["resetCredits"] {
   const data = z
     .object({
       rateLimitResetCredits: z
         .object({
           availableCount: z.number().int().nonnegative(),
+          credits: z.unknown().optional(),
         })
         .nullish(),
     })
     .parse(input);
 
-  return data.rateLimitResetCredits ?? null;
+  const snapshot = data.rateLimitResetCredits;
+
+  if (!snapshot) {
+    return null;
+  }
+
+  // Optional details must not hide a valid count on older Codex versions.
+  const details = z
+    .array(
+      z.object({
+        resetType: z.string().max(100),
+        status: z.string().max(100),
+        expiresAt: z
+          .number()
+          .int()
+          .nonnegative()
+          .max(253_402_300_799)
+          .nullable(),
+      }),
+    )
+    .max(1000)
+    .safeParse(snapshot.credits);
+  let earliest: number | undefined;
+
+  if (snapshot.availableCount > 0 && details.success) {
+    for (const credit of details.data) {
+      if (
+        credit.status === "available" &&
+        credit.resetType === "codexRateLimits" &&
+        credit.expiresAt !== null &&
+        credit.expiresAt * 1000 > now &&
+        (earliest === undefined || credit.expiresAt < earliest)
+      ) {
+        earliest = credit.expiresAt;
+      }
+    }
+  }
+
+  return {
+    availableCount: snapshot.availableCount,
+    ...(earliest === undefined
+      ? {}
+      : { earliestExpiresAt: new Date(earliest * 1000).toISOString() }),
+  };
 }
 
 export function normalizeCodex(input: unknown): Usage["windows"] {

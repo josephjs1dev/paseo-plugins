@@ -20,7 +20,10 @@ export const usageSchema = z.object({
   checkedAt: z.string().datetime(),
   credits: creditsSchema.nullable().optional(),
   resetCredits: z
-    .object({ availableCount: z.number().int().nonnegative() })
+    .object({
+      availableCount: z.number().int().nonnegative(),
+      earliestExpiresAt: z.string().datetime().optional(),
+    })
     .nullable()
     .optional(),
   windows: z

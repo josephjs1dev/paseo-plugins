@@ -135,6 +135,80 @@ test("Codex reset counts distinguish unsupported, zero, and truncated credit det
   }
 });
 
+test("banked reset expiry selects the earliest upcoming eligible credit", () => {
+  const now = 1_800_000_000;
+  const credit = (expiresAt: number | null) => ({
+    resetType: "codexRateLimits",
+    status: "available",
+    expiresAt,
+  });
+  const resetCredits = normalizeCodexResetCredits(
+    {
+      rateLimitResetCredits: {
+        availableCount: 3,
+        credits: [
+          credit(now + 7200),
+          credit(null),
+          credit(now - 1),
+          credit(now),
+          { ...credit(now + 1), status: "redeemed" },
+          { ...credit(now + 2), resetType: "other" },
+          credit(now + 3600),
+        ],
+      },
+    },
+    now * 1000,
+  );
+  assert.deepEqual(resetCredits, {
+    availableCount: 3,
+    earliestExpiresAt: new Date((now + 3600) * 1000).toISOString(),
+  });
+  assert.deepEqual(
+    usageSchema.shape.resetCredits.parse(resetCredits),
+    resetCredits,
+  );
+});
+
+test("banked reset expiry is omitted when unavailable without losing the count", () => {
+  const now = 1_800_000_000;
+
+  for (const expiresAt of [null, now - 1, now, "tomorrow", 1e20]) {
+    assert.deepEqual(
+      normalizeCodexResetCredits(
+        {
+          rateLimitResetCredits: {
+            availableCount: 1,
+            credits: [
+              { resetType: "codexRateLimits", status: "available", expiresAt },
+            ],
+          },
+        },
+        now * 1000,
+      ),
+      { availableCount: 1 },
+    );
+  }
+
+  assert.deepEqual(
+    normalizeCodexResetCredits(
+      {
+        rateLimitResetCredits: {
+          availableCount: 0,
+          credits: [
+            {
+              resetType: "codexRateLimits",
+              status: "available",
+              expiresAt: now + 1,
+            },
+          ],
+        },
+      },
+      now * 1000,
+    ),
+    { availableCount: 0 },
+  );
+});
+
 test("Codex supports all named buckets without duplicating the legacy bucket", () => {
   const windows = normalizeCodex({
     rateLimits: { primary: codexWindow },
