@@ -1,0 +1,26 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "lib": ["ES2022"],
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "jsx": "react-jsx",
+    "strict": true,
+    "noUncheckedIndexedAccess": true,
+    "exactOptionalPropertyTypes": true,
+    "noImplicitOverride": true,
+    "noEmit": true,
+    "skipLibCheck": true,
+    "types": ["node", "react"]
+  },
+  "include": [
+    "index.*.ts",
+    "index.*.tsx",
+    "client",
+    "server",
+    "shared",
+    "tests",
+    "*.config.ts"
+  ],
+  "exclude": ["tests/preview", "tests/browser"]
+}

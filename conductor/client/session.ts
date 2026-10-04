@@ -1,0 +1,60 @@
+import type { Decision, InboxItem, AnswerResult } from "../shared/models";
+import type { Filter } from "../shared/inbox";
+
+export interface ViewState {
+  filter: Filter;
+  query: string;
+  groupBy: "project" | "workspace";
+  selectedKey: string | null;
+  showSnoozed: boolean;
+  drafts: Readonly<Record<string, Decision>>;
+  notices: Readonly<Record<string, AnswerResult["status"] | "sending">>;
+}
+export class InboxSession {
+  private state: ViewState = {
+    filter: "waiting",
+    query: "",
+    groupBy: "project",
+    selectedKey: null,
+    showSnoozed: false,
+    drafts: {},
+    notices: {},
+  };
+  private readonly listeners = new Set<() => void>();
+  getSnapshot = (): ViewState => this.state;
+  subscribe = (listener: () => void): (() => void) => {
+    this.listeners.add(listener);
+    return () => {
+      this.listeners.delete(listener);
+    };
+  };
+  update(patch: Partial<ViewState>): void {
+    this.state = { ...this.state, ...patch };
+    for (const listener of this.listeners) {
+      listener();
+    }
+  }
+  select(item: InboxItem): void {
+    let draft = this.state.drafts[item.key];
+    if (!draft && item.form?.kind === "questions") {
+      draft = {
+        kind: "answers",
+        answers: item.form.questions.map(() => ({ selected: [], text: "" })),
+      };
+    }
+    this.update({
+      selectedKey: item.key,
+      ...(draft ? { drafts: { ...this.state.drafts, [item.key]: draft } } : {}),
+    });
+  }
+  draft(key: string, value: Decision): void {
+    this.update({ drafts: { ...this.state.drafts, [key]: value } });
+  }
+  notice(key: string, value: AnswerResult["status"] | "sending"): void {
+    this.update({ notices: { ...this.state.notices, [key]: value } });
+  }
+  clear(): void {
+    this.state = { ...this.state, drafts: {}, notices: {}, selectedKey: null };
+    this.listeners.clear();
+  }
+}

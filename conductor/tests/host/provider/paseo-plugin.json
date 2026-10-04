@@ -1,0 +1,7 @@
+{
+  "id": "conductor-fixture",
+  "description": "Deterministic permission fixture; no models, tools, or network.",
+  "requirements": {
+    "paseo": ">=0.10.3 <0.11.0 || >=0.11.0-beta.3 <0.12.0"
+  }
+}

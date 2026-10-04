@@ -7,6 +7,7 @@ Plugins for [Paseo](https://paseo.sh), installed independently on each daemon.
 | Plugin                                   | Features                                                                                                                       |
 | ---------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------ |
 | [Paseo Essentials](essentials/README.md) | ChatGPT and OpenCode Go subscription limits, history from Codex, Pi, and OpenCode, workspace usage, and CLI/model maintenance. |
+| [Conductor](conductor/README.md) | Agent waiting queue, native question and permission responses, workspace context, snooze, and next-request navigation. |
 
 ## Install Paseo Essentials
 
