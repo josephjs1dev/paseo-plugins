@@ -20,9 +20,6 @@ export interface DetailActions {
   snooze(item: InboxItem, minutes: 0 | 15 | 60): Promise<void>;
   mark(item: InboxItem): Promise<void>;
   archive(this: void, item: InboxItem): Promise<ArchiveResult>;
-  context(
-    agentId: string,
-  ): Promise<{ role: "user" | "assistant"; text: string }[]>;
 }
 interface Props {
   theme: PluginTheme;
@@ -58,10 +55,6 @@ export function RequestDetail({
   actions,
 }: Props) {
   const [detailsOpen, setDetailsOpen] = useState(false);
-  const [context, setContext] = useState<
-    { role: "user" | "assistant"; text: string }[] | null
-  >(null);
-  const [contextLoading, setContextLoading] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const delivery = notice ?? item.delivery;
@@ -82,19 +75,6 @@ export function RequestDetail({
       );
     } finally {
       setBusy(false);
-    }
-  };
-  const loadContext = async () => {
-    setContextLoading(true);
-    setActionError(null);
-    try {
-      setContext(await actions.context(item.agentId));
-    } catch {
-      setActionError(
-        "Recent conversation is unavailable. Open the agent for the full context.",
-      );
-    } finally {
-      setContextLoading(false);
     }
   };
   let valid = false;
@@ -337,36 +317,6 @@ export function RequestDetail({
           )}
         </View>
       )}
-      <View style={{ gap: 12 }}>
-        <Button
-          theme={theme}
-          label={contextLoading ? "Loading context…" : "Recent conversation"}
-          disabled={contextLoading || stale}
-          onPress={() => {
-            loadContext().catch(() => undefined);
-          }}
-        />
-        {context?.length === 0 && (
-          <Text style={{ color: theme.colors.foregroundMuted }}>
-            No recent messages were returned.
-          </Text>
-        )}
-        {context?.map((message, index) => (
-          <View key={`${index}:${message.role}`} style={{ gap: 6 }}>
-            <Label theme={theme}>{message.role.toUpperCase()}</Label>
-            <Text
-              selectable
-              style={{
-                color: theme.colors.foreground,
-                fontSize: 13,
-                lineHeight: 21,
-              }}
-            >
-              {message.text}
-            </Text>
-          </View>
-        ))}
-      </View>
     </ScrollView>
   );
 }

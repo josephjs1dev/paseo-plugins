@@ -1,13 +1,7 @@
 import type { PluginServerContext } from "@getpaseo/plugin/server";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import {
-  getInbox,
-  answerRequest,
-  annotate,
-  getContext,
-  archiveAgent,
-} from "./shared/rpc";
+import { getInbox, answerRequest, annotate, archiveAgent } from "./shared/rpc";
 import { archiveInactive } from "./server/archive";
 import { fileStore } from "./server/store";
 import { paseoRuntime } from "./server/runtime";
@@ -73,15 +67,6 @@ export default function contribute(server: PluginServerContext) {
       return {};
     } catch {
       throw new Error("Conductor could not save this inbox preference.");
-    }
-  });
-  server.handle(getContext, async ({ agentId }, { paseo }) => {
-    try {
-      return { messages: await paseoRuntime(paseo).context(agentId) };
-    } catch {
-      throw new Error(
-        "Recent conversation is unavailable. Open the agent for its full context.",
-      );
     }
   });
   return stopTurns;

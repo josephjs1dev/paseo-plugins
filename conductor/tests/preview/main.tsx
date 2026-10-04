@@ -134,14 +134,6 @@ function Preview() {
             session.update({ selectedKey: null });
             return { status: "archived" };
           },
-          async context() {
-            return [
-              {
-                role: "assistant",
-                text: "The implementation is ready for your input. No changes have been published.",
-              },
-            ];
-          },
         }}
       />
     </div>

@@ -9,12 +9,7 @@ import {
 // InboxSidebar is registered only when the 0.11 sidebar API is present.
 import * as PluginUi from "@getpaseo/plugin/client/ui";
 import { useQueryClient } from "@tanstack/react-query";
-import {
-  annotate,
-  answerRequest,
-  getContext,
-  archiveAgent,
-} from "../shared/rpc";
+import { annotate, answerRequest, archiveAgent } from "../shared/rpc";
 import { isSnoozed, needsAttention } from "../shared/inbox";
 import { InboxView } from "./inbox-view";
 import { InboxSession } from "./session";
@@ -56,7 +51,6 @@ export function InboxSurface(
   const cache = useQueryClient();
   const send = useRpc(answerRequest);
   const change = useRpc(annotate);
-  const context = useRpc(getContext);
   const archive = useRpc(archiveAgent);
   const now = useClock();
   const { session, scroll } = props.sessions.get(
@@ -129,9 +123,6 @@ export function InboxSurface(
           }
           await refresh();
           return result;
-        },
-        async context(agentId) {
-          return (await context({ agentId })).messages;
         },
       }}
     />

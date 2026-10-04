@@ -75,7 +75,6 @@ export function runtime(
     inspect: async () => current(),
     archive: async () => {},
     answer: async () => {},
-    context: async () => [],
     ...overrides,
   };
 }

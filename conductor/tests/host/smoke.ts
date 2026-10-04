@@ -67,12 +67,6 @@ try {
   );
   assert.ok(item);
   assert.equal(item.form?.kind, "questions");
-  const context = await client.invokePluginRpc("conductor", "inbox.context", {
-    agentId: worker.id,
-  });
-  assert.ok(
-    JSON.stringify(context).includes("Synthetic fixture awaiting your answer."),
-  );
   await client.invokePluginRpc("conductor", "inbox.annotate", {
     kind: "snooze",
     key: item.key,
@@ -111,12 +105,6 @@ try {
   assert.equal(second.status, "answered");
   await worker.refresh();
   assert.equal(worker.pendingPermissions?.length, 0);
-  const answeredContext = await client.invokePluginRpc(
-    "conductor",
-    "inbox.context",
-    { agentId: worker.id },
-  );
-  assert.ok(JSON.stringify(answeredContext).includes("Continue"));
   // Lifecycle hooks run on the daemon even without an open Conductor surface.
   const outcomeDeadline = Date.now() + 8000;
   let completedKey: string | undefined;

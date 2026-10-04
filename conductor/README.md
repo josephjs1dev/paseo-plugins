@@ -16,7 +16,7 @@ Paseo agents; it does not require a job setup or launch additional workers.
 - Archives inactive agents after confirmation and a fresh check. Agents with
   unarchived children are protected from Paseo's cascading parent archive.
 - Shows each pending request separately, including waiting age, agent, provider,
-  workspace, native request details, and recent conversation on demand.
+  workspace, and native request details. Open the agent for conversation history.
 - Answers Paseo's normalized single/multiple-choice and free-text questions.
   Tool requests use the provider's explicit actions, or Allow once/Deny when
   no custom actions exist. A chosen tool action needs a final confirmation.
@@ -189,8 +189,7 @@ rescan the full receipt directory.
 Directory views page at most 2,000 agents/workspaces and expose truncation rather
 than claiming a complete count. Known pending agents retained by a client are
 queried directly outside that page window. Up to 20 requests per agent and 6,000
-rows are displayed. Native context is limited to six recent messages, each
-bounded to 4,000 characters. The native conversation remains the complete source.
+rows are displayed. Open the agent for the complete native conversation.
 
 ## Development and validation
 
@@ -231,7 +230,7 @@ CONDUCTOR_TEST_URL=ws://127.0.0.1:YOUR_TEST_PORT/ws npm run test:client
 ```
 
 The harness installs the fixture provider under `tests/host/provider`, creates
-one synthetic question, checks context/snooze/response behavior and plugin reload,
+one synthetic question, checks snooze/response behavior and plugin reload,
 verifies completion survives acknowledgment/reload and a new turn clears it,
 then archives its test resources and removes the fixture provider. It uses no
 model credentials, external tools, or network calls beyond the local daemon.

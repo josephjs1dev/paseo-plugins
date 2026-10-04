@@ -45,17 +45,3 @@ export const annotate = defineRpc({
   ]),
   output: z.object({}),
 });
-export const getContext = defineRpc({
-  name: "inbox.context",
-  input: z.object({ agentId: identifier }),
-  output: z.object({
-    messages: z
-      .array(
-        z.object({
-          role: z.enum(["user", "assistant"]),
-          text: z.string().max(4000),
-        }),
-      )
-      .max(6),
-  }),
-});
