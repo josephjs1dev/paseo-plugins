@@ -164,7 +164,6 @@ export function Queue({
                   numberOfLines={1}
                   style={{ color: theme.colors.foregroundMuted, fontSize: 12 }}
                 >
-                  {item.parentAgentId ? "↳ " : ""}
                   {item.requestId ? `${item.agentTitle} · ` : ""}
                   {item.provider}
                 </Text>
@@ -181,7 +180,7 @@ export function Queue({
                       fontSize: 12,
                     }}
                   >
-                    ↳ Child of{" "}
+                    Parent:{" "}
                     {item.parentAgentTitle ??
                       `unavailable parent (${item.parentAgentId.slice(0, 8)})`}
                   </Text>

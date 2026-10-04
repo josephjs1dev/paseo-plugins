@@ -123,12 +123,33 @@ export function RequestDetail({
         <Text style={{ fontSize: 12, color: theme.colors.foregroundMuted }}>
           {item.projectName} / {item.workspaceName}
         </Text>
-        {item.parentAgentId && (
-          <View style={{ gap: 8 }}>
-            <Text style={{ color: theme.colors.foregroundMuted, fontSize: 12 }}>
-              Child of {item.parentAgentTitle ?? item.parentAgentId}
-            </Text>
-            {item.parentAgentTitle && (
+      </View>
+      {item.parentAgentId && (
+        <View
+          testID="parent-agent"
+          style={{
+            padding: 16,
+            gap: 10,
+            borderWidth: 1,
+            borderColor: theme.colors.border,
+            borderRadius: 8,
+            backgroundColor: theme.colors.surface1,
+          }}
+        >
+          <Label theme={theme}>PARENT AGENT</Label>
+          <Text
+            style={{
+              color: theme.colors.foreground,
+              fontSize: 14,
+              lineHeight: 21,
+              fontWeight: "500",
+            }}
+          >
+            {item.parentAgentTitle ??
+              `Unavailable parent (${item.parentAgentId})`}
+          </Text>
+          {item.parentAgentTitle && (
+            <View style={{ alignItems: "flex-start" }}>
               <Button
                 theme={theme}
                 label="Open parent ↗"
@@ -139,10 +160,10 @@ export function RequestDetail({
                   }
                 }}
               />
-            )}
-          </View>
-        )}
-      </View>
+            </View>
+          )}
+        </View>
+      )}
       {item.error && (
         <Notice theme={theme} warning>
           {item.error}

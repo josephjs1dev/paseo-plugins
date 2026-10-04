@@ -79,7 +79,8 @@ snooze. Turn outcomes remain on cards and in details rather than in a separate t
 
 Parentage comes from Paseo's `paseo.parent-agent-id` relationship. In All, a
 matching child B is indented under A; in Waiting, B still appears when a running
-A is filtered out, with **Child of A** and **Open parent**. Each request remains
+A is filtered out, with **Parent: A** on its card. The detail pane separates the
+parent into a **Parent agent** section with **Open parent**. Each request remains
 individually answerable. Grouping follows the visible family root; each child's
 own workspace remains visible. Missing parents use an explicit unavailable label.
 Harness-internal workers that are not exposed as Paseo agents are not inferred.

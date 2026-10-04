@@ -257,12 +257,15 @@ test("five filters keep child context when parents are hidden and nest visible f
   const child = page.getByRole("button", {
     name: /Open Run the focused test suite from Worker B/,
   });
-  await expect(child).toContainText("Child of Coordinator A");
+  await expect(child).toContainText("Parent: Coordinator A");
   await expect(
     page.getByRole("button", { name: "Open Coordinator A", exact: true }),
   ).toHaveCount(0);
   await child.click();
+  await expect(page.getByTestId("parent-agent")).toContainText("PARENT AGENT");
+  await expect(page.getByTestId("parent-agent")).toContainText("Coordinator A");
   await page
+    .getByTestId("parent-agent")
     .getByRole("button", { name: "Open parent ↗", exact: true })
     .click();
   await expect(page.getByTestId("preview-status")).toContainText("agent-api");
