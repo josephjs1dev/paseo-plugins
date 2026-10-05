@@ -40,7 +40,7 @@ export function Queue({
       ref={ref}
       style={{ flex: 1 }}
       contentContainerStyle={{ padding: 14, gap: 18 }}
-      testID="waiting-queue"
+      testID="inbox-queue"
       scrollEventThrottle={100}
       onScroll={(event) => {
         scroll.offset = event.nativeEvent.contentOffset.y;
@@ -84,7 +84,7 @@ export function Queue({
         </View>
       )}
       {groups.map(({ label: group, entries }) => (
-        <View key={group} style={{ gap: 8 }}>
+        <View key={group} style={{ gap: 6 }}>
           <View style={{ paddingHorizontal: 8 }}>
             <Label theme={theme}>{group.toUpperCase()}</Label>
           </View>
@@ -110,10 +110,11 @@ export function Queue({
                 accessibilityState={{ selected }}
                 onPress={() => onSelect(item)}
                 style={({ pressed }) => ({
-                  padding: 14,
-                  marginLeft: Math.min(depth, 3) * 14,
-                  gap: 7,
-                  borderRadius: 8,
+                  paddingHorizontal: 12,
+                  paddingVertical: 10,
+                  marginLeft: Math.min(depth, 3) * 32,
+                  gap: 4,
+                  borderRadius: 6,
                   borderLeftWidth: 3,
                   borderLeftColor: selected
                     ? theme.colors.accent
@@ -132,18 +133,26 @@ export function Queue({
                   }}
                 >
                   <Text
+                    numberOfLines={1}
                     style={{
                       color: statusColor,
                       fontSize: 11,
+                      lineHeight: 16,
                       fontWeight: "500",
+                      flexShrink: 1,
                     }}
                   >
                     {item.marked ? "Manual reminder" : status}
+                    {item.childAgentCount > 0 &&
+                      ` · ${item.childAgentCount} child ${item.childAgentCount === 1 ? "agent" : "agents"}`}
+                    {isSnoozed(item, now) && " · Snoozed"}
                   </Text>
                   <Text
                     style={{
                       color: theme.colors.foregroundMuted,
                       fontSize: 11,
+                      lineHeight: 16,
+                      fontVariant: ["tabular-nums"],
                     }}
                   >
                     {ageLabel(item.since, now)}
@@ -154,7 +163,7 @@ export function Queue({
                   style={{
                     fontSize: 14,
                     fontWeight: "600",
-                    lineHeight: 21,
+                    lineHeight: 20,
                     color: theme.colors.foreground,
                   }}
                 >
@@ -162,60 +171,26 @@ export function Queue({
                 </Text>
                 <Text
                   numberOfLines={1}
-                  style={{ color: theme.colors.foregroundMuted, fontSize: 12 }}
-                >
-                  {item.requestId ? `${item.agentTitle} · ` : ""}
-                  {item.provider}
-                </Text>
-                <Text
-                  numberOfLines={1}
-                  style={{ color: theme.colors.foregroundMuted, fontSize: 11 }}
+                  style={{
+                    color: theme.colors.foregroundMuted,
+                    fontSize: 12,
+                    lineHeight: 16,
+                  }}
                 >
                   {item.workspaceName}
                 </Text>
-                {item.parentAgentId && (
+                {item.parentAgentId && depth === 0 && (
                   <Text
+                    numberOfLines={1}
                     style={{
                       color: theme.colors.foregroundMuted,
                       fontSize: 12,
+                      lineHeight: 16,
                     }}
                   >
                     Parent:{" "}
                     {item.parentAgentTitle ??
                       `unavailable parent (${item.parentAgentId.slice(0, 8)})`}
-                  </Text>
-                )}
-                {item.childAgentCount > 0 && (
-                  <Text
-                    style={{
-                      color: theme.colors.foregroundMuted,
-                      fontSize: 11,
-                    }}
-                  >
-                    {item.childAgentCount} child{" "}
-                    {item.childAgentCount === 1 ? "agent" : "agents"}
-                  </Text>
-                )}
-                {isSnoozed(item, now) && (
-                  <Text
-                    style={{
-                      color: theme.colors.foregroundMuted,
-                      fontSize: 11,
-                    }}
-                  >
-                    Snoozed
-                  </Text>
-                )}
-                {!item.requestId && (
-                  <Text
-                    style={{
-                      color: theme.colors.foregroundMuted,
-                      fontSize: 11,
-                    }}
-                  >
-                    {item.lastTurn
-                      ? `Last turn ${item.lastTurn.outcome} · task unverified`
-                      : "Turn outcome unknown"}
                   </Text>
                 )}
                 {item.delivery && (

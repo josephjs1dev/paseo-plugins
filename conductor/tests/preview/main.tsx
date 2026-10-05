@@ -4,6 +4,7 @@ import { InboxView } from "../../client/inbox-view";
 import { InboxSession } from "../../client/session";
 import { initial, light, dark } from "./fixtures";
 import type { InboxSnapshot } from "../../shared/models";
+import { requestForm } from "../../shared/questions";
 
 const session = new InboxSession();
 const scroll = { offset: 0 };
@@ -16,12 +17,36 @@ function Preview() {
       : initial.items
           .filter(
             (item) =>
-              !params.has("no-waiting") ||
+              !params.has("no-attention") ||
               item.bucket === "running" ||
               item.bucket === "closed" ||
               item.bucket === "idle",
           )
+          .filter(
+            (item) =>
+              !params.has("native-only") || item.form?.kind === "native",
+          )
           .map((item) => {
+            if (
+              params.has("malformed-question") &&
+              item.agentId === "agent-native"
+            ) {
+              return {
+                ...item,
+                details: JSON.stringify({ questions: "unsupported format" }),
+                form: requestForm({
+                  kind: "question",
+                  input: { questions: "unsupported format" },
+                }),
+              };
+            }
+            if (params.has("reminder") && item.agentId === "agent-idle") {
+              return {
+                ...item,
+                marked: true,
+                archiveKey: null,
+              };
+            }
             if (!params.has("family")) {
               return item;
             }

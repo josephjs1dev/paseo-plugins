@@ -11,6 +11,63 @@ import { InboxSession } from "../client/session";
 async function store() {
   return fileStore(await testDirectory());
 }
+await test("the default attention queue combines questions, approvals, failures, and reminders with consistent snoozing", async () => {
+  const storage = await store();
+  const idle = {
+    pendingPermissions: [],
+    requiresAttention: false,
+    attentionReason: null,
+  };
+  const agents = [
+    agent({ id: "question" }),
+    agent({ id: "approval", pendingPermissions: [question({ kind: "tool" })] }),
+    agent({ id: "permission", pendingPermissions: [] }),
+    agent({ ...idle, id: "failed", status: "error" }),
+    agent({ ...idle, id: "reminder" }),
+    agent({ ...idle, id: "running", status: "running" }),
+    agent({ ...idle, id: "idle" }),
+    agent({ id: "closed", status: "closed" }),
+  ];
+  await storage.annotate({
+    key: agentKey("reminder"),
+    until: null,
+    marked: true,
+  });
+  const host = runtime(() => null, {
+    agents: async () => ({ entries: agents, next: null }),
+  });
+  const initial = await snapshot(host, storage, [], 1000);
+  const filter = new InboxSession().getSnapshot().filter;
+  assert.equal(filter, "attention");
+  const attention = visibleItems(initial.items, filter, "", undefined, 1000);
+  assert.deepEqual(attention.map((item) => item.agentId).sort(), [
+    "approval",
+    "failed",
+    "permission",
+    "question",
+    "reminder",
+  ]);
+  for (const item of attention) {
+    await storage.annotate({ key: item.key, until: 2000, marked: item.marked });
+  }
+  const snoozed = await snapshot(host, storage, [], 1500);
+  assert.equal(
+    visibleItems(snoozed.items, filter, "", undefined, 1500).length,
+    0,
+  );
+  assert.equal(
+    visibleItems(snoozed.items, filter, "", undefined, 1500, true).length,
+    5,
+  );
+  assert.equal(
+    visibleItems(snoozed.items, filter, "", undefined, 2001).length,
+    5,
+  );
+  assert.equal(
+    visibleItems(snoozed.items, "all", "", undefined, 1500).length,
+    8,
+  );
+});
 await test("one agent with multiple requests exposes each exact request; errors retain precedence", async () => {
   const current = agent({
     status: "error",
@@ -82,16 +139,16 @@ await test("snooze is request-specific, expires, and manual reminders persist in
   await storage.annotate({ key: item.key, until: 2000, marked: false });
   const next = await snapshot(host, storage, [], 1500);
   assert.equal(
-    visibleItems(next.items, "waiting", "", undefined, 1500).length,
+    visibleItems(next.items, "attention", "", undefined, 1500).length,
     0,
   );
   assert.equal(
-    visibleItems(next.items, "waiting", "", undefined, 1500, true).length,
+    visibleItems(next.items, "attention", "", undefined, 1500, true).length,
     1,
   );
   assert.equal(visibleItems(next.items, "all", "", undefined, 1500).length, 1);
   assert.equal(
-    visibleItems(next.items, "waiting", "", undefined, 2001).length,
+    visibleItems(next.items, "attention", "", undefined, 2001).length,
     1,
   );
   await storage.annotate({
@@ -195,7 +252,7 @@ await test("initial load discovers existing agents across pages without prior re
   assert.equal(new Set(result.items.map((item) => item.agentId)).size, 205);
   assert.equal(result.incomplete, false);
   assert.equal(
-    visibleItems(result.items, "waiting", "", undefined, Date.now())[0]
+    visibleItems(result.items, "attention", "", undefined, Date.now())[0]
       ?.agentId,
     "existing-204",
   );

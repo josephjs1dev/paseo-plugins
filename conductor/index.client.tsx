@@ -4,12 +4,10 @@ import type {
   PluginWorkspacePanelProps,
 } from "@getpaseo/plugin/client";
 import { InboxSurface, InboxSidebar, Sessions } from "./client/surfaces";
-import { contributePills } from "./client/pills";
 import { registerInboxNavigation } from "./client/registration";
 
 export default function contribute(client: PluginClientContext) {
   const sessions = new Sessions();
-  const stopPills = contributePills(client);
   const removers = [
     ...registerInboxNavigation(
       client,
@@ -37,7 +35,6 @@ export default function contribute(client: PluginClientContext) {
     }),
   ];
   return async () => {
-    stopPills();
     for (const remove of removers.reverse()) {
       await remove();
     }

@@ -1,16 +1,12 @@
 import type { InboxItem } from "./models";
-export type Filter = "waiting" | "attention" | "running" | "inactive" | "all";
+export type Filter = "attention" | "running" | "inactive" | "all";
 export function category(item: InboxItem): Exclude<Filter, "all"> {
-  if (item.bucket === "failed") {
-    return "attention";
-  }
   if (
-    item.bucket !== "closed" &&
-    (item.requestId !== null || (item.bucket === "waiting" && !item.marked))
+    item.bucket === "failed" ||
+    item.marked ||
+    (item.bucket !== "closed" &&
+      (item.requestId !== null || item.bucket === "waiting"))
   ) {
-    return "waiting";
-  }
-  if (item.marked) {
     return "attention";
   }
   if (item.bucket === "running") {
@@ -22,8 +18,7 @@ export function isSnoozed(item: InboxItem, now: number): boolean {
   return (item.snoozedUntil ?? 0) > now;
 }
 export function needsAttention(item: InboxItem): boolean {
-  const group = category(item);
-  return group === "waiting" || group === "attention";
+  return category(item) === "attention";
 }
 export function visibleItems(
   items: readonly InboxItem[],
@@ -42,11 +37,7 @@ export function visibleItems(
       if (filter !== "all" && category(item) !== filter) {
         return false;
       }
-      if (
-        !showSnoozed &&
-        (filter === "waiting" || filter === "attention") &&
-        isSnoozed(item, now)
-      ) {
+      if (!showSnoozed && filter === "attention" && isSnoozed(item, now)) {
         return false;
       }
       return (

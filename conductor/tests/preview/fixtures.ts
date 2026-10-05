@@ -1,5 +1,6 @@
 import type { InboxItem, InboxSnapshot } from "../../shared/models";
 import type { PluginTheme } from "@getpaseo/plugin";
+import { requestForm } from "../../shared/questions";
 
 export const light: PluginTheme = {
   colors: {
@@ -145,14 +146,15 @@ export const initial: InboxSnapshot = {
       requestId: "request-native",
       agentTitle: "Migration review",
       since: new Date(Date.now() - 2 * 60_000).toISOString(),
-      provider: "opencode",
+      provider: "claude",
       projectName: "Harbor",
       title: "Review the proposed migration plan",
       description: "This provider uses its own plan approval controls.",
-      form: {
-        kind: "native",
-        reason: "Open this request in the agent to use its native controls.",
-      },
+      details: JSON.stringify({ plan: "# Proposed migration plan" }),
+      form: requestForm({
+        kind: "plan",
+        input: { plan: "# Proposed migration plan" },
+      }),
     },
     {
       ...base,

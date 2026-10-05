@@ -12,7 +12,7 @@ export interface ViewState {
 }
 export class InboxSession {
   private state: ViewState = {
-    filter: "waiting",
+    filter: "attention",
     query: "",
     groupBy: "project",
     selectedKey: null,

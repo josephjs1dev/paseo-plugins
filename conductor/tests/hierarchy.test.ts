@@ -59,8 +59,8 @@ await test("children nest under visible parents across workspaces, with each req
 });
 await test("a waiting child remains visible when a running parent is filtered out", async () => {
   const items = await family();
-  const waiting = visibleItems(items, "waiting", "", undefined, Date.now());
-  const rows = queueGroups(waiting, "project").flatMap(
+  const attention = visibleItems(items, "attention", "", undefined, Date.now());
+  const rows = queueGroups(attention, "project").flatMap(
     (group) => group.entries,
   );
   assert.equal(rows.length, 1);

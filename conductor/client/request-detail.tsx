@@ -314,7 +314,7 @@ export function RequestDetail({
         Snooze affects Conductor’s queue only. Paseo controls native
         notifications.
       </Text>
-      {item.details !== "" && (
+      {item.details !== "" && item.form?.kind !== "native" && (
         <View style={{ gap: 12 }}>
           <Button
             theme={theme}

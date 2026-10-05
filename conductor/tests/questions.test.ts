@@ -53,6 +53,16 @@ await test("unsupported, secret, and duplicate-header forms fall back to native 
     assert.equal(requestForm(question({ input })).kind, "native");
   }
   assert.equal(requestForm(question({ kind: "mode" })).kind, "native");
+  assert.equal(
+    requestForm(
+      question({
+        provider: "claude",
+        kind: "plan",
+        input: { plan: "Review this plan" },
+      }),
+    ).kind,
+    "native",
+  );
 });
 await test("invalid selections, mismatched counts, and missing required answers are rejected", () => {
   const form = requestForm(question());

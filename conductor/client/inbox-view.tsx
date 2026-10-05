@@ -1,7 +1,7 @@
 import { useState, useSyncExternalStore } from "react";
 import { Text, View } from "react-native";
 import type { PluginTheme } from "@getpaseo/plugin";
-import type { InboxSnapshot } from "../shared/models";
+import type { InboxItem, InboxSnapshot } from "../shared/models";
 import { visibleItems } from "../shared/inbox";
 import { InboxSession } from "./session";
 import { Label, Notice } from "./controls";
@@ -38,9 +38,9 @@ export function InboxView(props: InboxViewProps) {
     state.showSnoozed,
   );
   const selected = data?.items.find((item) => item.key === state.selectedKey);
-  const waiting = visibleItems(
+  const attention = visibleItems(
     data?.items ?? [],
-    "waiting",
+    "attention",
     "",
     props.workspaceId,
     now,
@@ -56,16 +56,23 @@ export function InboxView(props: InboxViewProps) {
     session.update({ filter: "all", query: "", selectedKey: null });
     props.scroll.offset = 0;
   };
-  const next = waiting.find(
+  const next = attention.find(
     (item) =>
       item.key !== selected?.key &&
       item.delivery === null &&
       !state.notices[item.key],
   );
+  const select = (item: InboxItem) => {
+    if (item.form?.kind === "native" && actions.canNavigate) {
+      actions.openAgent(item.agentId);
+      return;
+    }
+    session.select(item);
+  };
   const selectNext = () => {
     if (next) {
-      session.update({ filter: "waiting", query: "" });
-      session.select(next);
+      session.update({ filter: "attention", query: "" });
+      select(next);
     }
   };
   let emptyTitle = "Nothing in this view";
@@ -79,22 +86,22 @@ export function InboxView(props: InboxViewProps) {
     emptyTitle = "No agents in this scope";
     emptyDescription =
       "Existing agents appear automatically. Open or create an agent in Paseo to get started.";
-  } else if (state.filter === "waiting") {
-    emptyTitle = "No agents waiting for you";
-    emptyDescription = `${agentCount}${data.incomplete ? "+" : ""} current agents checked. No questions or approvals are waiting in this view.`;
+  } else if (state.filter === "attention") {
+    emptyTitle = "No agents need attention";
+    emptyDescription = `${agentCount}${data.incomplete ? "+" : ""} current agents checked. No pending questions, approvals, failures, or reminders in this view.`;
   }
   let detailTitle = "Choose an agent to follow.";
   let detailDescription =
     "Existing and new agents are checked automatically. Use Running, Inactive, or All to follow their current state.";
-  if (waiting.length) {
-    detailTitle = "Choose a request to respond.";
+  if (attention.length) {
+    detailTitle = "Choose an item to review.";
     detailDescription =
-      "Select a question or approval from the queue to continue.";
+      "Select a question, approval, failure, or reminder from the queue.";
   }
   if (state.selectedKey) {
     detailTitle = "This item changed or was resolved.";
     detailDescription =
-      "Your draft stays with the original request. Continue to the next waiting item.";
+      "Your draft stays with the original request. Continue to the next item needing attention.";
   }
   return (
     <View
@@ -143,7 +150,7 @@ export function InboxView(props: InboxViewProps) {
                 selectedKey={state.selectedKey}
                 groupBy={state.groupBy}
                 scroll={props.scroll}
-                onSelect={(item) => session.select(item)}
+                onSelect={select}
               />
             </View>
           )}

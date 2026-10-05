@@ -12,7 +12,6 @@ import type { InboxSession } from "./session";
 import { Button, Label, Notice, rowStyle } from "./controls";
 
 const filters: { id: Filter; label: string }[] = [
-  { id: "waiting", label: "Waiting" },
   { id: "attention", label: "Needs attention" },
   { id: "running", label: "Running" },
   { id: "inactive", label: "Inactive" },
@@ -108,7 +107,7 @@ export function InboxToolbar(props: Props) {
           />
           <Button
             {...controls}
-            label="Next waiting →"
+            label="Next item →"
             disabled={!props.hasNext}
             onPress={props.selectNext}
           />
@@ -220,7 +219,7 @@ export function InboxToolbar(props: Props) {
               label={showHistory ? "Hide recent actions" : "Recent actions"}
               onPress={() => setShowHistory(!showHistory)}
             />
-            {(state.filter === "waiting" || state.filter === "attention") &&
+            {state.filter === "attention" &&
               (state.showSnoozed ||
                 scoped.some(
                   (item) =>
