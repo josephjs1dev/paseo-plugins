@@ -1,15 +1,33 @@
 # Paseo Plugins
 
-- **[Essentials](essentials/README.md):** Usage limits, token history, workspace usage, and CLI/model updates.
-- **[Conductor](conductor/README.md):** An agent inbox for questions, permissions, snooze, and workspace navigation.
+Independently installable plugins for [Paseo](https://paseo.sh), the app for
+running AI coding agents on your own machines. These plugins help you understand
+usage, maintain coding CLIs, and coordinate agents and workspaces.
 
-## Install
+Each plugin has its own directory, manifest, dependencies, and checks. Use either
+or both; plugins are installed per daemon and available to its connected clients.
 
-Enable **Settings → Plugins → Enable plugins**, then add either URL as **Plugin source**:
+### [Essentials](essentials/README.md)
 
-```text
-https://github.com/josephjs1dev/paseo-plugins.git:essentials
-https://github.com/josephjs1dev/paseo-plugins.git:conductor
-```
+- View ChatGPT/Codex and OpenCode Go subscription limits and reset times.
+- Explore token history from Codex, Pi, and OpenCode, with daily charts and
+  breakdowns by workspace, model, and session.
+- Compare workspace usage with usage across the daemon host.
+- Check for Codex, OpenCode, and Pi CLI updates and refresh their model catalogs.
+- View and use banked Codex resets when supported by the connected account and CLI.
 
-No `npm install` needed. See each plugin's README for version requirements.
+The [Essentials README](essentials/README.md) covers requirements, GUI/CLI
+installation, and development.
+
+### [Conductor](conductor/README.md)
+
+- Find pending questions, permission requests, failures, and manual reminders in
+  one attention queue.
+- Answer supported requests directly, or open the agent for its native controls.
+- Filter and search agents, snooze items, and move through the queue with **Next item**.
+- Follow parent and child agents, inspect recorded turn outcomes, and navigate
+  back to their workspaces.
+- Review recent response actions and archive eligible inactive agents.
+
+The [Conductor README](conductor/README.md) covers requirements, GUI/CLI
+installation, and development.
