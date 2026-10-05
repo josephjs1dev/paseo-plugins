@@ -162,9 +162,9 @@ and tests using temporary files and fake I/O, without real provider credentials.
 | `tests/`                      | Collector, history, quota, maintenance, and navigation tests.                |
 
 - Read the repository's [AGENTS.md](../AGENTS.md),
-  [security rules](../.codex/rules/security.md), and
-  [TypeScript styles](../.codex/rules/typescript/coding-styles.md). For UI changes,
-  also follow the [frontend styles](../.codex/rules/typescript/frontend-styles.md).
+  [security rules](../.agents/rules/security.md), and
+  [TypeScript styles](../.agents/rules/typescript/coding-styles.md). For UI changes,
+  also follow the [frontend styles](../.agents/rules/typescript/frontend-styles.md).
 - Keep filesystem access, credentials, network calls, and processes in `server/`.
   Shared modules must be independent of Node and React Native APIs.
 - Use React Native primitives, Paseo theme colors, and compact layouts for UI.

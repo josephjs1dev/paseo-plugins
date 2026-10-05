@@ -10,11 +10,11 @@ Each plugin lives in its own directory at the repository root, such as essential
 
 Security rules apply to every change, regardless of language:
 
-- [Security rules](.codex/rules/security.md)
+Read [Security rules](.agents/rules/security.md) before taking action.
 
 ## Language rules (load when relevant)
 
-- **typescript** — read [.codex/rules/typescript/coding-styles.md](.codex/rules/typescript/coding-styles.md) when working in that language.
+- **typescript** — read [.agents/rules/typescript/coding-styles.md](.agents/rules/typescript/coding-styles.md) when working in that language.
 
 Open the relevant language rule file the first time you touch that language
 in a session.
@@ -30,15 +30,15 @@ when the task changes or the user requests another role. Skip personas for
 tasks that do not benefit from either role. A TODO-only file adds no guidance;
 do not load the other persona as a fallback.
 
-- SWE: [.codex/personas/swe.md](.codex/personas/swe.md)
-- Team Leader: [.codex/personas/team_leader.md](.codex/personas/team_leader.md)
+- SWE: [.agents/personas/swe.md](.agents/personas/swe.md)
+- Team Leader: [.agents/personas/team_leader.md](.agents/personas/team_leader.md)
 
 ## Repository guide
 
 Read [README.md](README.md) for the plugin catalog and installation workflow.
 Before changing Essentials, read [its README](essentials/README.md).
 For frontend work, also read
-[Frontend Coding Styles](.codex/rules/typescript/frontend-styles.md).
+[Frontend Coding Styles](.agents/rules/typescript/frontend-styles.md).
 
 Keep each plugin independently installable in its own root directory, with its
 own manifest, package, lockfile, runtime entries, README, and validation scripts.
@@ -55,7 +55,9 @@ Run `git diff --check` for changes across the repository.
 
 ## Canonical instructions
 
-Edit `AGENTS.md` directly; it is the canonical project instruction file.
+Keep shared rules and personas in `.agents/`. Reserve `.codex/` for native
+configuration and command permissions. Edit `AGENTS.md` as the canonical project
+instruction file and preserve the `CLAUDE.md` symlink to it.
 
 ## Commit and push
 

@@ -134,9 +134,9 @@ For focused checks, use `npm run typecheck`, `npm test`, or `npm run test:ui`.
 | `tests/`                      | Unit tests, fixture preview, browser tests, and optional host smoke tests.               |
 
 - Read the repository's [AGENTS.md](../AGENTS.md),
-  [security rules](../.codex/rules/security.md), and
-  [TypeScript styles](../.codex/rules/typescript/coding-styles.md). For UI changes,
-  also follow the [frontend styles](../.codex/rules/typescript/frontend-styles.md).
+  [security rules](../.agents/rules/security.md), and
+  [TypeScript styles](../.agents/rules/typescript/coding-styles.md). For UI changes,
+  also follow the [frontend styles](../.agents/rules/typescript/frontend-styles.md).
 - Preserve the client/server/shared boundaries and keep production code on the
   public Paseo SDK. Filesystem persistence belongs in `server/`.
 - Use React Native primitives, Paseo theme colors, and compact layouts. Keep
