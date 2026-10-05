@@ -1,4 +1,6 @@
-import type { PaseoApi } from "@getpaseo/client";
+import type { usePaseo } from "@getpaseo/plugin/client";
+
+type PaseoApi = ReturnType<typeof usePaseo>;
 
 /** One directory observer per borrowed client, shared by every mounted contribution. */
 const observers = new WeakMap<

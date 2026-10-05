@@ -21,6 +21,28 @@ export default tseslint.config(
       "@typescript-eslint/no-non-null-assertion": "error",
     },
   },
+  {
+    files: ["index.*.ts", "index.*.tsx", "client/**", "server/**", "shared/**"],
+    rules: {
+      "no-restricted-imports": [
+        "error",
+        {
+          patterns: [
+            {
+              group: [
+                "@getpaseo/client",
+                "@getpaseo/client/*",
+                "@getpaseo/protocol",
+                "@getpaseo/protocol/*",
+              ],
+              message:
+                "Use the host-provided plugin SDK and derive types from its contracts; direct SDK peer imports require local packages during installation.",
+            },
+          ],
+        },
+      ],
+    },
+  },
   // Fake asynchronous adapters preserve the production interface without artificial waits.
   {
     files: ["tests/**/*.ts", "tests/**/*.tsx"],

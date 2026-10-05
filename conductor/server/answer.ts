@@ -1,10 +1,9 @@
-import type { AgentPermissionResponse } from "@getpaseo/protocol/agent-types";
 import type { RpcInput } from "@getpaseo/plugin";
 import type { answerRequest } from "../shared/rpc";
 import type { AnswerResult, Receipt } from "../shared/models";
 import { questionAnswers, requestForm } from "../shared/questions";
 import { digest, requestKey } from "./identity";
-import type { Runtime } from "./runtime";
+import type { AgentPermissionResponse, Runtime } from "./runtime";
 import type { InboxStore } from "./store";
 
 /** Fresh server inspection + an exclusive on-disk claim fence every permission response. */

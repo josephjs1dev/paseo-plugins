@@ -1,6 +1,5 @@
 import { createHash } from "node:crypto";
-import type { PaseoAgent } from "@getpaseo/client";
-import type { AgentPermissionRequest } from "@getpaseo/protocol/agent-types";
+import type { AgentPermissionRequest, PaseoAgent } from "./runtime";
 
 export function digest(value: unknown): string {
   return createHash("sha256")

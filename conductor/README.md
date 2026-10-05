@@ -143,6 +143,12 @@ Plugins run trusted, unsandboxed code. Review the source before installation.
 Paseo supplies the runtime libraries; no dependency installation is required to
 load this source directory. Keep the directory at its installed path.
 
+Production code imports Paseo APIs and types through `@getpaseo/plugin` only.
+Direct type imports from `@getpaseo/client` or `@getpaseo/protocol` would make
+Paseo's compiler require those packages in the plugin directory, even though
+TypeScript erases them. The package's pinned SDK peers are development
+dependencies for local checks and the isolated host test harness.
+
 Select that host in Paseo and open **Conductor** in the sidebar. The Command
 Center also offers **Open Conductor inbox** and **Open workspace inbox**. The
 workspace panel is available in Explorer or as a workspace tab.
@@ -241,6 +247,12 @@ low-level plugin RPC transport; production code uses public plugin/Paseo APIs.
 its sidebar opens the inbox at desktop and compact sizes. Enable the daemon's
 web UI before running it. Run both scripts against each supported release to
 check the real host contracts as well as the unit-test fixtures.
+
+When checking installation, use a fresh source directory without `node_modules`
+and compile both runtime entries. A development checkout with SDK peers installed
+can hide missing type dependencies. ESLint rejects direct client/protocol imports
+from production code; server types are derived from the public plugin handler
+and lifecycle contracts, and client types from `usePaseo`.
 
 The browser suite covers wide/light and compact/dark layouts, preserved drafts,
 answer/next navigation, native fallback, unknown delivery, stale data, snooze,

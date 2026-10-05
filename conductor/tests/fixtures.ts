@@ -2,9 +2,11 @@ import { after } from "node:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { PaseoAgent } from "@getpaseo/client";
-import type { AgentPermissionRequest } from "@getpaseo/protocol/agent-types";
-import type { Runtime } from "../server/runtime";
+import type {
+  AgentPermissionRequest,
+  PaseoAgent,
+  Runtime,
+} from "../server/runtime";
 
 export function question(
   overrides: Partial<AgentPermissionRequest> = {},

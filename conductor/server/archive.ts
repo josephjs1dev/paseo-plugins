@@ -1,6 +1,5 @@
-import type { PaseoAgent } from "@getpaseo/client";
 import type { ArchiveResult } from "../shared/models";
-import type { Runtime } from "./runtime";
+import type { PaseoAgent, Runtime } from "./runtime";
 import { digest } from "./identity";
 import { pages } from "./directory";
 

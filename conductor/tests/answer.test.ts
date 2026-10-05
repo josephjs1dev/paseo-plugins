@@ -7,7 +7,7 @@ import { fileStore } from "../server/store";
 import { requestKey } from "../server/identity";
 import type { Decision } from "../shared/models";
 import { agent, question, runtime, testDirectory } from "./fixtures";
-import type { AgentPermissionResponse } from "@getpaseo/protocol/agent-types";
+import type { AgentPermissionResponse } from "../server/runtime";
 
 const decision: Decision = {
   kind: "answers",

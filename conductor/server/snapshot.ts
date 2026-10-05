@@ -1,5 +1,3 @@
-import type { PaseoAgent, PaseoWorkspace } from "@getpaseo/client";
-import type { AgentPermissionRequest } from "@getpaseo/protocol/agent-types";
 import type {
   Bucket,
   InboxItem,
@@ -8,7 +6,12 @@ import type {
 } from "../shared/models";
 import { requestForm } from "../shared/questions";
 import { agentKey, requestKey } from "./identity";
-import type { Runtime } from "./runtime";
+import type {
+  AgentPermissionRequest,
+  PaseoAgent,
+  PaseoWorkspace,
+  Runtime,
+} from "./runtime";
 import type { InboxStore } from "./store";
 import type { TurnJournal } from "./turns";
 import { pages } from "./directory";

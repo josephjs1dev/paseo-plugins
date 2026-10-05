@@ -1,7 +1,6 @@
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
 import { z } from "zod";
-import type { PaseoAgent } from "@getpaseo/client";
 import type { PluginServerContext } from "@getpaseo/plugin/server";
 import {
   identifier,
@@ -11,7 +10,7 @@ import {
 } from "../shared/models";
 import { atomicJson, readJson } from "./files";
 import { agentKey, digest } from "./identity";
-import { paseoRuntime } from "./runtime";
+import { paseoRuntime, type PaseoAgent } from "./runtime";
 
 const recordSchema = z.object({
   identity: keySchema,
