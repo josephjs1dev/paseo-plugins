@@ -4,6 +4,7 @@ export const harnessDefinitions = {
   codex: { name: "Codex" },
   pi: { name: "Pi" },
   opencode: { name: "OpenCode" },
+  claude: { name: "Claude Code" },
 } as const;
 
 export type Harness = keyof typeof harnessDefinitions;

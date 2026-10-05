@@ -13,6 +13,7 @@ const windowSchema = z.object({
     .optional(),
 });
 const bucketSchema = z.object({
+  limitId: z.string().max(100).nullable().optional(),
   limitName: z.string().max(100).nullable().optional(),
   primary: windowSchema.nullable().optional(),
   secondary: windowSchema.nullable().optional(),
@@ -122,8 +123,10 @@ export function normalizeCodex(input: unknown): Usage["windows"] {
   const data = codexSchema.parse(input);
   const buckets = Object.entries(data.rateLimitsByLimitId ?? {});
 
-  if (!buckets.length && data.rateLimits) {
-    buckets.push(["codex", data.rateLimits]);
+  const legacyId = data.rateLimits?.limitId ?? "codex";
+
+  if (data.rateLimits && !buckets.some(([id]) => id === legacyId)) {
+    buckets.unshift([legacyId, data.rateLimits]);
   }
 
   if (buckets.length > 32) {
@@ -145,6 +148,7 @@ export function normalizeCodex(input: unknown): Usage["windows"] {
         {
           name: `${bucket.limitName ?? id} · ${duration}`,
           usedPercent: window.usedPercent,
+          ...(minutes ? { durationMinutes: minutes } : {}),
           resetsAt:
             window.resetsAt == null
               ? null
@@ -189,6 +193,48 @@ export function normalizeGo(input: unknown): Usage["windows"] {
   return (["rolling", "weekly", "monthly"] as const).map((key) => ({
     name: { rolling: "5 hours", weekly: "Weekly", monthly: "Monthly" }[key],
     usedPercent: usage[key].percent,
+    ...(key === "rolling" ? { durationMinutes: 300 } : {}),
+    ...(key === "weekly" ? { durationMinutes: 10080 } : {}),
     resetsAt: new Date(usage[key].resetsAt).toISOString(),
   }));
+}
+
+const claudeWindowSchema = z.object({
+  utilization: z.number().finite().nonnegative(),
+  resets_at: z.string().datetime({ offset: true }).nullish(),
+});
+
+const claudeWindows = {
+  five_hour: { name: "5 hours", durationMinutes: 300 },
+  seven_day: { name: "Weekly", durationMinutes: 10080 },
+  seven_day_sonnet: { name: "Sonnet · weekly", durationMinutes: 10080 },
+  seven_day_opus: { name: "Opus · weekly", durationMinutes: 10080 },
+  seven_day_oauth_apps: { name: "OAuth apps · weekly", durationMinutes: 10080 },
+  seven_day_cowork: { name: "Cowork · weekly", durationMinutes: 10080 },
+} as const;
+
+/** Missing windows are unavailable, never an implied zero-percent measurement. */
+export function normalizeClaude(input: unknown): Usage["windows"] {
+  const data = z.record(z.string().max(100), z.unknown()).parse(input);
+
+  return Object.entries(claudeWindows).flatMap(([key, definition]) => {
+    const value = data[key];
+
+    if (value == null) {
+      return [];
+    }
+
+    const window = claudeWindowSchema.parse(value);
+
+    return [
+      {
+        ...definition,
+        usedPercent: window.utilization,
+        resetsAt:
+          window.resets_at == null
+            ? null
+            : new Date(window.resets_at).toISOString(),
+      },
+    ];
+  });
 }

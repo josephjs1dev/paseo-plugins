@@ -20,6 +20,7 @@ function collectorStates(checkpoint: number, incomplete = false) {
     codex: { updatedThrough, incomplete },
     pi: { updatedThrough, incomplete: false },
     opencode: { updatedThrough, incomplete: false },
+    claude: { updatedThrough, incomplete: false },
   };
 }
 

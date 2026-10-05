@@ -236,7 +236,19 @@ test("both provider views share a Pi collector scan and retain harness identity 
     }
 
     return {
-      rows: [row(harness === "codex" ? "chatgpt" : "opencode-go", harness)],
+      rows: [
+        row(
+          (
+            {
+              codex: "chatgpt",
+              claude: "claude",
+              opencode: "opencode-go",
+              pi: "chatgpt",
+            } as const
+          )[harness],
+          harness,
+        ),
+      ],
       incomplete: false,
     };
   });

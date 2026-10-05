@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { useRpc, type PluginButtonContentProps } from "@getpaseo/plugin/client";
 import { Icon } from "@getpaseo/plugin/client/react-native";
 import { useQuery } from "@tanstack/react-query";
@@ -13,6 +13,7 @@ import { creditBalanceLabel } from "../shared/usage-display";
 import { CodexReset } from "./codex-reset";
 import { QuotaWindow } from "./quota-window";
 import { ProviderLogo } from "./provider-logo";
+import { UsageUnavailable } from "./usage-unavailable";
 import { HistoryAction, HistoryValue } from "./history-controls";
 
 type UsagePopoverProps = PluginButtonContentProps & {
@@ -32,7 +33,7 @@ export function UsagePopover(props: UsagePopoverProps) {
       style={{
         width: layout.compact ? "100%" : 480,
         maxWidth: "100%",
-        flexDirection: "row",
+        flexDirection: layout.compact ? "column" : "row",
         gap: layout.compact ? 12 : 20,
       }}
     >
@@ -40,12 +41,16 @@ export function UsagePopover(props: UsagePopoverProps) {
         role="group"
         accessibilityLabel="Usage provider"
         style={{
-          width: 57,
+          width: layout.compact ? "100%" : 57,
+          flexDirection: layout.compact ? "row" : "column",
           flexShrink: 0,
           gap: 8,
-          paddingRight: 12,
-          borderRightWidth: 1,
+          paddingRight: layout.compact ? 0 : 12,
+          paddingBottom: layout.compact ? 12 : 0,
+          borderRightWidth: layout.compact ? 0 : 1,
           borderRightColor: colors.border,
+          borderBottomWidth: layout.compact ? 1 : 0,
+          borderBottomColor: colors.border,
         }}
       >
         {providerIds.map((id) => {
@@ -98,14 +103,30 @@ function UsageDetails(props: UsagePopoverProps & { provider: Provider }) {
   const { provider, theme, host } = props;
   const { colors } = theme;
   const read = useRpc(readUsage);
+  const forceRefresh = useRef(false);
   const query = useQuery({
     queryKey: ["nestkit-usage", host.id, provider],
-    queryFn: () => read({ provider }),
+    queryFn: () => {
+      const refresh = forceRefresh.current;
+      forceRefresh.current = false;
+
+      return read({ provider, refresh });
+    },
     refetchInterval: 60_000,
     staleTime: 30_000,
     retry: false,
   });
   const usage = query.data;
+  const unavailable =
+    usage?.status === "unavailable" || (query.isError && !usage);
+  function refresh() {
+    forceRefresh.current = true;
+    void query.refetch().then((result) => {
+      if (result.isSuccess && result.data) {
+        props.onUsageChange(result.data);
+      }
+    });
+  }
 
   return (
     <View style={{ gap: 20 }}>
@@ -136,7 +157,7 @@ function UsageDetails(props: UsagePopoverProps & { provider: Provider }) {
           Loading usage…
         </Text>
       )}
-      {query.isError && (
+      {query.isError && usage?.status === "ok" && (
         <Text
           accessibilityRole="alert"
           style={{ color: colors.statusDanger, fontSize: 13, lineHeight: 20 }}
@@ -144,17 +165,23 @@ function UsageDetails(props: UsagePopoverProps & { provider: Provider }) {
           Could not refresh usage. Showing the previous check, if available.
         </Text>
       )}
-      {usage?.status === "unavailable" && (
-        <Text
-          style={{ color: colors.foreground, fontSize: 13, lineHeight: 20 }}
-        >
-          {usage.message}
-        </Text>
+      {unavailable && (
+        <UsageUnavailable
+          theme={theme}
+          provider={provider}
+          issue={usage?.issue}
+          message={
+            usage?.message ||
+            "Could not reach this host. Check its connection and try again."
+          }
+          refreshing={query.isFetching}
+          onRetry={refresh}
+        />
       )}
       {usage?.windows.map((quota, index) => (
         <QuotaWindow key={quota.name + index} quota={quota} theme={theme} />
       ))}
-      {provider === "chatgpt" && usage && (
+      {provider === "chatgpt" && usage?.status === "ok" && (
         <View style={{ gap: 16 }}>
           <HistoryValue
             theme={theme}
@@ -187,18 +214,18 @@ function UsageDetails(props: UsagePopoverProps & { provider: Provider }) {
           }}
         >
           {usage
-            ? "Updated " + new Date(usage.checkedAt).toLocaleTimeString()
+            ? `${unavailable ? "Last checked" : "Updated"} ${new Date(usage.checkedAt).toLocaleTimeString()}`
             : "Updates every minute"}
         </Text>
-        <HistoryAction
-          theme={theme}
-          disabled={query.isFetching}
-          onPress={() => {
-            void query.refetch();
-          }}
-        >
-          {query.isFetching ? "Refreshing…" : "Refresh"}
-        </HistoryAction>
+        {!unavailable && (
+          <HistoryAction
+            theme={theme}
+            disabled={query.isFetching}
+            onPress={refresh}
+          >
+            {query.isFetching ? "Refreshing…" : "Refresh"}
+          </HistoryAction>
+        )}
       </View>
       <Pressable
         accessibilityRole="button"

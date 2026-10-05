@@ -17,6 +17,7 @@ export const usageSchema = z.object({
   provider: providerSchema,
   status: z.enum(["ok", "unavailable"]),
   message: z.string().max(240),
+  issue: z.enum(["sign-in", "rate-limit"]).optional(),
   checkedAt: z.string().datetime(),
   credits: creditsSchema.nullable().optional(),
   resetCredits: z
@@ -32,6 +33,7 @@ export const usageSchema = z.object({
         name: z.string().max(160),
         usedPercent: z.number().finite().min(0),
         resetsAt: z.string().datetime().nullable(),
+        durationMinutes: z.number().finite().positive().optional(),
       }),
     )
     .max(64),
@@ -47,7 +49,10 @@ export type Quota = z.infer<typeof quotaSchema>;
 
 export const readUsage = defineRpc({
   name: "usage.read",
-  input: z.object({ provider: providerSchema }),
+  input: z.object({
+    provider: providerSchema,
+    refresh: z.boolean().optional(),
+  }),
   output: usageSchema,
 });
 
@@ -59,6 +64,19 @@ export function usageLabel(usage: Usage): string {
   }
 
   const used = Math.max(...usage.windows.map((window) => window.usedPercent));
+  const fiveHour = usage.windows.filter(
+    (window) => window.durationMinutes === 300,
+  );
+
+  if (fiveHour.length) {
+    const remaining = Math.round(
+      remainingPercent(
+        Math.max(...fiveHour.map((window) => window.usedPercent)),
+      ),
+    );
+
+    return `${name} · 5h ${remaining}% left`;
+  }
 
   return `${name} · ${Math.round(remainingPercent(used))}% left`;
 }

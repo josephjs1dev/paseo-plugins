@@ -320,9 +320,9 @@ test("provider and workspace readers share scans and cached local history", asyn
       store.read("opencode-go", "/workspace", 30),
       store.read("chatgpt", "/other", 90),
     ]);
-    assert.deepEqual(collected.sort(), ["codex", "opencode", "pi"]);
+    assert.deepEqual(collected.sort(), ["claude", "codex", "opencode", "pi"]);
     await store.read("chatgpt", "/workspace", 30, 20);
-    assert.equal(collected.length, 3);
+    assert.equal(collected.length, 4);
     const saved = JSON.parse(
       await readFile(join(directory, "history.json"), "utf8"),
     ) as { rows: unknown[] };
@@ -388,7 +388,13 @@ test("scopes and pages share source scans, retain rows and warnings, and satisfy
       store.read("opencode-go", "/workspace", 7, 0, "host"),
       store.read("opencode-go", "/workspace", 7, 20, "host"),
     ]);
-    assert.deepEqual(collected.sort(), ["codex", "opencode", "opencode", "pi"]);
+    assert.deepEqual(collected.sort(), [
+      "claude",
+      "codex",
+      "opencode",
+      "opencode",
+      "pi",
+    ]);
     assert.equal(workspace.sessionCount, 0);
     assert.equal(host.sessionCount, 25);
     assert.equal(host.sessions.length, 20);
@@ -421,7 +427,7 @@ test("scopes and pages share source scans, retain rows and warnings, and satisfy
       (await store.read("chatgpt", "/workspace", 7, 0, "host")).sessionCount,
       0,
     );
-    assert.equal(collected.length, 4);
+    assert.equal(collected.length, 5);
     assert.equal(
       await readFile(join(directory, "history.json"), "utf8"),
       before,

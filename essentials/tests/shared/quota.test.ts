@@ -241,7 +241,7 @@ test("Codex supports all named buckets without duplicating the legacy bucket", (
     checkedAt: new Date().toISOString(),
     windows,
   });
-  assert.equal(usageLabel(usage), "ChatGPT · 20% left");
+  assert.equal(usageLabel(usage), "ChatGPT · 5h 75% left");
 });
 
 test("Go preserves quota percentages and normalizes reset time zones", () => {

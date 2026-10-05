@@ -36,6 +36,7 @@ test("all registered harnesses return the common schema without native installat
   const directory = await mkdtemp(join(tmpdir(), "paseo-collectors-"));
   const overrides = {
     CODEX_HOME: directory,
+    CLAUDE_USAGE_PROJECTS_DIR: directory,
     PI_USAGE_SESSION_DIR: directory,
     OPENCODE_USAGE_DB: join(directory, "missing.db"),
   };
@@ -138,7 +139,19 @@ test("Pi failure warns both providers while native collectors advance independen
       const rows =
         harness === "pi"
           ? [row("pi", "chatgpt"), row("pi", "opencode-go")]
-          : [row(harness, harness === "codex" ? "chatgpt" : "opencode-go")];
+          : [
+              row(
+                harness,
+                (
+                  {
+                    codex: "chatgpt",
+                    claude: "claude",
+                    opencode: "opencode-go",
+                    pi: "chatgpt",
+                  } as const
+                )[harness],
+              ),
+            ];
 
       return { rows, incomplete: false };
     }),
@@ -233,7 +246,7 @@ test("legacy cache migration preserves source-less records, strips one Pi prefix
       ),
     );
     await store.refresh();
-    assert.equal(windows.length, 3);
+    assert.equal(windows.length, harnessIds.length);
     assert.ok(
       windows.every(
         (window) =>

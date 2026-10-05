@@ -7,14 +7,29 @@ CLI maintenance to Paseo.
 
 ### Subscription limits
 
-The **Provider usage** workspace header button shows ChatGPT/Codex or OpenCode Go
-quota windows and reset times. Switch providers in the popover to inspect either
-account.
+The **Provider usage** workspace header button shows ChatGPT/Codex, Claude, or
+OpenCode Go quota windows and reset times. Switch providers in the popover to
+inspect an account. The header shows the **5-hour remaining balance** when that
+window is reported; otherwise it shows the lowest remaining reported quota.
+The popover keeps all available windows, including weekly and model-specific limits.
 
 Quota lookup uses Codex's ChatGPT login or OpenCode Go's connected account on the
 daemon host. Pi contributes history using those providers. Supported Codex
 accounts also show banked reset availability and expiration, with **Use reset**
 requiring confirmation before spending one.
+
+Claude reads subscription usage from Anthropic's OAuth usage endpoint, using
+the daemon's `CLAUDE_CODE_OAUTH_TOKEN` or Claude Code's `.credentials.json` under
+`CLAUDE_CONFIG_DIR` (default `~/.claude`). Set `CLAUDE_USAGE_AUTH_FILE` to use an
+explicit credentials file. The login needs `user:profile` access; inference-only
+tokens and Anthropic API keys cannot read subscription limits. Expired credentials
+require signing in through Claude Code again. Essentials never refreshes or rewrites
+Claude credentials and does not read macOS Keychain-only logins. On those hosts,
+provide a supported token or credentials file to the daemon.
+
+Missing quota windows are omitted, never treated as unused quota.
+The OAuth endpoint is not a stable public API. Its request and response shapes were
+checked against [CodexBar's OAuth implementation](https://github.com/steipete/CodexBar/blob/main/Sources/CodexBarCore/Providers/Claude/ClaudeOAuth/ClaudeOAuthUsageFetcher.swift).
 
 ### Token history and workspace usage
 
@@ -26,9 +41,23 @@ Open **Usage history** from a usage popover to explore:
 - Breakdowns by model and session, including the originating coding CLI.
 - Recorded cost estimates and estimated Codex credits where rates are available.
 
-History combines Codex and Pi session logs with OpenCode Go database records.
+History combines native Codex and Claude Code session logs, Pi records for ChatGPT
+and OpenCode Go, and OpenCode Go database records.
 Workspace attribution uses the session's working directory; records use UTC days
 and the cache retains 90 days. Unreadable sources produce partial-data warnings.
+
+Claude history reads `<CLAUDE_CONFIG_DIR>/projects` (default `~/.claude/projects`),
+with `CLAUDE_USAGE_PROJECTS_DIR` available as an explicit projects-directory override.
+It works independently of subscription login and includes local Claude Code usage
+regardless of how those sessions were billed. Parent and subagent requests are
+counted in their recorded session, with repeated response snapshots counted once.
+Input includes cache reads and cache creation; cache reads are also shown separately.
+Claude logs do not provide a separate reasoning total or a billed cost, so no cost
+is inferred. Only usage metadata is retained, not prompts or responses.
+
+The workspace popover includes provider icons, 7/30-day totals, input/output/cache
+counts, model and session details, and a manual history refresh. Claude can also
+open the full history view directly from its quota popover.
 
 Cost and credit estimates are not billed charges. Credits cover known model
 rates and exclude speed and plan adjustments.
@@ -48,7 +77,7 @@ Finish active work before updating; existing sessions may need reopening.
 - Paseo **0.9.2+** on both the app and daemon, as declared in
   [paseo-plugin.json](paseo-plugin.json).
 - Node **22.13+** on the daemon host for OpenCode history (`node:sqlite`).
-- Codex's ChatGPT login or OpenCode Go's account for quota; local records for history.
+- The matching Codex, Claude, or OpenCode Go login for quota; local records for history.
 - Git available on the daemon host for installation from this repository.
 
 Paseo supplies runtime libraries; Git installation needs no manual `npm install`.

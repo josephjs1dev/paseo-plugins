@@ -9,6 +9,7 @@ type FetchQuota = (provider: Provider, signal: AbortSignal) => Promise<Quota>;
 interface CachedUsage {
   expires: number;
   value: Promise<Usage>;
+  pending: boolean;
 }
 
 export function createUsageReader(
@@ -41,10 +42,14 @@ export function createUsageReader(
         checkedAt: new Date(now()).toISOString(),
       };
     } catch (error) {
+      const capability = quotaCapability(provider);
+      const issue = capability.describeIssue?.(error);
+
       return {
         provider,
         status: "unavailable",
-        message: quotaCapability(provider).describeError(error),
+        message: capability.describeError(error),
+        ...(issue ? { issue } : {}),
         windows: [],
         checkedAt: new Date(now()).toISOString(),
       };
@@ -52,17 +57,23 @@ export function createUsageReader(
   }
 
   return {
-    read(provider: Provider): Promise<Usage> {
+    read(provider: Provider, refresh = false): Promise<Usage> {
       const cached = cache.get(provider);
 
-      if (cached && cached.expires > now()) {
+      if (cached && (cached.pending || (!refresh && cached.expires > now()))) {
         return cached.value;
       }
 
-      const value = fetchUsage(provider);
-      cache.set(provider, { expires: now() + CACHE_DURATION_MS, value });
+      const entry: CachedUsage = {
+        expires: now() + CACHE_DURATION_MS,
+        pending: true,
+        value: fetchUsage(provider).finally(() => {
+          entry.pending = false;
+        }),
+      };
+      cache.set(provider, entry);
 
-      return value;
+      return entry.value;
     },
 
     close() {

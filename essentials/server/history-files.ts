@@ -42,6 +42,7 @@ const legacyProvidersByHarness = {
   codex: ["codex"],
   pi: ["codex", "opencode-go"],
   opencode: ["opencode-go"],
+  claude: [],
 } as const;
 
 function migrateHistory(

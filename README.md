@@ -9,9 +9,9 @@ or both; plugins are installed per daemon and available to its connected clients
 
 ### [Essentials](essentials/README.md)
 
-- View ChatGPT/Codex and OpenCode Go subscription limits and reset times.
-- Explore token history from Codex, Pi, and OpenCode, with daily charts and
-  breakdowns by workspace, model, and session.
+- View ChatGPT/Codex, Claude, and OpenCode Go subscription limits and reset times.
+- Explore token history from Codex, Claude Code, Pi, and OpenCode, with daily
+  charts and breakdowns by workspace, model, and session.
 - Compare workspace usage with usage across the daemon host.
 - Check for Codex, OpenCode, and Pi CLI updates and refresh their model catalogs.
 - View and use banked Codex resets when supported by the connected account and CLI.

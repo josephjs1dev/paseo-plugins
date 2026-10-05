@@ -44,3 +44,13 @@ test("popup navigation replaces scope in the owning tab and keeps other hosts is
   });
   assert.equal(secondHost.getSnapshot("workspace-a"), otherHostSelection);
 });
+
+test("Claude history navigation preserves provider and scope", () => {
+  const navigation = createHistoryNavigation(() => {});
+  navigation.open("workspace-a", "claude", 30, "host");
+  assert.deepEqual(navigation.getSnapshot("workspace-a"), {
+    provider: "claude",
+    days: 30,
+    scope: "host",
+  });
+});

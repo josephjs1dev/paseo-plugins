@@ -367,3 +367,121 @@ export function createPiHistoryParser(since: number, seen: Set<string>) {
     };
   };
 }
+
+const claudeRecordSchema = z.object({
+  sessionId: z.string().min(1).max(160),
+  cwd: z.string().min(1).max(4096),
+  timestamp: z.string().datetime({ offset: true }),
+  requestId: z.string().min(1).max(200).nullish(),
+  message: z.object({
+    id: z.string().min(1).max(200),
+    model: z.string().min(1).max(160),
+    usage: z.object({
+      input_tokens: count,
+      output_tokens: count,
+      cache_read_input_tokens: count.default(0),
+      cache_creation_input_tokens: count.default(0),
+    }),
+  }),
+});
+
+const claudeEnvelopeSchema = z.object({
+  type: z.string(),
+  message: z
+    .object({
+      model: z.unknown().optional(),
+      usage: z.unknown().optional(),
+    })
+    .optional(),
+});
+
+/** A response may have many cumulative snapshots. Emit its final counters once. */
+export function createClaudeHistoryParser(since: number, seen: Set<string>) {
+  const responses = new Map<string, HistoryRow>();
+
+  function parseLine(line: string): undefined {
+    if (line.length > 2 * 1024 * 1024) {
+      throw new Error("Claude history line limit reached");
+    }
+
+    let value: unknown;
+
+    try {
+      value = JSON.parse(line);
+    } catch {
+      // Active transcripts may end with an unfinished record.
+      return;
+    }
+
+    const envelope = claudeEnvelopeSchema.safeParse(value);
+
+    if (
+      !envelope.success ||
+      envelope.data.type !== "assistant" ||
+      envelope.data.message?.usage == null ||
+      envelope.data.message.model === "<synthetic>"
+    ) {
+      return;
+    }
+
+    const entry = claudeRecordSchema.parse(value);
+    const key = JSON.stringify([
+      "claude",
+      entry.requestId ?? entry.sessionId,
+      entry.message.id,
+    ]);
+
+    if (seen.has(key)) {
+      return;
+    }
+
+    const lastAt = new Date(entry.timestamp).toISOString();
+    const previous = responses.get(key);
+    const usage = entry.message.usage;
+    // Keep the request's original day stable if its stream crosses midnight.
+    const day = previous?.day ?? lastAt.slice(0, 10);
+    responses.set(key, {
+      provider: "claude",
+      harness: "claude",
+      sessionId: entry.sessionId,
+      model: entry.message.model,
+      cwd: entry.cwd,
+      day,
+      lastAt,
+      totals: {
+        input:
+          usage.input_tokens +
+          usage.cache_read_input_tokens +
+          usage.cache_creation_input_tokens,
+        cached: usage.cache_read_input_tokens,
+        output: usage.output_tokens,
+        reasoning: 0,
+        cost: null,
+      },
+    });
+
+    if (responses.size > 100_000) {
+      throw new Error("Claude history response limit reached");
+    }
+  }
+
+  function finish(): HistoryRow[] {
+    const rows: HistoryRow[] = [];
+
+    for (const [key, row] of responses) {
+      if (
+        Date.parse(row.lastAt) < since ||
+        row.totals.input + row.totals.output === 0
+      ) {
+        continue;
+      }
+
+      seen.add(key);
+      rows.push(row);
+    }
+
+    return rows;
+  }
+
+  return Object.assign(parseLine, { finish });
+}

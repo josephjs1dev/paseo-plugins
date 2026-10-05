@@ -10,7 +10,9 @@ export default function contribute(server: PluginServerContext) {
   const reader = createUsageReader();
   const resetter = createCodexResetter(reader);
   const history = createHistoryStore();
-  server.handle(readUsage, ({ provider }) => reader.read(provider));
+  server.handle(readUsage, ({ provider, refresh }) =>
+    reader.read(provider, refresh),
+  );
   server.handle(prepareCodexReset, () => resetter.prepare());
   server.handle(consumeCodexReset, ({ idempotencyKey, creditId }) =>
     resetter.consume({ idempotencyKey, creditId }),

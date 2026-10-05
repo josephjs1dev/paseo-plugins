@@ -17,12 +17,14 @@ const MAX_DATABASE_ROWS = 100_000;
 interface ScanLimits {
   maxScanBytes?: number;
   modifiedSince?: number;
+  groupFile?: (path: string) => string;
 }
 
-type CreateParser = (
-  since: number,
-  seen: Set<string>,
-) => (line: string) => HistoryRow | undefined;
+type HistoryLineParser = ((line: string) => HistoryRow | undefined) & {
+  finish?: () => HistoryRow[];
+};
+
+type CreateParser = (since: number, seen: Set<string>) => HistoryLineParser;
 
 export function collectCodex(
   roots: string[],
@@ -39,14 +41,12 @@ export function collectJsonl(
   signal: AbortSignal,
   createParser: CreateParser,
   modifiedSince?: number,
+  groupFile?: (path: string) => string,
 ): Promise<HistoryCollection> {
-  return scanJsonl(
-    roots,
-    since,
-    signal,
-    createParser,
-    modifiedSince === undefined ? {} : { modifiedSince },
-  );
+  return scanJsonl(roots, since, signal, createParser, {
+    ...(modifiedSince === undefined ? {} : { modifiedSince }),
+    ...(groupFile ? { groupFile } : {}),
+  });
 }
 
 /** Import complete logs newest-first; skipped logs keep their saved snapshots. */
@@ -128,7 +128,10 @@ async function scanJsonl(
       try {
         const info = await stat(path);
 
-        if (info.mtimeMs >= (limits.modifiedSince ?? since)) {
+        if (
+          limits.groupFile ||
+          info.mtimeMs >= (limits.modifiedSince ?? since)
+        ) {
           files.push({ path, size: info.size, modified: info.mtimeMs });
         }
       } catch {
@@ -146,37 +149,65 @@ async function scanJsonl(
       right.modified - left.modified || left.path.localeCompare(right.path),
   );
 
-  for (const file of files) {
-    checkCancelled();
+  // Claude parent and subagent logs share daily session totals. If one changes,
+  // reread the whole group so a partial snapshot cannot replace cached totals.
+  const groupFile = limits.groupFile;
+  const changedGroups = groupFile
+    ? new Set(
+        files
+          .filter((file) => file.modified >= (limits.modifiedSince ?? since))
+          .map((file) => groupFile(file.path)),
+      )
+    : undefined;
 
-    if (file.size > MAX_LOG_BYTES || file.size > maxScanBytes - byteCount) {
-      incomplete = true;
+  const groups = new Map<string, typeof files>();
+
+  for (const file of files) {
+    const group = groupFile?.(file.path) ?? file.path;
+
+    if (groupFile && !changedGroups?.has(group)) {
       continue;
     }
 
-    // A failed or truncated file must not commit usage or poison deduplication
-    // for an intact copy in another directory.
-    const fileSeen = new Set(seen);
+    const members = groups.get(group) ?? [];
+    members.push(file);
+    groups.set(group, members);
+  }
+
+  for (const members of groups.values()) {
+    checkCancelled();
+    // Commit an entire session group only after every sibling file succeeds.
+    // Failed groups cannot overwrite cached totals or poison copy deduplication.
+    const groupSeen = new Set(seen);
     const fresh: HistoryRow[] = [];
-    const parseLine = createParser(since, fileSeen);
 
     try {
-      for await (const line of readHistoryLines(file.path, {
-        signal,
-        maxBytes: Math.min(MAX_LOG_BYTES, maxScanBytes - byteCount),
-        onBytesRead: (size) => {
-          byteCount += size;
-        },
-      })) {
-        const row = parseLine(line);
-
-        if (row) {
-          fresh.push(row);
+      for (const file of members) {
+        if (file.size > MAX_LOG_BYTES || file.size > maxScanBytes - byteCount) {
+          throw new Error("History scan limit reached");
         }
+
+        const parseLine = createParser(since, groupSeen);
+
+        for await (const line of readHistoryLines(file.path, {
+          signal,
+          maxBytes: Math.min(MAX_LOG_BYTES, maxScanBytes - byteCount),
+          onBytesRead: (size) => {
+            byteCount += size;
+          },
+        })) {
+          const row = parseLine(line);
+
+          if (row) {
+            fresh.push(row);
+          }
+        }
+
+        fresh.push(...(parseLine.finish?.() ?? []));
       }
 
       rows.push(...fresh);
-      seen = fileSeen;
+      seen = groupSeen;
     } catch {
       checkCancelled();
       incomplete = true;

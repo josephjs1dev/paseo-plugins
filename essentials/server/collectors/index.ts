@@ -7,12 +7,14 @@ import type { Provider } from "../../shared/providers";
 import { codexCollector } from "./codex";
 import { piCollector } from "./pi";
 import { opencodeCollector } from "./opencode";
+import { claudeCollector } from "./claude";
 import type { HistoryScan, QuotaCapability, UsageCollector } from "./types";
 
 export const usageCollectors: Record<Harness, UsageCollector> = {
   codex: codexCollector,
   pi: piCollector,
   opencode: opencodeCollector,
+  claude: claudeCollector,
 };
 
 export function quotaCapability(provider: Provider): QuotaCapability {

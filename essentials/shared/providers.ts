@@ -14,6 +14,10 @@ export const providerDefinitions = {
     name: "OpenCode Go",
     icon: "ChartNoAxesCombined",
   },
+  claude: {
+    name: "Claude",
+    icon: "Sparkles",
+  },
 } as const satisfies Record<string, ProviderDefinition>;
 
 export type Provider = keyof typeof providerDefinitions;

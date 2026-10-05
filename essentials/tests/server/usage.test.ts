@@ -116,6 +116,53 @@ test("plugin cleanup cancels in-flight provider work", async () => {
   assert.equal((await pending).status, "unavailable");
 });
 
+test("manual refresh bypasses a cached failure and shares an in-flight connection check", async () => {
+  let calls = 0;
+  let complete: (() => void) | undefined;
+  const reader = createUsageReader(async () => {
+    calls++;
+
+    if (calls === 1) {
+      throw new Error("claude-credentials");
+    }
+
+    await new Promise<void>((resolve) => {
+      complete = resolve;
+    });
+
+    return {
+      windows: [
+        {
+          name: "5 hours",
+          durationMinutes: 300,
+          usedPercent: 20,
+          resetsAt: null,
+        },
+      ],
+    };
+  });
+
+  try {
+    const missing = await reader.read("claude");
+    assert.equal(missing.issue, "sign-in");
+    assert.equal(await reader.read("claude"), missing);
+    const first = reader.read("claude", true);
+    const second = reader.read("claude", true);
+    const background = reader.read("claude");
+    assert.equal(calls, 2);
+    assert.ok(complete);
+    complete();
+    const connected = await first;
+    assert.equal(connected.status, "ok");
+    assert.equal(connected.issue, undefined);
+    assert.equal(await second, connected);
+    assert.equal(await background, connected);
+    assert.equal(await reader.read("claude"), connected);
+  } finally {
+    reader.close();
+  }
+});
+
 test("credit-only Codex accounts return their balance and share the quota cache", async () => {
   let calls = 0;
   const credits = { hasCredits: true, unlimited: false, balance: 2500.5 };

@@ -1,13 +1,25 @@
 import type { ComponentType } from "react";
 import { Icon } from "@getpaseo/plugin/client/react-native";
-import { View } from "react-native";
+import { Image, View } from "react-native";
 
 import { providerDefinitions, type Provider } from "../shared/providers";
+import { claudeLogoUri } from "./assets/claude-logo";
 
 interface LogoProps {
   size: number;
   color: string;
   backgroundColor: string;
+}
+
+function ClaudeLogo({ size, color }: LogoProps) {
+  return (
+    <Image
+      source={{ uri: claudeLogoUri }}
+      accessible={false}
+      resizeMode="contain"
+      style={{ width: size, height: size, tintColor: color }}
+    />
+  );
 }
 
 function OpenCodeLogo({ size, color, backgroundColor }: LogoProps) {
@@ -40,6 +52,7 @@ function OpenCodeLogo({ size, color, backgroundColor }: LogoProps) {
 }
 
 const providerLogos: Partial<Record<Provider, ComponentType<LogoProps>>> = {
+  claude: ClaudeLogo,
   "opencode-go": OpenCodeLogo,
 };
 
