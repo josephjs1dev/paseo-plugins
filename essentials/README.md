@@ -62,12 +62,21 @@ open the full history view directly from its quota popover.
 Cost and credit estimates are not billed charges. Credits cover known model
 rates and exclude speed and plan adjustments.
 
-### CLI and model maintenance
+### Harnesses
 
-Open **CLIs & Models** from the sidebar or Command Center to compare installed and
-latest stable Codex, OpenCode, and Pi versions and update recognized installations.
+Open **Harnesses** from the sidebar or Command Center to compare installed and
+latest stable Codex, Claude Code, OpenCode, and Pi versions and update recognized
+installations.
 You can also refresh provider model discovery and supported CLI caches, then
 search the model catalog.
+
+Claude Code supports updates for recognized native and global npm installations.
+Native updates install the checked version with `claude install <version>`; npm
+updates use the detected installation prefix. Homebrew, other package managers,
+and custom launch wrappers require their original installation manager.
+Claude model refresh uses Paseo provider discovery without a separate CLI cache
+command. See [Claude Code setup](https://code.claude.com/docs/en/setup) for
+installation and update details.
 
 Maintenance runs on the selected host. Unrecognized installations show guidance.
 Finish active work before updating; existing sessions may need reopening.
@@ -101,7 +110,7 @@ https://github.com/josephjs1dev/paseo-plugins.git:essentials
 ```
 
 4. Select **Install plugin** and confirm that `essentials` reports `running`.
-5. Open a workspace for the usage buttons, or open **CLIs & Models** from the
+5. Open a workspace for the usage buttons, or open **Harnesses** from the
    sidebar.
 
 ### CLI (Git source)

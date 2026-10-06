@@ -17,7 +17,17 @@ export function registerMaintenanceNavigation(client: NavigationClient) {
       title,
       icon: "RefreshCw",
       context: "global",
-      keywords: ["host", "updates", "maintenance", "codex", "opencode", "pi"],
+      keywords: [
+        "host",
+        "updates",
+        "maintenance",
+        "codex",
+        "opencode",
+        "pi",
+        "claude",
+        "models",
+        "cli",
+      ],
       onSelect({ openSurface }) {
         openSurface("cli-maintenance");
       },
@@ -25,7 +35,7 @@ export function registerMaintenanceNavigation(client: NavigationClient) {
   }
 
   // Keep maintenance reachable if host metadata is temporarily unavailable.
-  let removeCommand = addCommand("CLIs & Models");
+  let removeCommand = addCommand("Harnesses");
 
   async function identifyHost() {
     try {
@@ -41,7 +51,7 @@ export function registerMaintenanceNavigation(client: NavigationClient) {
         .split("")
         .map((char) => char.charCodeAt(0).toString(16).padStart(4, "0"))
         .join("");
-      const title = `CLIs & Models (${host.name})`;
+      const title = `Harnesses (${host.name})`;
       removeSidebar?.();
       removeSidebar = client.addSidebarItem({
         id: `cli-maintenance-${hostKey}`,

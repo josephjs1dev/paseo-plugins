@@ -1,11 +1,12 @@
 import { defineRpc } from "@getpaseo/plugin";
 import { z } from "zod";
 
-export const cliIds = ["codex", "opencode", "pi"] as const;
+export const cliIds = ["codex", "opencode", "pi", "claude"] as const;
 export const cliSchema = z.enum(cliIds);
 export type CliId = z.infer<typeof cliSchema>;
 export const cliNames: Record<CliId, string> = {
   codex: "Codex",
+  claude: "Claude Code",
   opencode: "OpenCode",
   pi: "Pi",
 };

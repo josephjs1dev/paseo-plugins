@@ -10,6 +10,7 @@ import { resolveExecutable, run, type Run } from "./cli-process";
 
 const packages: Record<CliId, string[]> = {
   codex: ["@openai/codex"],
+  claude: ["@anthropic-ai/claude-code"],
   opencode: ["opencode-ai"],
   pi: ["@earendil-works/pi-coding-agent", "@mariozechner/pi-coding-agent"],
 };
@@ -96,6 +97,21 @@ export async function inspectInstallation(
     return { ...installation, method: "Pi installer", updater: executable };
   }
 
+  // Native installs keep a stable launcher pointing at a versioned binary.
+  if (
+    id === "claude" &&
+    basename(executable) === "claude" &&
+    executable !== resolvedPath &&
+    resolvedPath.endsWith(`/claude/versions/${installed}`) &&
+    /\binstall\b/.test(await execute(executable, ["--help"], env, signal))
+  ) {
+    return {
+      ...installation,
+      method: "Claude Code installer",
+      updater: executable,
+    };
+  }
+
   let directory = dirname(resolvedPath);
 
   for (let depth = 0; depth < 8; depth++) {
@@ -106,8 +122,16 @@ export async function inspectInstallation(
           JSON.parse(await readFile(join(directory, "package.json"), "utf8")),
         );
 
-      if (packages[id].includes(pkg.name)) {
-        installation.packageName = pkg.name;
+      // Current Claude npm releases resolve into a platform-specific optional
+      // package; update the parent CLI package, never the binary package alone.
+      const claudeBinary =
+        id === "claude" &&
+        /^@anthropic-ai\/claude-code-(?:darwin-(?:arm64|x64)|linux-(?:arm64|x64)(?:-musl)?|win32-(?:arm64|x64))$/.test(
+          pkg.name,
+        );
+
+      if (packages[id].includes(pkg.name) || claudeBinary) {
+        installation.packageName = claudeBinary ? fallback : pkg.name;
         let modules = dirname(directory);
 
         if (pkg.name.startsWith("@")) {
@@ -134,7 +158,10 @@ export async function inspectInstallation(
           }
         }
 
-        break;
+        // npm may nest the binary package inside the main CLI package.
+        if (!claudeBinary) {
+          break;
+        }
       }
     } catch {
       /* Not a recognized npm installation at this level. */
@@ -279,6 +306,8 @@ export async function updateInstallation(
     ];
   } else if (installation.method === "Codex installer") {
     args = ["update"];
+  } else if (installation.method === "Claude Code installer") {
+    args = ["install", version];
   } else if (installation.method === "Pi installer") {
     args = ["update", "--self", "--no-approve"];
   }

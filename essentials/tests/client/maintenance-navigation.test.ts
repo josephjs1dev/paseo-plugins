@@ -54,14 +54,14 @@ test("actual hostnames label both entries and same-name daemons cannot be groupe
     const a = [...first.sidebar.values()][0];
     const b = [...second.sidebar.values()][0];
     assert.ok(a && b);
-    assert.equal(a.title, "CLIs & Models (workstation)");
+    assert.equal(a.title, "Harnesses (workstation)");
     assert.equal(b.title, a.title);
     assert.notEqual(a.id, b.id);
     assert.match(a.id, /^[a-z][a-z0-9-]*$/);
     assert.equal(a.surface, "cli-maintenance");
     assert.equal(
       first.commands.get("open-cli-maintenance")?.title,
-      "CLIs & Models (workstation)",
+      "Harnesses (workstation)",
     );
     assert.equal(first.commands.get("open-cli-maintenance")?.context, "global");
   } finally {
@@ -105,17 +105,14 @@ test("failed identification stays out of the sidebar and retries without duplica
   try {
     await setImmediate();
     assert.equal(app.sidebar.size, 0);
-    assert.equal(
-      app.commands.get("open-cli-maintenance")?.title,
-      "CLIs & Models",
-    );
+    assert.equal(app.commands.get("open-cli-maintenance")?.title, "Harnesses");
     context.mock.timers.tick(30_000);
     await setImmediate();
     assert.equal(app.sidebar.size, 1);
     assert.equal(app.commands.size, 1);
     assert.equal(
       app.commands.get("open-cli-maintenance")?.title,
-      "CLIs & Models (ready.local)",
+      "Harnesses (ready.local)",
     );
   } finally {
     stop();

@@ -13,7 +13,7 @@ or both; plugins are installed per daemon and available to its connected clients
 - Explore token history from Codex, Claude Code, Pi, and OpenCode, with daily
   charts and breakdowns by workspace, model, and session.
 - Compare workspace usage with usage across the daemon host.
-- Check for Codex, OpenCode, and Pi CLI updates and refresh their model catalogs.
+- Manage Codex, Claude Code, OpenCode, and Pi updates and model catalogs in Harnesses.
 - View and use banked Codex resets when supported by the connected account and CLI.
 
 The [Essentials README](essentials/README.md) covers requirements, GUI/CLI
@@ -28,6 +28,8 @@ installation, and development.
 - Follow parent and child agents, inspect recorded turn outcomes, and navigate
   back to their workspaces.
 - Review recent response actions and archive eligible inactive agents.
+- Follow agent-managed runs, task progress, blockers, and reported results in a
+  separate Runs tab. Agents create and update runs through commands.
 
 The [Conductor README](conductor/README.md) covers requirements, GUI/CLI
 installation, and development.

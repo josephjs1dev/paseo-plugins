@@ -113,7 +113,7 @@ function MaintenancePage(props: PluginSurfaceProps) {
             fontWeight: "600",
           }}
         >
-          CLIs & Models ({host.label})
+          Harnesses ({host.label})
         </Text>
         <Text
           style={{
@@ -219,7 +219,7 @@ function MaintenancePage(props: PluginSurfaceProps) {
                   fontWeight: "600",
                 }}
               >
-                Installed CLIs
+                Installed harnesses
               </Text>
               <Text
                 style={{
@@ -230,7 +230,7 @@ function MaintenancePage(props: PluginSurfaceProps) {
               >
                 {updateCount
                   ? `${updateCount} updates available`
-                  : "Codex, OpenCode and Pi"}
+                  : "Codex, Claude Code, OpenCode and Pi"}
               </Text>
             </View>
             <MaintenanceAction
