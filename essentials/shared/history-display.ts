@@ -1,33 +1,22 @@
 import type { Harness } from "./harnesses";
-import {
-  addTotals,
-  emptyTotals,
-  type CreditEstimate,
-  type Totals,
-} from "./history";
+import { addTotals, emptyTotals, type Totals } from "./history";
 
-export function formatCredits(amount: number | null | undefined): string {
-  if (amount == null) {
-    return "Unavailable";
-  }
+/** Rate-based estimate when derived, otherwise the recorded cost. */
+export function estimatedCost(totals: Totals): number | null {
+  return totals.costEstimate ? totals.costEstimate.amount : totals.cost;
+}
 
-  if (amount > 0 && amount < 0.0001) {
-    return "< 0.0001";
-  }
-
-  return new Intl.NumberFormat(undefined, { maximumFractionDigits: 4 }).format(
-    amount,
+export function isPartialCost(totals: Totals): boolean {
+  return (
+    totals.costEstimate?.amount != null &&
+    totals.costEstimate.unpricedTokens > 0
   );
 }
 
-export function formatCreditEstimate(
-  estimate: CreditEstimate | undefined,
-): string {
-  const amount = formatCredits(estimate?.amount);
+export function formatCostEstimate(totals: Totals): string {
+  const amount = formatCost(estimatedCost(totals));
 
-  return estimate?.amount != null && estimate.unpricedTokens > 0
-    ? amount + " (partial)"
-    : amount;
+  return isPartialCost(totals) ? amount + " (partial)" : amount;
 }
 
 export const totalTokens = (totals: Totals) => totals.input + totals.output;

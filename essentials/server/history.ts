@@ -5,7 +5,7 @@ import { summarizeHistory } from "../shared/history-analysis";
 import type { Provider } from "../shared/usage";
 import { usageCollectors } from "./collectors";
 import type { UsageCollector } from "./collectors/types";
-import { withCodexCreditEstimate } from "../shared/codex-credit-estimate";
+import { withCodexCostEstimate } from "../shared/codex-cost-estimate";
 import { createHistoryCache } from "./history-cache";
 
 const SCAN_WARNING =
@@ -39,7 +39,7 @@ export function createHistoryStore(
       const workspaceDirectory = resolve(cwd);
       start.setUTCDate(start.getUTCDate() - days + 1);
       const summary = summarizeHistory(
-        loaded.history.rows.map(withCodexCreditEstimate),
+        loaded.history.rows.map(withCodexCostEstimate),
         {
           provider,
           firstDay: start.toISOString().slice(0, 10),

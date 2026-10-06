@@ -4,10 +4,10 @@ import type { History } from "../shared/history";
 import {
   bucketLabel,
   compactTokens,
+  estimatedCost,
   exactTokens,
   formatCost,
-  formatCredits,
-  formatCreditEstimate,
+  formatCostEstimate,
   historyBuckets,
   totalTokens,
 } from "../shared/history-display";
@@ -26,53 +26,32 @@ export function HistoryChart({
   data: History;
   days: 7 | 30;
   scope: "workspace" | "host";
-  metric?: "tokens" | "cost" | "credits";
+  metric?: "tokens" | "cost";
   compact?: boolean;
 }) {
   const [selectedDay, setSelectedDay] = useState<string | null>(null);
   const { colors } = theme;
-  const metricUnit = {
-    tokens: "tokens",
-    cost: "estimated USD",
-    credits: "estimated credits",
-  }[metric];
+  const metricUnit = metric === "tokens" ? "tokens" : "estimated USD";
   const daily = scope === "workspace" ? data.workspaceDaily : data.daily;
   const buckets = historyBuckets(daily, days, data.periodEnd);
-  const amount = (bucket: (typeof buckets)[number]) => {
-    if (metric === "credits") {
-      return bucket.totals.creditEstimate?.amount ?? null;
-    }
-
-    return metric === "tokens"
+  const amount = (bucket: (typeof buckets)[number]) =>
+    metric === "tokens"
       ? totalTokens(bucket.totals)
-      : bucket.totals.cost;
-  };
+      : estimatedCost(bucket.totals);
 
   const maximum = Math.max(0, ...buckets.map((bucket) => amount(bucket) ?? 0));
   const scale = maximum || 1;
-  const format = (value: number) => {
-    if (metric === "credits") {
-      return formatCredits(value);
-    }
-
-    return metric === "tokens" ? compactTokens(value) : formatCost(value);
-  };
+  const format = (value: number) =>
+    metric === "tokens" ? compactTokens(value) : formatCost(value);
 
   const describe = (bucket: (typeof buckets)[number]) => {
     if (!bucket.hasUsage) {
       return "No usage";
     }
 
-    if (metric === "credits") {
-      return (
-        formatCreditEstimate(bucket.totals.creditEstimate) +
-        (bucket.totals.creditEstimate?.amount != null ? " credits" : "")
-      );
-    }
-
     return metric === "tokens"
       ? exactTokens(totalTokens(bucket.totals)) + " tokens"
-      : formatCost(bucket.totals.cost);
+      : formatCostEstimate(bucket.totals);
   };
 
   const selected =

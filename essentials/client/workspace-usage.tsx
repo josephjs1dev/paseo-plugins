@@ -13,7 +13,7 @@ import {
 import {
   sessionKey,
   compactTokens,
-  formatCreditEstimate,
+  formatCostEstimate,
   totalTokens,
 } from "../shared/history-display";
 import {
@@ -292,13 +292,12 @@ export function WorkspaceUsage({
             >
               Cache reads are included in input.
             </Text>
-            {provider === "chatgpt" && (
+            {(data.workspaceTotals.costEstimate !== undefined ||
+              data.workspaceTotals.cost !== null) && (
               <HistoryValue
                 theme={theme}
-                label="Estimated credits"
-                value={formatCreditEstimate(
-                  data.workspaceTotals.creditEstimate,
-                )}
+                label="Estimated cost"
+                value={formatCostEstimate(data.workspaceTotals)}
               />
             )}
           </View>

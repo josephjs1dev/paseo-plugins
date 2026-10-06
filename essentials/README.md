@@ -39,7 +39,7 @@ Open **Usage history** from a usage popover to explore:
 - Daily charts over 7 or 30 days, scoped to the workspace or entire host.
 - Input, cached, output, and reasoning tokens where the source records them.
 - Breakdowns by model and session, including the originating coding CLI.
-- Recorded cost estimates and estimated Codex credits where rates are available.
+- Estimated USD costs: recorded costs, or published API rates for Codex and Claude.
 
 History combines native Codex and Claude Code session logs, Pi records for ChatGPT
 and OpenCode Go, and OpenCode Go database records.
@@ -52,15 +52,16 @@ It works independently of subscription login and includes local Claude Code usag
 regardless of how those sessions were billed. Parent and subagent requests are
 counted in their recorded session, with repeated response snapshots counted once.
 Input includes cache reads and cache creation; cache reads are also shown separately.
-Claude logs do not provide a separate reasoning total or a billed cost, so no cost
-is inferred. Only usage metadata is retained, not prompts or responses.
+Claude logs do not provide a separate reasoning total or a billed cost, so cost is
+estimated from published API rates. Only usage metadata is retained, not prompts or responses.
 
 The workspace popover includes provider icons, 7/30-day totals, input/output/cache
 counts, model and session details, and a manual history refresh. Claude can also
 open the full history view directly from its quota popover.
 
-Cost and credit estimates are not billed charges. Credits cover known model
-rates and exclude speed and plan adjustments.
+Cost estimates are not billed charges. Codex estimates use OpenAI's Standard
+API USD rates for known models and exclude long-context, speed, and plan
+adjustments; models without a published rate are reported as partial coverage.
 
 ### Harnesses
 

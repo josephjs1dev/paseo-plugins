@@ -17,7 +17,8 @@ import { ModelUsage, HistorySessions } from "./history";
 import { UsageSummary } from "./history-totals";
 import { HistoryChart } from "./history-chart";
 import { useHistoryQuery } from "./history-query";
-import { CODEX_CREDIT_RATE_DATE } from "../shared/codex-credit-estimate";
+import { CODEX_RATE_DATE } from "../shared/codex-cost-estimate";
+import { estimatedCost } from "../shared/history-display";
 import {
   historyQueryOptions,
   validSessionOffset,
@@ -65,8 +66,8 @@ function HistoryResults({
   const { days, provider, scope } = selection;
   const [compact, setCompact] = useState(layout.compact);
   const [sessionOffset, setSessionOffset] = useState(0);
-  const [metric, setMetric] = useState<"tokens" | "cost" | "credits">(
-    provider === "chatgpt" ? "credits" : "tokens",
+  const [metric, setMetric] = useState<"tokens" | "cost">(
+    provider === "chatgpt" ? "cost" : "tokens",
   );
   const queryClient = useQueryClient();
   const query = useHistoryQuery(
@@ -116,7 +117,9 @@ function HistoryResults({
   const periodLabel = scopeLabel + " · " + days + " days";
   const totals = scope === "workspace" ? data?.workspaceTotals : data?.totals;
   const daily = scope === "workspace" ? data?.workspaceDaily : data?.daily;
-  const hasCost = daily?.some((day) => day.totals.cost !== null) ?? false;
+  const hasCost =
+    provider === "chatgpt" ||
+    (daily?.some((day) => estimatedCost(day.totals) !== null) ?? false);
   const activeMetric = metric === "cost" && !hasCost ? "tokens" : metric;
   const select = (next: Partial<typeof selection>) =>
     historyNavigation.select(workspaceId, { ...selection, ...next });
@@ -269,14 +272,14 @@ function HistoryResults({
                 theme={theme}
                 totals={totals}
                 compact={compact}
-                showCredits={provider === "chatgpt"}
+                showCost={hasCost}
               />
               <HistorySection
                 theme={theme}
                 title="Activity"
                 description={periodLabel}
                 trailing={
-                  hasCost || provider === "chatgpt" ? (
+                  hasCost ? (
                     <HistoryOptions theme={theme} label="Chart metric">
                       <HistoryChoice
                         theme={theme}
@@ -285,24 +288,13 @@ function HistoryResults({
                       >
                         Tokens
                       </HistoryChoice>
-                      {provider === "chatgpt" && (
-                        <HistoryChoice
-                          theme={theme}
-                          selected={activeMetric === "credits"}
-                          onPress={() => setMetric("credits")}
-                        >
-                          Estimated credits
-                        </HistoryChoice>
-                      )}
-                      {hasCost && (
-                        <HistoryChoice
-                          theme={theme}
-                          selected={activeMetric === "cost"}
-                          onPress={() => setMetric("cost")}
-                        >
-                          Estimated cost
-                        </HistoryChoice>
-                      )}
+                      <HistoryChoice
+                        theme={theme}
+                        selected={activeMetric === "cost"}
+                        onPress={() => setMetric("cost")}
+                      >
+                        Estimated cost
+                      </HistoryChoice>
                     </HistoryOptions>
                   ) : undefined
                 }
@@ -347,14 +339,13 @@ function HistoryResults({
                 }}
               >
                 Times are grouped by UTC day. History is retained for 90 days.{" "}
-                {provider === "chatgpt"
-                  ? "Credit estimates use Standard model rates checked " +
-                    CODEX_CREDIT_RATE_DATE +
-                    ". Speed and plan adjustments are excluded. Partial estimates cover priced models only; they are not billed charges. "
-                  : ""}
-                {hasCost
-                  ? "Estimated costs use recorded model prices and may differ from your subscription bill."
-                  : ""}
+                {provider === "chatgpt" &&
+                  "Estimated costs use Standard API USD rates checked " +
+                    CODEX_RATE_DATE +
+                    ". Long-context, speed, and plan adjustments are excluded. Partial estimates cover priced models only; they are not billed charges."}
+                {provider !== "chatgpt" &&
+                  hasCost &&
+                  "Estimated costs use recorded model prices and may differ from your subscription bill."}
               </Text>
             </>
           )}

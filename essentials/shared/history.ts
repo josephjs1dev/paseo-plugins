@@ -5,12 +5,13 @@ import { harnessSchema } from "./harnesses";
 
 const count = z.number().finite().nonnegative();
 
-const creditEstimateSchema = z.object({
+const costEstimateSchema = z.object({
   amount: count.nullable(),
   pricedTokens: count,
   unpricedTokens: count,
 });
-export type CreditEstimate = z.infer<typeof creditEstimateSchema>;
+// Rate-based USD estimate with coverage for models that have published rates.
+export type CostEstimate = z.infer<typeof costEstimateSchema>;
 
 export const totalsSchema = z.object({
   input: count,
@@ -19,7 +20,7 @@ export const totalsSchema = z.object({
   reasoning: count,
   // Recorded model-cost estimate in USD, not a subscription charge.
   cost: count.nullable(),
-  creditEstimate: creditEstimateSchema.optional(),
+  costEstimate: costEstimateSchema.optional(),
 });
 
 export type Totals = z.infer<typeof totalsSchema>;
@@ -101,20 +102,20 @@ export function addTotals(a: Totals, b: Totals): Totals {
     output: a.output + b.output,
     reasoning: a.reasoning + b.reasoning,
     cost: a.cost === null || b.cost === null ? null : a.cost + b.cost,
-    ...(a.creditEstimate !== undefined || b.creditEstimate !== undefined
-      ? { creditEstimate: addCreditEstimates(a, b) }
+    ...(a.costEstimate !== undefined || b.costEstimate !== undefined
+      ? { costEstimate: addCostEstimates(a, b) }
       : {}),
   };
 }
 
-function addCreditEstimates(a: Totals, b: Totals): CreditEstimate {
-  const missing = (totals: Totals): CreditEstimate => ({
+function addCostEstimates(a: Totals, b: Totals): CostEstimate {
+  const missing = (totals: Totals): CostEstimate => ({
     amount: null,
     pricedTokens: 0,
     unpricedTokens: totals.input + totals.output,
   });
-  const first = a.creditEstimate ?? missing(a);
-  const second = b.creditEstimate ?? missing(b);
+  const first = a.costEstimate ?? missing(a);
+  const second = b.costEstimate ?? missing(b);
   const pricedTokens = first.pricedTokens + second.pricedTokens;
   const unpricedTokens = first.unpricedTokens + second.unpricedTokens;
 

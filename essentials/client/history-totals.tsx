@@ -5,10 +5,11 @@ import { Pressable, Text, View } from "react-native";
 import type { Totals } from "../shared/history";
 import {
   compactTokens,
+  estimatedCost,
   exactTokens,
   formatCost,
-  formatCreditEstimate,
-  formatCredits,
+  formatCostEstimate,
+  isPartialCost,
   totalTokens,
 } from "../shared/history-display";
 import { HistoryValue } from "./history-controls";
@@ -48,18 +49,11 @@ export function TokenDetails({ theme, totals }: Themed & { totals: Totals }) {
         label="Total tokens"
         value={exactTokens(totalTokens(totals))}
       />
-      {totals.cost !== null && (
+      {(totals.costEstimate !== undefined || totals.cost !== null) && (
         <HistoryValue
           theme={theme}
           label="Estimated cost"
-          value={formatCost(totals.cost)}
-        />
-      )}
-      {totals.creditEstimate !== undefined && (
-        <HistoryValue
-          theme={theme}
-          label="Estimated credits"
-          value={formatCreditEstimate(totals.creditEstimate)}
+          value={formatCostEstimate(totals)}
         />
       )}
     </View>
@@ -106,28 +100,17 @@ export function UsageSummary({
   theme,
   totals,
   compact,
-  showCredits = totals.creditEstimate !== undefined,
-}: Themed & { totals: Totals; compact: boolean; showCredits?: boolean }) {
+  showCost = totals.costEstimate !== undefined || totals.cost !== null,
+}: Themed & { totals: Totals; compact: boolean; showCost?: boolean }) {
   const stats = [
-    ...(showCredits
+    ...(showCost
       ? [
           {
-            label:
-              totals.creditEstimate?.amount != null &&
-              totals.creditEstimate.unpricedTokens > 0
-                ? "Estimated credits · partial"
-                : "Estimated credits",
-            value: formatCredits(totals.creditEstimate?.amount),
+            label: isPartialCost(totals)
+              ? "Estimated cost · partial"
+              : "Estimated cost",
+            value: formatCost(estimatedCost(totals)),
             minWidth: 160,
-          },
-        ]
-      : []),
-    ...(totals.cost !== null
-      ? [
-          {
-            label: "Estimated cost",
-            value: formatCost(totals.cost),
-            minWidth: 144,
           },
         ]
       : []),
@@ -189,7 +172,7 @@ export function UsageSummary({
           </View>
         ))}
       </View>
-      {totals.creditEstimate && totals.creditEstimate.unpricedTokens > 0 && (
+      {totals.costEstimate && totals.costEstimate.unpricedTokens > 0 && (
         <Text
           style={{
             marginTop: 12,
@@ -203,9 +186,9 @@ export function UsageSummary({
           }).format(
             Math.min(
               99.9,
-              (100 * totals.creditEstimate.pricedTokens) /
-                (totals.creditEstimate.pricedTokens +
-                  totals.creditEstimate.unpricedTokens),
+              (100 * totals.costEstimate.pricedTokens) /
+                (totals.costEstimate.pricedTokens +
+                  totals.costEstimate.unpricedTokens),
             ),
           )}
           % of tokens priced. Other models have no published rate.

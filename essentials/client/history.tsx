@@ -7,7 +7,7 @@ import type { History, Totals } from "../shared/history";
 import {
   sessionKey,
   compactTokens,
-  formatCreditEstimate,
+  formatCostEstimate,
   totalTokens,
 } from "../shared/history-display";
 import {
@@ -26,13 +26,13 @@ function ModelRow({
   totals,
   compact,
   sessionCount,
-  showCredits,
+  showCost,
 }: Themed & {
   model: string | null;
   totals: Totals;
   compact: boolean;
   sessionCount?: number;
-  showCredits: boolean;
+  showCost: boolean;
 }) {
   const [expanded, setExpanded] = useState(false);
   const name = model ?? "Unknown model";
@@ -85,10 +85,8 @@ function ModelRow({
         <Text style={{ ...numberStyle, fontWeight: "600" }}>
           {compactTokens(totalTokens(totals))}
         </Text>
-        {showCredits && (
-          <Text style={numberStyle}>
-            {formatCreditEstimate(totals.creditEstimate)}
-          </Text>
+        {showCost && (
+          <Text style={numberStyle}>{formatCostEstimate(totals)}</Text>
         )}
         <Icon
           name={expanded ? "ChevronDown" : "ChevronRight"}
@@ -136,8 +134,9 @@ export function ModelUsage({
     width: 88,
     textAlign: "right" as const,
   };
-  const showCredits = models.some(
-    (entry) => entry.totals.creditEstimate !== undefined,
+  const showCost = models.some(
+    (entry) =>
+      entry.totals.costEstimate !== undefined || entry.totals.cost !== null,
   );
 
   return (
@@ -162,7 +161,7 @@ export function ModelUsage({
           </>
         )}
         <Text style={labelStyle}>Tokens</Text>
-        {showCredits && <Text style={labelStyle}>Est. credits</Text>}
+        {showCost && <Text style={labelStyle}>Est. cost</Text>}
       </View>
       {models.map((entry) => (
         <ModelRow
@@ -170,7 +169,7 @@ export function ModelUsage({
           theme={theme}
           {...entry}
           compact={compact}
-          showCredits={showCredits}
+          showCost={showCost}
         />
       ))}
       {models.length === 0 && (

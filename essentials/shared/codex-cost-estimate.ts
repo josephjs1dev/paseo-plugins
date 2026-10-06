@@ -1,27 +1,27 @@
-import type { CreditEstimate, HistoryRow, Totals } from "./history";
+import type { CostEstimate, HistoryRow, Totals } from "./history";
 
-export const CODEX_CREDIT_RATE_DATE = "2026-10-03";
-// Published Standard credits per million tokens, checked on the date above.
-// Source: https://learn.chatgpt.com/docs/pricing#token-rates
-// These are model-usage estimates, independent of included limits or invoicing.
+export const CODEX_RATE_DATE = "2026-10-06";
+// Published Standard API USD per million tokens, checked on the date above.
+// Source: https://developers.openai.com/api/docs/pricing
+// These are API-equivalent estimates, independent of included limits or invoicing.
 const rates: Record<
   string,
   readonly [input: number, cached: number, output: number]
 > = {
-  "gpt-6-astra": [250, 25, 1250],
-  "gpt-6.1-sol": [50, 2.5, 250],
-  "gpt-6-sol": [50, 5, 250],
-  "gpt-6-luna": [2.5, 0.25, 12.5],
-  "gpt-5.6-sol": [100, 10, 500],
-  "gpt-5.6-terra": [50, 5, 300],
-  "gpt-5.6-luna": [5, 0.5, 30],
-  "gpt-5.5": [125, 12.5, 750],
+  "gpt-6-astra": [10, 1, 50],
+  "gpt-6.1-sol": [2, 0.1, 10],
+  "gpt-6-sol": [2, 0.2, 10],
+  "gpt-6-luna": [0.1, 0.01, 0.5],
+  "gpt-5.6-sol": [4, 0.4, 20],
+  "gpt-5.6-terra": [2, 0.2, 12],
+  "gpt-5.6-luna": [0.2, 0.02, 1.2],
+  "gpt-5.5": [5, 0.5, 30],
 };
 
-export function estimateCodexCredits(
+export function estimateCodexCost(
   model: string | null | undefined,
   totals: Totals,
-): CreditEstimate {
+): CostEstimate {
   const tokens = totals.input + totals.output;
   const rate = model && Object.hasOwn(rates, model) ? rates[model] : undefined;
 
@@ -39,13 +39,13 @@ export function estimateCodexCredits(
 }
 
 /** Derive estimates on read, including older caches with recorded model names. */
-export function withCodexCreditEstimate(row: HistoryRow): HistoryRow {
+export function withCodexCostEstimate(row: HistoryRow): HistoryRow {
   return row.provider === "chatgpt"
     ? {
         ...row,
         totals: {
           ...row.totals,
-          creditEstimate: estimateCodexCredits(row.model, row.totals),
+          costEstimate: estimateCodexCost(row.model, row.totals),
         },
       }
     : row;

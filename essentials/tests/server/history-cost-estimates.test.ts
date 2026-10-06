@@ -11,8 +11,8 @@ import {
 } from "../../server/history-files";
 import { readHistory, type HistoryRow } from "../../shared/history";
 
-test("history derives credits for older cached rows across days, models, sessions, and scopes", async () => {
-  const directory = await mkdtemp(join(tmpdir(), "paseo-history-credits-"));
+test("history derives cost estimates for older cached rows across days, models, sessions, and scopes", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "paseo-history-costs-"));
   const timestamp = new Date(Date.now() - 86_400_000).toISOString();
   const known: HistoryRow = {
     provider: "chatgpt",
@@ -51,26 +51,26 @@ test("history derives credits for older cached rows across days, models, session
 
     try {
       const workspace = await store.read("chatgpt", "/workspace", 7);
-      assert.equal(workspace.workspaceTotals.creditEstimate?.amount, 51.25);
+      assert.equal(workspace.workspaceTotals.costEstimate?.amount, 2.05);
       assert.equal(
-        workspace.workspaceDaily[0]?.totals.creditEstimate?.amount,
-        51.25,
+        workspace.workspaceDaily[0]?.totals.costEstimate?.amount,
+        2.05,
       );
-      assert.equal(workspace.models[0]?.totals.creditEstimate?.amount, 51.25);
-      assert.equal(workspace.sessions[0]?.totals.creditEstimate?.amount, 51.25);
+      assert.equal(workspace.models[0]?.totals.costEstimate?.amount, 2.05);
+      assert.equal(workspace.sessions[0]?.totals.costEstimate?.amount, 2.05);
       assert.equal(
-        workspace.sessions[0]?.models[0]?.totals.creditEstimate?.amount,
-        51.25,
+        workspace.sessions[0]?.models[0]?.totals.costEstimate?.amount,
+        2.05,
       );
       const host = await store.read("chatgpt", "/workspace", 7, 0, "host");
-      assert.deepEqual(host.totals.creditEstimate, {
-        amount: 51.25,
+      assert.deepEqual(host.totals.costEstimate, {
+        amount: 2.05,
         pricedTokens: 1_100_000,
         unpricedTokens: 1_100_000,
       });
       assert.equal(
         host.models.find((model) => model.model === "codex-auto-review")?.totals
-          .creditEstimate?.amount,
+          .costEstimate?.amount,
         null,
       );
       assert.equal(readHistory.output.safeParse(host).success, true);
