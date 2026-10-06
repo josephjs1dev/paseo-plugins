@@ -10,6 +10,9 @@ import {
 } from "../shared/inbox";
 import type { InboxSession } from "./session";
 import { Button, Label, Notice, rowStyle } from "./controls";
+import { visibleRuns, type RunInboxData } from "./run-inbox";
+import { RunToolbar } from "./run-toolbar";
+import { RefreshButton } from "./refresh-button";
 
 const filters: { id: Filter; label: string }[] = [
   { id: "attention", label: "Needs attention" },
@@ -23,6 +26,7 @@ interface Props {
   hostLabel: string;
   workspaceId?: string;
   data: InboxSnapshot | undefined;
+  runs?: RunInboxData;
   session: InboxSession;
   compact: boolean;
   stale: boolean;
@@ -41,9 +45,16 @@ export function InboxToolbar(props: Props) {
   const scoped = (data?.items ?? []).filter(
     (item) => !props.workspaceId || item.workspaceId === props.workspaceId,
   );
+  const runCount = visibleRuns(
+    props.runs?.list?.runs ?? [],
+    { ...state, runQuery: "", runFilter: "all" },
+    props.workspaceId,
+  ).length;
   const agentCount = new Set(scoped.map((item) => item.agentId)).size;
   const reliable = data && !props.stale;
   const controls = { theme, dense: !compact };
+  const isRuns = state.section === "runs" && Boolean(props.runs);
+  const hasSelection = Boolean(isRuns ? state.runSelection : state.selectedKey);
   return (
     <View
       style={{
@@ -84,59 +95,99 @@ export function InboxToolbar(props: Props) {
           >
             {props.hostLabel} ·{" "}
             {props.workspaceId ? "This workspace" : "All workspaces"}
-            {data
+            {!isRuns && data
               ? ` · ${agentCount}${data.incomplete ? "+" : ""} agents${props.stale ? " · last known" : ""}`
+              : ""}
+            {isRuns && props.runs?.list
+              ? ` · ${runCount} ${runCount === 1 ? "run" : "runs"}${props.runs.stale ? " · last known" : ""}`
               : ""}
           </Text>
         </View>
-        <View style={rowStyle}>
-          {compact && state.selectedKey && (
+        <View style={{ ...rowStyle, flexShrink: 1, maxWidth: "100%" }}>
+          {compact && hasSelection && (
             <Button
               {...controls}
-              label="← Back to queue"
+              label={isRuns ? "← Back to runs" : "← Back to queue"}
               variant="quiet"
-              onPress={() => session.update({ selectedKey: null })}
+              onPress={() =>
+                session.update(
+                  isRuns ? { runSelection: null } : { selectedKey: null },
+                )
+              }
             />
           )}
-          <Button
-            {...controls}
-            variant="quiet"
-            label={props.refreshing ? "Refreshing…" : "Refresh"}
-            disabled={props.refreshing}
+          <RefreshButton
+            theme={theme}
+            refreshing={props.refreshing}
             onPress={props.refresh}
           />
-          <Button
-            {...controls}
-            label="Next item →"
-            disabled={!props.hasNext}
-            onPress={props.selectNext}
-          />
+          {!isRuns && (
+            <Button
+              {...controls}
+              label="Next item →"
+              disabled={!props.hasNext}
+              onPress={props.selectNext}
+            />
+          )}
         </View>
       </View>
-      {props.stale && (
+      {props.runs && (
+        <View
+          accessibilityRole="tablist"
+          accessibilityLabel="Inbox sections"
+          style={{
+            ...rowStyle,
+            borderBottomWidth: 1,
+            borderBottomColor: theme.colors.border,
+          }}
+        >
+          {(["agents", "runs"] as const).map((section) => (
+            <Button
+              key={section}
+              {...controls}
+              role="tab"
+              variant="tab"
+              label={section === "agents" ? "Agents" : "Runs"}
+              selected={state.section === section}
+              onPress={() => session.update({ section })}
+            />
+          ))}
+        </View>
+      )}
+      {!isRuns && props.stale && (
         <Notice theme={theme} warning>
           Could not refresh this host. Showing the last known state; answer
           controls are disabled.
         </Notice>
       )}
-      {data?.incomplete && (
+      {!isRuns && data?.incomplete && (
         <Notice theme={theme} warning>
           Directory is incomplete. Counts are a lower bound; previously waiting
           agents are checked separately.
         </Notice>
       )}
-      {data?.workspaceIncomplete && (
+      {!isRuns && data?.workspaceIncomplete && (
         <Notice theme={theme}>
           Some workspace names are unavailable. Agent requests remain visible.
         </Notice>
       )}
-      {data?.turnHistoryIncomplete && (
+      {!isRuns && data?.turnHistoryIncomplete && (
         <Notice theme={theme} warning>
           Some recorded turn outcomes could not be loaded. Missing outcomes
           remain unknown.
         </Notice>
       )}
-      {(!compact || !state.selectedKey) && (
+      {isRuns && props.runs && (!compact || !hasSelection) && (
+        <RunToolbar
+          theme={theme}
+          data={props.runs}
+          state={state}
+          session={session}
+          compact={compact}
+          {...(props.workspaceId ? { workspaceId: props.workspaceId } : {})}
+        />
+      )}
+      {!isRuns && (!compact || !hasSelection) && (
         <>
           <ScrollView
             horizontal
@@ -168,7 +219,10 @@ export function InboxToolbar(props: Props) {
                     }
                   : {})}
                 onPress={() => {
-                  session.update({ filter: filter.id, selectedKey: null });
+                  session.update({
+                    filter: filter.id,
+                    selectedKey: null,
+                  });
                   props.scroll.offset = 0;
                 }}
               />
@@ -238,7 +292,7 @@ export function InboxToolbar(props: Props) {
           </View>
         </>
       )}
-      {data && (
+      {!isRuns && data && (
         <Text
           style={{
             fontSize: 11,
@@ -253,7 +307,7 @@ export function InboxToolbar(props: Props) {
           })}
         </Text>
       )}
-      {showHistory && (
+      {!isRuns && showHistory && (
         <View style={{ gap: 8 }}>
           <Label theme={theme}>RECENT RESPONSE DELIVERY</Label>
           {data?.receipts.length === 0 && (

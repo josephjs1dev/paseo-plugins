@@ -1,8 +1,9 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, useSyncExternalStore } from "react";
 import { Text } from "react-native";
 import {
   useRpc,
   type PluginSurfaceProps,
+  type PluginScreenProps,
   type PluginSidebarItemProps,
 } from "@getpaseo/plugin/client";
 // Namespace import permits loading on 0.10, whose UI module has no SidebarRow.
@@ -11,20 +12,30 @@ import * as PluginUi from "@getpaseo/plugin/client/ui";
 import { useQueryClient } from "@tanstack/react-query";
 import { annotate, answerRequest, archiveAgent } from "../shared/rpc";
 import { isSnoozed, needsAttention } from "../shared/inbox";
+import type { StoredRun } from "../shared/run-models";
 import { InboxView } from "./inbox-view";
 import { InboxSession } from "./session";
 import { inboxKey, useInbox } from "./query";
+import { useRuns } from "./run-query";
 
 export class Sessions {
   private readonly entries = new Map<
     string,
-    { session: InboxSession; scroll: { offset: number } }
+    {
+      session: InboxSession;
+      scroll: { offset: number };
+      workspaceId: string | undefined;
+    }
   >();
   get(hostId: string, workspaceId?: string) {
     const key = JSON.stringify([hostId, workspaceId ?? null]);
     let entry = this.entries.get(key);
     if (!entry) {
-      entry = { session: new InboxSession(), scroll: { offset: 0 } };
+      entry = {
+        session: new InboxSession(),
+        scroll: { offset: 0 },
+        workspaceId,
+      };
       this.entries.set(key, entry);
     }
     return entry;
@@ -45,7 +56,11 @@ export function useClock() {
   return now;
 }
 export function InboxSurface(
-  props: PluginSurfaceProps & { sessions: Sessions; workspaceId?: string },
+  props: PluginSurfaceProps & {
+    sessions: Sessions;
+    workspaceId?: string;
+    params?: PluginScreenProps["params"];
+  },
 ) {
   const query = useInbox(props.host.id);
   const cache = useQueryClient();
@@ -57,6 +72,21 @@ export function InboxSurface(
     props.host.id,
     props.workspaceId,
   );
+  const initialRun = props.params?.runId;
+  const initialSection = props.params?.section;
+  useEffect(() => {
+    if (initialSection === "runs" && typeof initialRun !== "string") {
+      session.update({ section: "runs", runSelection: null });
+    }
+    if (typeof initialRun === "string") {
+      session.update({
+        section: "runs",
+        runSelection: { kind: "run", id: initialRun },
+      });
+    }
+  }, [initialRun, initialSection, session]);
+  const state = useSyncExternalStore(session.subscribe, session.getSnapshot);
+  const runs = useRuns(props.host.id, props.workspaceId, state.runSelection);
   const refresh = async () => {
     await cache.invalidateQueries({ queryKey: inboxKey(props.host.id) });
   };
@@ -67,14 +97,32 @@ export function InboxSurface(
       compact={props.layout.compact}
       {...(props.workspaceId ? { workspaceId: props.workspaceId } : {})}
       data={query.data}
+      deleteRun={async (run: StoredRun) => {
+        await runs.remove(run.id, run.version);
+        // Only reached on success: drop the selection so the detail closes.
+        session.update({ runSelection: null });
+      }}
+      runs={{
+        access: runs.access.data,
+        list: runs.summaries.data,
+        loading: runs.summaries.isPending,
+        stale: runs.summaries.isError,
+        detail: runs.detail.data,
+        detailStale: runs.detail.isError,
+      }}
       loading={query.isPending}
-      refreshing={query.isFetching}
+      refreshing={
+        state.section === "runs"
+          ? runs.summaries.isFetching || runs.detail.isFetching
+          : query.isFetching
+      }
       stale={query.isError}
       now={now}
       session={session}
       scroll={scroll}
       refresh={() => {
-        refresh().catch(() => undefined);
+        const work = state.section === "runs" ? runs.refresh() : refresh();
+        work.catch(() => undefined);
       }}
       actions={{
         canNavigate: Boolean(props.navigation),

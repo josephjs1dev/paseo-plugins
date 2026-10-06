@@ -2,6 +2,7 @@ import type { ComponentType, FunctionComponent } from "react";
 import type {
   PluginClientContext,
   PluginGlobalCommandContext,
+  PluginScreenParams,
   PluginSidebarItemProps,
   PluginSurfaceProps,
 } from "@getpaseo/plugin/client";
@@ -16,9 +17,12 @@ type InboxRegistration = Pick<
   Partial<Pick<PluginClientContext, "addScreen" | "addSidebarHeaderItem">>;
 
 /** 0.10 clients expose surfaces; 0.11 clients additionally expose screens. */
-export function openInbox(context: InboxNavigation): void {
+export function openInbox(
+  context: InboxNavigation,
+  params?: PluginScreenParams,
+): void {
   if (typeof context.openScreen === "function") {
-    context.openScreen({ screenId: "inbox" });
+    context.openScreen({ screenId: "inbox", ...(params ? { params } : {}) });
   } else {
     context.openSurface("inbox");
   }

@@ -1,21 +1,30 @@
 import type { Decision, InboxItem, AnswerResult } from "../shared/models";
 import type { Filter } from "../shared/inbox";
+import type { RunSelection } from "./run-state";
 
 export interface ViewState {
+  section: "agents" | "runs";
+  runQuery: string;
+  runFilter: "all" | "active" | "blocked" | "completed";
   filter: Filter;
   query: string;
   groupBy: "project" | "workspace";
   selectedKey: string | null;
+  runSelection: RunSelection | null;
   showSnoozed: boolean;
   drafts: Readonly<Record<string, Decision>>;
   notices: Readonly<Record<string, AnswerResult["status"] | "sending">>;
 }
 export class InboxSession {
   private state: ViewState = {
+    section: "agents",
+    runQuery: "",
+    runFilter: "all",
     filter: "attention",
     query: "",
     groupBy: "project",
     selectedKey: null,
+    runSelection: null,
     showSnoozed: false,
     drafts: {},
     notices: {},
@@ -43,6 +52,7 @@ export class InboxSession {
       };
     }
     this.update({
+      section: "agents",
       selectedKey: item.key,
       ...(draft ? { drafts: { ...this.state.drafts, [item.key]: draft } } : {}),
     });
@@ -54,7 +64,13 @@ export class InboxSession {
     this.update({ notices: { ...this.state.notices, [key]: value } });
   }
   clear(): void {
-    this.state = { ...this.state, drafts: {}, notices: {}, selectedKey: null };
+    this.state = {
+      ...this.state,
+      drafts: {},
+      notices: {},
+      selectedKey: null,
+      runSelection: null,
+    };
     this.listeners.clear();
   }
 }

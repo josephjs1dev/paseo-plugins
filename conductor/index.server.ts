@@ -9,14 +9,18 @@ import { snapshot } from "./server/snapshot";
 import { answer } from "./server/answer";
 import { agentKey } from "./server/identity";
 import { observeTurns, turnJournal } from "./server/turns";
+import { registerRuns } from "./server/run-handlers";
 
-export default function contribute(server: PluginServerContext) {
+export default function contribute(
+  server: PluginServerContext,
+): () => Promise<void> {
   const directory = join(
     process.env.PASEO_HOME ?? join(homedir(), ".paseo"),
     "plugin-data",
     "conductor",
   );
   const store = fileStore(directory);
+  const stopRuns = registerRuns(server, directory);
   const turns = turnJournal(join(directory, "turns"));
   const stopTurns = observeTurns(server, turns);
   server.handle(archiveAgent, (input, { paseo }) =>
@@ -69,5 +73,11 @@ export default function contribute(server: PluginServerContext) {
       throw new Error("Conductor could not save this inbox preference.");
     }
   });
-  return stopTurns;
+  return async () => {
+    try {
+      await stopTurns();
+    } finally {
+      await stopRuns();
+    }
+  };
 }

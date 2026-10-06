@@ -14,28 +14,36 @@ export interface ButtonProps {
   variant?: "default" | "quiet" | "tab";
   dense?: boolean;
   count?: number;
+  role?: "button" | "tab";
+  accessibilityLabel?: string;
+  expanded?: boolean;
 }
 export function Button({
   theme,
   label,
   onPress,
   disabled = false,
-  selected = false,
+  selected,
   primary = false,
   danger = false,
   testID,
   variant = "default",
   dense = false,
   count,
+  role = "button",
+  accessibilityLabel,
+  expanded,
 }: ButtonProps) {
   const [focused, setFocused] = useState(false);
   const color = primary ? theme.colors.surface0 : theme.colors.foreground;
   return (
     <Pressable
       testID={testID}
-      accessibilityRole="button"
-      accessibilityLabel={label}
-      accessibilityState={{ disabled, selected }}
+      accessibilityRole={role}
+      accessibilityLabel={accessibilityLabel ?? label}
+      accessibilityState={{ disabled, selected, expanded }}
+      aria-selected={role === "tab" ? selected : undefined}
+      aria-pressed={role === "button" ? selected : undefined}
       disabled={disabled}
       onPress={onPress}
       onFocus={() => setFocused(true)}
@@ -152,3 +160,77 @@ export const rowStyle = {
   alignItems: "center",
   gap: 8,
 } satisfies ViewStyle;
+const DISCLOSURE_CHEVRON = { expanded: "▾", collapsed: "▸" } as const;
+
+/**
+ * A quiet disclosure toggle with its current expanded state exposed to
+ * assistive technology. Content renders below the toggle only while expanded;
+ * the pressable keeps at least a 44px touch target out of the box.
+ */
+export function Disclosure({
+  theme,
+  label,
+  expanded,
+  onToggle,
+  testID,
+  dense = false,
+  children,
+}: {
+  theme: PluginTheme;
+  label: string;
+  expanded: boolean;
+  onToggle(this: void): void;
+  testID?: string;
+  /** Compact layouts still reach 44px; dense only shrinks wide layouts. */
+  dense?: boolean;
+  children?: ReactNode;
+}) {
+  const [focused, setFocused] = useState(false);
+  return (
+    <View style={{ gap: 4 }}>
+      <Pressable
+        testID={testID}
+        accessibilityRole="button"
+        accessibilityLabel={label}
+        accessibilityState={{ expanded }}
+        aria-expanded={expanded}
+        onPress={onToggle}
+        onFocus={() => setFocused(true)}
+        onBlur={() => setFocused(false)}
+        style={({ pressed }) => ({
+          flexDirection: "row",
+          alignItems: "center",
+          gap: 6,
+          minHeight: dense ? 36 : 44,
+          paddingVertical: 4,
+          borderRadius: 6,
+          borderWidth: 1,
+          borderColor: focused ? theme.colors.foreground : "transparent",
+          opacity: pressed ? 0.8 : 1,
+          alignSelf: "flex-start",
+          paddingHorizontal: 8,
+        })}
+      >
+        <Text
+          aria-hidden
+          style={{ color: theme.colors.foregroundMuted, fontSize: 11 }}
+        >
+          {expanded
+            ? DISCLOSURE_CHEVRON.expanded
+            : DISCLOSURE_CHEVRON.collapsed}
+        </Text>
+        <Text
+          style={{
+            color: theme.colors.foreground,
+            fontSize: 13,
+            lineHeight: 18,
+            fontWeight: "600",
+          }}
+        >
+          {label}
+        </Text>
+      </Pressable>
+      {expanded && <View style={{ rowGap: 6 }}>{children}</View>}
+    </View>
+  );
+}

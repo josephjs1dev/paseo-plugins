@@ -5,6 +5,8 @@ import { InboxSession } from "../../client/session";
 import { initial, light, dark } from "./fixtures";
 import type { InboxSnapshot } from "../../shared/models";
 import { requestForm } from "../../shared/questions";
+import type { StoredRun } from "../../shared/run-models";
+import { usePreviewRuns } from "./runs";
 
 const session = new InboxSession();
 const scroll = { offset: 0 };
@@ -77,6 +79,12 @@ function Preview() {
   const [opened, setOpened] = useState("");
   const [stale, setStale] = useState(params.has("stale"));
   const [sends, setSends] = useState(0);
+  const runs = usePreviewRuns(
+    session,
+    params.has("run-failed"),
+    params.has("legacy-run"),
+    params.get("run-fixture") ?? undefined,
+  );
   return (
     <div style={{ height: "100%", display: "flex", flexDirection: "column" }}>
       <div
@@ -87,9 +95,26 @@ function Preview() {
         {opened} · sends:{sends}
       </div>
       <InboxView
+        {...(params.has("runs")
+          ? {
+              runs: runs.data,
+              ...(params.has("global") ? {} : { workspaceId: "ws-api" }),
+            }
+          : {})}
         theme={params.has("dark") ? dark : light}
         hostLabel="Development host"
         compact={false}
+        deleteRun={async (run: StoredRun) => {
+          if (params.has("delete-error")) {
+            throw new Error("This run changed. Refresh before deleting.");
+          }
+          if (params.has("delete-slow")) {
+            await new Promise((resolve) => setTimeout(resolve, 400));
+          }
+          await runs.remove(run);
+          // Mirror the surface callback: clear the selection after success.
+          session.update({ runSelection: null });
+        }}
         data={data}
         loading={false}
         refreshing={false}
@@ -161,6 +186,19 @@ function Preview() {
           },
         }}
       />
+      {params.has("runs") && !params.get("run-fixture") && (
+        <div data-testid="run-fixture-controls">
+          <button onClick={() => runs.progress("claim")}>
+            Source claims task
+          </button>
+          <button onClick={() => runs.progress("block")}>
+            Source reports blocker
+          </button>
+          <button onClick={() => runs.progress("complete")}>
+            Source completes run
+          </button>
+        </div>
+      )}
     </div>
   );
 }
