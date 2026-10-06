@@ -2,7 +2,9 @@ import type { Provider, Usage, Quota } from "../shared/usage";
 import { quotaCapability } from "./collectors";
 import { quotaSchema } from "../shared/usage";
 
-const CACHE_DURATION_MS = 60_000;
+const CACHE_DURATION_MS = 300_000;
+// Back off longer after the provider rate limits us.
+const RATE_LIMIT_DURATION_MS = 900_000;
 
 type FetchQuota = (provider: Provider, signal: AbortSignal) => Promise<Quota>;
 
@@ -67,8 +69,14 @@ export function createUsageReader(
       const entry: CachedUsage = {
         expires: now() + CACHE_DURATION_MS,
         pending: true,
-        value: fetchUsage(provider).finally(() => {
+        value: fetchUsage(provider).then((usage) => {
           entry.pending = false;
+
+          if (usage.issue === "rate-limit") {
+            entry.expires = now() + RATE_LIMIT_DURATION_MS;
+          }
+
+          return usage;
         }),
       };
       cache.set(provider, entry);

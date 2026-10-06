@@ -1,5 +1,6 @@
 import { z } from "zod";
 
+import { estimateClaudeCost } from "./claude-cost";
 import type { HistoryRow, Totals } from "./history";
 import type { Provider } from "./providers";
 
@@ -456,7 +457,12 @@ export function createClaudeHistoryParser(since: number, seen: Set<string>) {
         cached: usage.cache_read_input_tokens,
         output: usage.output_tokens,
         reasoning: 0,
-        cost: null,
+        cost: estimateClaudeCost(entry.message.model, {
+          input: usage.input_tokens,
+          cacheRead: usage.cache_read_input_tokens,
+          cacheWrite: usage.cache_creation_input_tokens,
+          output: usage.output_tokens,
+        }),
       },
     });
 

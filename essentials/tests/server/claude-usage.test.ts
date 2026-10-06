@@ -214,7 +214,7 @@ test("Claude shares the usage cache and an empty response is unavailable", async
     assert.deepEqual(first, second);
     assert.equal(first.status, "ok");
     assert.equal(calls, 1);
-    now = 60_001;
+    now = 300_001;
     assert.equal((await reader.read("claude")).status, "unavailable");
   } finally {
     reader.close();

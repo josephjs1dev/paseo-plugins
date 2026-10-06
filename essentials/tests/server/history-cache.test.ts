@@ -52,7 +52,7 @@ function deferred() {
 
 async function seed(directory: string, checkpoint = NOW - 6 * 60_000) {
   await writeSavedHistory(directory, {
-    version: 2,
+    version: 3,
     scannedAt: iso(NOW - 6 * 60_000),
     collectors: collectorStates(checkpoint),
     rows: [row()],
@@ -111,7 +111,7 @@ test("fresh disk cache survives reload without rescanning or writing", async () 
   const directory = await mkdtemp(join(tmpdir(), "paseo-cache-reload-"));
   let calls = 0;
   await writeSavedHistory(directory, {
-    version: 2,
+    version: 3,
     scannedAt: iso(NOW - 60_000),
     collectors: collectorStates(NOW - 60_000, true),
     rows: [row()],

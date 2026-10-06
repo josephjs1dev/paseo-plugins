@@ -11,6 +11,7 @@ default_permissions = "project-only"
 allow_login_shell = false
 
 sandbox_mode = "workspace-write"
+
 [permissions.project-only]
 description = "Write only inside the active workspace and system temp directories."
 extends = ":workspace"
@@ -23,6 +24,8 @@ enabled = true
 
 [permissions.project-only.network.domains]
 "github.com" = "allow"
+"*.github.com" = "allow"
+"*.githubusercontent.com" = "allow"
 
 [shell_environment_policy]
 inherit = "core"

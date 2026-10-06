@@ -272,7 +272,7 @@ export default function contribute(client: PluginClientContext) {
 
   const timer = setInterval(() => {
     void refresh();
-  }, 60_000);
+  }, 300_000);
   void refresh();
 
   return () => {

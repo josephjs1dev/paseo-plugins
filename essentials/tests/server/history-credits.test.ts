@@ -39,7 +39,7 @@ test("history derives credits for older cached rows across days, models, session
 
   try {
     await writeSavedHistory(directory, {
-      version: 2,
+      version: 3,
       collectors: {},
       scannedAt: timestamp,
       rows: [known, unknown],

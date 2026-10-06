@@ -77,7 +77,7 @@ test("Go forwards cancellation to the request", async () => {
   );
 });
 
-test("usage cache deduplicates requests and retries failures after one minute", async () => {
+test("usage cache deduplicates requests and retries failures after five minutes", async () => {
   let clock = 0;
   let calls = 0;
   const reader = createUsageReader(
@@ -96,7 +96,7 @@ test("usage cache deduplicates requests and retries failures after one minute", 
   assert.equal(first.status, "unavailable");
   assert.equal(JSON.stringify(first).includes("secret-token"), false);
   assert.equal(usageLabel(first), "ChatGPT · —");
-  clock = 60_001;
+  clock = 300_001;
   await reader.read("chatgpt");
   assert.equal(calls, 2);
   reader.close();
@@ -212,5 +212,31 @@ rl.on('line', (line) => {
     );
   } finally {
     await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("a rate-limited provider is not asked again for fifteen minutes unless refreshed", async () => {
+  let clock = 0;
+  let calls = 0;
+  const reader = createUsageReader(
+    async () => {
+      calls++;
+      throw new Error("claude-rate-limit");
+    },
+    () => clock,
+  );
+
+  try {
+    assert.equal((await reader.read("claude")).issue, "rate-limit");
+    clock = 600_000;
+    await reader.read("claude");
+    assert.equal(calls, 1);
+    clock = 900_001;
+    await reader.read("claude");
+    assert.equal(calls, 2);
+    await reader.read("claude", true);
+    assert.equal(calls, 3);
+  } finally {
+    reader.close();
   }
 });

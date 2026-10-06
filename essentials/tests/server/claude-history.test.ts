@@ -67,13 +67,14 @@ test("Claude emits final response snapshots with cache writes and reads included
   assert.equal(rows[0]?.harness, "claude");
   assert.equal(rows[0]?.sessionId, "session-one");
   assert.equal(rows[0]?.model, "claude-sonnet-4-5");
-  assert.deepEqual(rows[0]?.totals, {
+  const { cost, ...counts } = rows[0]?.totals ?? {};
+  assert.deepEqual(counts, {
     input: 17,
     cached: 5,
     output: 25,
     reasoning: 0,
-    cost: null,
   });
+  assert.ok(Math.abs((cost ?? 0) - 0.000414) < 1e-12);
   assert.ok(!JSON.stringify(rows).includes("private"));
 });
 
@@ -233,7 +234,7 @@ test("Claude history is available without quota login and preserves cached sessi
       incomplete: false,
     };
     await writeSavedHistory(directory, {
-      version: 2,
+      version: 3,
       scannedAt: new Date(NOW).toISOString(),
       rows: [],
       collectors: { codex: prior, pi: prior, opencode: prior },

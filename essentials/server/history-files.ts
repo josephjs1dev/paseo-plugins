@@ -12,13 +12,35 @@ const collectorStateSchema = z.object({
   backfillWarningAt: z.string().datetime().optional(),
 });
 export type CollectorState = z.infer<typeof collectorStateSchema>;
-const savedHistorySchema = z.object({
-  version: z.literal(2),
+const savedHistoryShape = {
   scannedAt: z.string().datetime(),
   rows: z.array(historyRowSchema).max(100_000),
   collectors: z.partialRecord(harnessSchema, collectorStateSchema),
+};
+const savedHistorySchema = z.object({
+  version: z.literal(3),
+  ...savedHistoryShape,
+});
+// Version 2 stored Claude rows without cost estimates.
+const previousHistorySchema = z.object({
+  version: z.literal(2),
+  ...savedHistoryShape,
 });
 export type SavedHistory = z.infer<typeof savedHistorySchema>;
+
+function withoutClaudeHistory(
+  saved: z.infer<typeof previousHistorySchema>,
+): SavedHistory {
+  const collectors = { ...saved.collectors };
+  delete collectors.claude;
+
+  return {
+    version: 3,
+    scannedAt: saved.scannedAt,
+    rows: saved.rows.filter((row) => row.harness !== "claude"),
+    collectors,
+  };
+}
 
 const legacyProviderSchema = z.enum(["codex", "opencode-go"]);
 const legacyHistorySchema = z.object({
@@ -47,8 +69,8 @@ const legacyProvidersByHarness = {
 
 function migrateHistory(
   legacy: z.infer<typeof legacyHistorySchema>,
-): SavedHistory {
-  const migrated: SavedHistory = {
+): z.infer<typeof previousHistorySchema> {
+  const migrated: z.infer<typeof previousHistorySchema> = {
     version: 2,
     scannedAt: legacy.scannedAt,
     collectors: {},
@@ -109,10 +131,16 @@ export async function readSavedHistory(
     const contents = await readFile(path, "utf8");
 
     const saved = z
-      .union([savedHistorySchema, legacyHistorySchema])
+      .union([savedHistorySchema, previousHistorySchema, legacyHistorySchema])
       .parse(JSON.parse(contents));
 
-    return saved.version === 1 ? migrateHistory(saved) : saved;
+    if (saved.version === 3) {
+      return saved;
+    }
+
+    return withoutClaudeHistory(
+      saved.version === 1 ? migrateHistory(saved) : saved,
+    );
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === "ENOENT") {
       return;

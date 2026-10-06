@@ -112,8 +112,8 @@ function UsageDetails(props: UsagePopoverProps & { provider: Provider }) {
 
       return read({ provider, refresh });
     },
-    refetchInterval: 60_000,
-    staleTime: 30_000,
+    refetchInterval: 300_000,
+    staleTime: 120_000,
     retry: false,
   });
   const usage = query.data;

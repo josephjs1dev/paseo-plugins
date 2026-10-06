@@ -123,7 +123,7 @@ export function createHistoryCache(
     );
     checkCancelled();
     const next: SavedHistory = {
-      version: 2,
+      version: 3,
       scannedAt,
       rows: [],
       collectors: {},

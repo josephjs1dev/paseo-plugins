@@ -233,7 +233,7 @@ test("legacy cache migration preserves source-less records, strips one Pi prefix
   try {
     const migrated = await readSavedHistory(directory);
     assert.equal(await readFile(path, "utf8"), content);
-    assert.equal(migrated?.version, 2);
+    assert.equal(migrated?.version, 3);
     assert.equal(migrated?.rows.length, 4);
     assert.equal(migrated?.rows[1]?.sessionId, "one");
     assert.equal(migrated?.rows[3]?.sessionId, "pi:source");

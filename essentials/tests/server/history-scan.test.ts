@@ -71,7 +71,7 @@ test("a bounded scan imports yesterday first and retains older saved usage", asy
     };
     const storage = join(directory, "store");
     await writeSavedHistory(storage, {
-      version: 2,
+      version: 3,
       collectors: {},
       scannedAt: older,
       rows: [

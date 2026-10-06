@@ -1,0 +1,39 @@
+{
+  "autoCompactWindow": 480000,
+  "permissions": {
+    "defaultMode": "acceptEdits",
+    "allow": [
+      "Bash(git)",
+      "Bash(git *)",
+      "Bash(rg *)",
+      "Bash(jq *)",
+      "Bash(ruff *)",
+      "Bash(mypy *)",
+      "Bash(pyright *)",
+      "Bash(pytest)",
+      "Bash(pytest *)",
+      "Bash(gofmt *)",
+      "Bash(go test *)",
+      "Bash(go vet *)",
+      "Bash(go build *)",
+      "Bash(cargo check *)",
+      "Bash(cargo test *)",
+      "Bash(cargo clippy *)",
+      "Bash(cargo fmt *)",
+      "Bash(npm test)",
+      "Bash(npm test *)",
+      "Bash(npm run lint *)",
+      "Bash(npm run test *)",
+      "Bash(yarn)",
+      "Bash(yarn *)"
+    ],
+    "deny": [
+      "Bash(git -C *)",
+      "Bash(git * -C *)",
+      "Bash(git * -c *)",
+      "Bash(git * --git-dir*)",
+      "Bash(git * --work-tree*)",
+      "Bash(git * --exec-path*)"
+    ]
+  }
+}
