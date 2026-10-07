@@ -1,9 +1,13 @@
 import { randomUUID } from "node:crypto";
 import { dirname, join, relative } from "node:path";
 import { pathToFileURL } from "node:url";
-import type { RunCommandAccess } from "./server";
-import { ensureRunDirectory, readRunFile, writeRunFile } from "../files";
-import { RunError } from "../errors";
+import type { ConcertCommandAccess } from "./server";
+import {
+  ensureConcertDirectory,
+  readConcertFile,
+  writeConcertFile,
+} from "../files";
+import { ConcertError } from "../errors";
 import { missing } from "../../files";
 
 /** Creation has no agent ID yet; session opening binds it before the first turn. */
@@ -12,7 +16,7 @@ export function newAgentCommand(commandPath: string): string {
 }
 
 export async function bindAgentCommand(
-  access: RunCommandAccess & { commandPath: string; socketPath: string },
+  access: ConcertCommandAccess & { commandPath: string; socketPath: string },
   proposedPath: string | undefined,
   agentId: string,
 ): Promise<string> {
@@ -23,15 +27,15 @@ export async function bindAgentCommand(
     return access.commandPath;
   }
   const path = join(directory, name);
-  await ensureRunDirectory(directory);
+  await ensureConcertDirectory(directory);
   const source =
     `// Conductor command bound before this agent's first interactive turn.\n` +
     `process.env.CONDUCTOR_AGENT_ID = ${JSON.stringify(agentId)};\n` +
     `process.env.CONDUCTOR_SOCKET = ${JSON.stringify(access.socketPath)};\n` +
     `await import(${JSON.stringify(pathToFileURL(access.commandPath).href)});\n`;
   try {
-    if ((await readRunFile(path, 16384)) !== source) {
-      throw new RunError(
+    if ((await readConcertFile(path, 16384)) !== source) {
+      throw new ConcertError(
         "This Conductor command is already bound to another session.",
       );
     }
@@ -39,7 +43,7 @@ export async function bindAgentCommand(
     if (!missing(error)) {
       throw error;
     }
-    await writeRunFile(path, source);
+    await writeConcertFile(path, source);
   }
   return path;
 }

@@ -1,6 +1,6 @@
 // This dependency-free CLI is emitted beside the socket so Git-installed plugins
 // do not need a separate SDK installation in the agent's shell environment.
-export const RUN_COMMAND_SOURCE = String.raw`import http from "node:http";
+export const CONCERT_COMMAND_SOURCE = String.raw`import http from "node:http";
 
 const help = {
   usage: 'node "$CONDUCTOR_COMMAND" <command> [--agent ID] [--socket PATH] < input.json',
@@ -19,7 +19,7 @@ const help = {
     report: { concertId: "UUID", attemptId: "UUID from claim", report: { outcome: "completed or failed", summary: "What happened", evidence: ["Concrete change or check evidence"], checks: [{ name: "exact declared check name", status: "passed, failed or not-run", detail: "Observed result" }] } },
     finish: { concertId: "UUID", summary: "Overall outcome and remaining limitations" }
   },
-  policy: "Start only for authorized work. Claim before working; keep the returned attempt ID. Work with your normal tools. Report explicit evidence; never infer completion from idle. Finish only after all tasks have completed reports. concertId identifies a concert; runId and performanceId are accepted from older prompts. The local socket trusts the daemon OS user; source IDs are checked against Paseo. Orchestrate makes the caller its Conductor agent by default, or creates a dedicated one with coordinator agent; define records its decomposition; dispatch creates real task agents; profiles and models list worker choices. Source-only start/claim is retained for compatibility. No command grants new permissions. Reuse the same start key after an uncertain response. Resume unfinished work by claiming the same task; retry:true is only for an explicitly failed attempt."
+  policy: "Start only for authorized work. Claim before working; keep the returned attempt ID. Work with your normal tools. Report explicit evidence; never infer completion from idle. Finish only after all tasks have completed reports. concertId identifies a concert; runId and performanceId are accepted from older prompts. The local socket trusts the daemon OS user; source IDs are checked against Paseo. Orchestrate makes the caller its Conductor agent by default, or a dedicated Conductor agent with coordinator:\"agent\"; define records its decomposition; dispatch creates real task agents; profiles and models list worker choices. Source-only start/claim is retained for compatibility. No command grants new permissions. Reuse the same start key after an uncertain response. Resume unfinished work by claiming the same task; retry:true is only for an explicitly failed attempt."
 };
 
 async function main() {
@@ -61,7 +61,7 @@ async function main() {
         } catch { reject(new Error("Conductor returned an invalid response.")); }
       });
     });
-    request.setTimeout(15000, () => request.destroy(new Error("Command acknowledgement is uncertain. Inspect the run before retrying; reuse its start key/attempt identity.")));
+    request.setTimeout(15000, () => request.destroy(new Error("Command acknowledgement is uncertain. Inspect the concert before retrying; reuse its start key/attempt identity.")));
     request.on("error", (error) => reject(new Error(error.code ? "Conductor command connection failed (" + error.code + "). Check the plugin or refresh the agent session." : error.message)));
     request.end(body);
   });

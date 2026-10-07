@@ -1,48 +1,48 @@
 import { Text, View } from "react-native";
 import type { PluginTheme, RpcOutput } from "@getpaseo/plugin";
-import type { getRunAccess, listRuns } from "../../shared/concerts/rpc";
+import type { getConcertAccess, listConcerts } from "../../shared/concerts/rpc";
 import {
-  type RunContext,
-  type RunSummary,
-  type StoredRun,
+  type ConcertContext,
+  type ConcertSummary,
+  type StoredConcert,
 } from "../../shared/concerts/models";
-import type { InboxSession, ViewState } from "../podium/session";
+import type { PodiumSession, ViewState } from "../podium/session";
 import { Notice } from "../ui/controls";
-import { RunRow } from "./row";
-import { RunDetail } from "./detail";
+import { ConcertRow } from "./row";
+import { ConcertDetail } from "./detail";
 
-export interface RunInboxData {
-  access: RpcOutput<typeof getRunAccess> | undefined;
-  list: RpcOutput<typeof listRuns> | undefined;
+export interface ConcertsData {
+  access: RpcOutput<typeof getConcertAccess> | undefined;
+  list: RpcOutput<typeof listConcerts> | undefined;
   loading: boolean;
   stale: boolean;
-  detail: { run: StoredRun; context: RunContext } | undefined;
+  detail: { run: StoredConcert; context: ConcertContext } | undefined;
   detailStale: boolean;
 }
 
-export function visibleRuns(
-  runs: RunSummary[],
+export function visibleConcerts(
+  runs: ConcertSummary[],
   state: ViewState,
   workspaceId?: string,
 ) {
-  const query = state.runQuery.toLowerCase().trim();
+  const query = state.concertQuery.toLowerCase().trim();
   return runs.filter(
     (run) =>
       !["draft", "accepted"].includes(run.status) &&
       (!workspaceId || run.source.workspaceId === workspaceId) &&
-      (state.runFilter === "all" ||
-        (state.runFilter === "active" &&
+      (state.concertFilter === "all" ||
+        (state.concertFilter === "active" &&
           ["planning", "ready", "running"].includes(run.status)) ||
-        (state.runFilter === "blocked" &&
+        (state.concertFilter === "blocked" &&
           ["blocked", "failed"].includes(run.status)) ||
-        run.status === state.runFilter) &&
+        run.status === state.concertFilter) &&
       [run.title, run.source.workspaceName, run.source.agentId ?? ""].some(
         (value) => value.toLowerCase().includes(query),
       ),
   );
 }
 
-export function RunRows({
+export function ConcertRows({
   theme,
   data,
   state,
@@ -51,14 +51,14 @@ export function RunRows({
   now,
 }: {
   theme: PluginTheme;
-  data: RunInboxData;
+  data: ConcertsData;
   state: ViewState;
-  session: InboxSession;
+  session: PodiumSession;
   workspaceId?: string;
   now: number;
 }) {
-  const runs = visibleRuns(data.list?.runs ?? [], state, workspaceId);
-  const filtered = Boolean(state.runQuery || state.runFilter !== "all");
+  const runs = visibleConcerts(data.list?.runs ?? [], state, workspaceId);
+  const filtered = Boolean(state.concertQuery || state.concertFilter !== "all");
   return (
     <View style={{ gap: 18 }}>
       {data.access && !data.access.available && (
@@ -107,16 +107,16 @@ export function RunRows({
       )}
       <View style={{ gap: 6 }}>
         {runs.map((run) => (
-          <RunRow
+          <ConcertRow
             key={run.id}
             run={run}
             theme={theme}
             now={now}
-            selected={state.runSelection?.id === run.id}
+            selected={state.concertSelection?.id === run.id}
             onSelect={() =>
               session.update({
-                section: "runs",
-                runSelection: { kind: "run", id: run.id },
+                section: "concerts",
+                concertSelection: { kind: "concert", id: run.id },
               })
             }
           />
@@ -126,23 +126,23 @@ export function RunRows({
   );
 }
 
-export function RunSelectionDetail({
+export function ConcertSelectionDetail({
   theme,
   data,
   state,
   compact = false,
   openAgent,
-  deleteRun,
+  deleteConcert,
 }: {
   theme: PluginTheme;
-  data: RunInboxData;
+  data: ConcertsData;
   state: ViewState;
   /** Layout hint from the browser; defaults only for callers without layout info. */
   compact?: boolean;
   openAgent?: (id: string) => void;
-  deleteRun?: (run: StoredRun) => Promise<void>;
+  deleteConcert?: (run: StoredConcert) => Promise<void>;
 }) {
-  const selection = state.runSelection;
+  const selection = state.concertSelection;
   if (!selection) {
     return null;
   }
@@ -162,7 +162,7 @@ export function RunSelectionDetail({
     );
   }
   return (
-    <RunDetail
+    <ConcertDetail
       key={selection.id}
       theme={theme}
       run={data.detail.run}
@@ -170,7 +170,7 @@ export function RunSelectionDetail({
       stale={data.detailStale}
       compact={compact}
       {...(openAgent ? { openAgent } : {})}
-      {...(deleteRun ? { deleteRun } : {})}
+      {...(deleteConcert ? { deleteConcert } : {})}
     />
   );
 }

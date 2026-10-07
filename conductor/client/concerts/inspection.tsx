@@ -2,16 +2,16 @@ import { useState } from "react";
 import { Text, View } from "react-native";
 import type { PluginTheme } from "@getpaseo/plugin";
 import type {
-  RunAttempt,
-  RunContext,
-  RunGraph,
-  StoredRun,
+  ConcertAttempt,
+  ConcertContext,
+  ConcertGraph,
+  StoredConcert,
 } from "../../shared/concerts/models";
 import { taskState, type TaskStateKey } from "../../shared/concerts/task-state";
 import { Button, Disclosure, Label, Notice, rowStyle } from "../ui/controls";
-import { RunGraphView } from "./graph";
+import { ConcertGraphView } from "./graph";
 
-export function RunInspection({
+export function ConcertInspection({
   view,
   theme,
   run,
@@ -22,9 +22,9 @@ export function RunInspection({
 }: {
   view: string;
   theme: PluginTheme;
-  run: StoredRun;
-  context: RunContext;
-  graph: RunGraph;
+  run: StoredConcert;
+  context: ConcertContext;
+  graph: ConcertGraph;
   /** Layout hint carried to the graph; defaults only because the chain may lack layout info. */
   compact?: boolean;
   openAgent?: (id: string) => void;
@@ -76,7 +76,7 @@ export function RunInspection({
             resources that need serialization without adding prerequisites.
             Select a task to open its worker when one is running.
           </Text>
-          <RunGraphView
+          <ConcertGraphView
             theme={theme}
             run={run}
             graph={graph}
@@ -107,7 +107,7 @@ type StateColorName =
   | "statusSuccess"
   | "statusDanger";
 
-type RunRevision = StoredRun["revisions"][number];
+type ConcertRevision = StoredConcert["revisions"][number];
 
 const HISTORY_ROW_STYLE = {
   flexDirection: "row",
@@ -120,7 +120,7 @@ const HISTORY_ROW_STYLE = {
 } as const;
 
 /**
- * Compact run history: one single-line row per attempt and per accepted
+ * Compact concert history: one single-line row per attempt and per accepted
  * revision. Report summaries stay on the task cards and are never repeated
  * here; only a present blocker or failure message shows, clamped to two lines.
  */
@@ -130,7 +130,7 @@ function HistoryView({
   openAgent,
 }: {
   theme: PluginTheme;
-  run: StoredRun;
+  run: StoredConcert;
   openAgent?: (id: string) => void;
 }) {
   const [openRevisions, setOpenRevisions] = useState<Record<number, boolean>>(
@@ -182,7 +182,10 @@ function HistoryView({
 }
 
 /** Attempt display state for a history row: a completed report with an unsettled agent launch reads as finishing. */
-function attemptState(run: StoredRun, attempt: RunAttempt): TaskStateKey {
+function attemptState(
+  run: StoredConcert,
+  attempt: ConcertAttempt,
+): TaskStateKey {
   const task = run.revisions
     .at(-1)
     ?.graph.tasks.find((entry) => entry.id === attempt.taskId);
@@ -209,8 +212,8 @@ function AttemptRow({
   openAgent,
 }: {
   theme: PluginTheme;
-  run: StoredRun;
-  attempt: RunAttempt;
+  run: StoredConcert;
+  attempt: ConcertAttempt;
   index: number;
   openAgent?: (id: string) => void;
 }) {
@@ -327,7 +330,7 @@ function RevisionRow({
   onToggle,
 }: {
   theme: PluginTheme;
-  revision: RunRevision;
+  revision: ConcertRevision;
   expanded: boolean;
   onToggle(this: void): void;
 }) {
@@ -443,7 +446,7 @@ function shortTimestamp(epochMillis: number): string {
 }
 
 /** Age or duration text from the attempt timestamps, e.g. "9h 44m" or "12m". */
-function durationLabel(attempt: RunAttempt): string {
+function durationLabel(attempt: ConcertAttempt): string {
   const end = attempt.endedAt ?? Date.now();
   const minutes = Math.max(0, Math.round((end - attempt.startedAt) / 60000));
   if (minutes < 60) {

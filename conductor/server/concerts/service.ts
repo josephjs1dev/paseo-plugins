@@ -1,15 +1,15 @@
 import type { ConcertHost } from "./host";
-import { RunError } from "./errors";
-import { fileRunStore } from "./store";
+import { ConcertError } from "./errors";
+import { fileConcertStore } from "./store";
 import { executionRuntime } from "./identity";
 import { workerRuntime } from "./workers";
-import { runExecution } from "./execution";
+import { concertExecution } from "./execution";
 import { commandServer } from "./commands/server";
 import { concertAck } from "./commands/ack";
 
 export interface ConcertServiceOptions {
   directory: string;
-  /** Throws a RunError while no daemon connection is known. */
+  /** Throws a ConcertError while no daemon connection is known. */
   host: () => ConcertHost;
   /** Reconciliation waits until a daemon connection is known. */
   connected: () => boolean;
@@ -23,8 +23,8 @@ export function concertService({
   connected,
   hooksAvailable,
 }: ConcertServiceOptions) {
-  const store = fileRunStore(directory);
-  const execution = runExecution(
+  const store = fileConcertStore(directory);
+  const execution = concertExecution(
     store,
     () => executionRuntime(host()),
     () => workerRuntime(host()),
@@ -54,7 +54,7 @@ export function concertService({
       commandPath: null,
       socketPath: null,
       message:
-        "Run storage could not initialize. Native requests remain available.",
+        "Concert storage could not initialize. Native requests remain available.",
     },
     close: () => Promise.resolve(),
   };
@@ -62,7 +62,7 @@ export function concertService({
   const ready = (async () => {
     try {
       if (!hooksAvailable) {
-        throw new RunError(
+        throw new ConcertError(
           "This host lacks the session hooks required for agent commands.",
         );
       }
@@ -82,7 +82,7 @@ export function concertService({
         await opened.close();
       }
     } catch (error) {
-      if (error instanceof RunError) {
+      if (error instanceof ConcertError) {
         access.message = error.message;
       }
     }

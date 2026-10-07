@@ -1,11 +1,11 @@
 import { ScrollView, Text, View } from "react-native";
 import type { PluginTheme } from "@getpaseo/plugin";
-import type { StoredRun } from "../../shared/concerts/models";
-import type { InboxSession, ViewState } from "../podium/session";
+import type { StoredConcert } from "../../shared/concerts/models";
+import type { PodiumSession, ViewState } from "../podium/session";
 import { Label } from "../ui/controls";
-import { RunRows, RunSelectionDetail, type RunInboxData } from "./list";
+import { ConcertRows, ConcertSelectionDetail, type ConcertsData } from "./list";
 
-export function RunBrowser({
+export function ConcertBrowser({
   theme,
   data,
   state,
@@ -14,21 +14,21 @@ export function RunBrowser({
   now,
   workspaceId,
   openAgent,
-  deleteRun,
+  deleteConcert,
 }: {
   theme: PluginTheme;
-  data: RunInboxData;
+  data: ConcertsData;
   state: ViewState;
-  session: InboxSession;
+  session: PodiumSession;
   compact: boolean;
   now: number;
   workspaceId?: string;
   openAgent?: (id: string) => void;
-  deleteRun?: (run: StoredRun) => Promise<void>;
+  deleteConcert?: (run: StoredConcert) => Promise<void>;
 }) {
-  const hasSelection = Boolean(state.runSelection);
+  const hasSelection = Boolean(state.concertSelection);
   return (
-    <View testID="runs-browser" style={{ flex: 1, minHeight: 0 }}>
+    <View testID="concerts-browser" style={{ flex: 1, minHeight: 0 }}>
       <View
         style={{
           flex: 1,
@@ -38,7 +38,7 @@ export function RunBrowser({
       >
         {(!compact || !hasSelection) && (
           <ScrollView
-            testID="runs-queue"
+            testID="concerts-queue"
             style={{
               flexGrow: compact ? 1 : 0,
               flexShrink: 0,
@@ -48,7 +48,7 @@ export function RunBrowser({
             }}
             contentContainerStyle={{ padding: 14, gap: 18 }}
           >
-            <RunRows
+            <ConcertRows
               theme={theme}
               now={now}
               data={data}
@@ -61,17 +61,17 @@ export function RunBrowser({
         {(!compact || hasSelection) && (
           <View style={{ flex: 1, minWidth: 0 }}>
             {hasSelection ? (
-              <RunSelectionDetail
+              <ConcertSelectionDetail
                 theme={theme}
                 data={data}
                 state={state}
                 compact={compact}
                 {...(openAgent ? { openAgent } : {})}
-                {...(deleteRun ? { deleteRun } : {})}
+                {...(deleteConcert ? { deleteConcert } : {})}
               />
             ) : (
               <View style={{ padding: 28, gap: 10, maxWidth: 620 }}>
-                <Label theme={theme}>RUN PROGRESS</Label>
+                <Label theme={theme}>CONCERT PROGRESS</Label>
                 <Text
                   style={{
                     color: theme.colors.foreground,

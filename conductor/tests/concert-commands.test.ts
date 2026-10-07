@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { runAgentCommandSchema } from "../shared/concerts/commands";
+import { concertCommandSchema } from "../shared/concerts/commands";
 import { concertAck } from "../server/concerts/commands/ack";
 
 const id = "6f1c2b9e-4b7a-4c1e-9f0a-2d3e4f5a6b7c";
@@ -13,18 +13,18 @@ const task = {
 
 void test("commands take concertId and accept runId and performanceId from older prompts", () => {
   const get = { kind: "get", concertId: id };
-  assert.deepEqual(runAgentCommandSchema.parse(get), get);
+  assert.deepEqual(concertCommandSchema.parse(get), get);
   for (const legacy of ["runId", "performanceId"]) {
     assert.deepEqual(
-      runAgentCommandSchema.parse({ kind: "get", [legacy]: id }),
+      concertCommandSchema.parse({ kind: "get", [legacy]: id }),
       get,
     );
     assert.deepEqual(
-      runAgentCommandSchema.parse({ kind: "get", [legacy]: id, concertId: id }),
+      concertCommandSchema.parse({ kind: "get", [legacy]: id, concertId: id }),
       get,
     );
     assert.throws(() =>
-      runAgentCommandSchema.parse({
+      concertCommandSchema.parse({
         kind: "get",
         [legacy]: id,
         concertId: otherId,
@@ -32,11 +32,11 @@ void test("commands take concertId and accept runId and performanceId from older
     );
   }
   assert.deepEqual(
-    runAgentCommandSchema.parse({ kind: "get", runId: id, performanceId: id }),
+    concertCommandSchema.parse({ kind: "get", runId: id, performanceId: id }),
     get,
   );
   assert.throws(() =>
-    runAgentCommandSchema.parse({
+    concertCommandSchema.parse({
       kind: "get",
       runId: id,
       performanceId: otherId,
@@ -46,7 +46,7 @@ void test("commands take concertId and accept runId and performanceId from older
 
 void test("a task or retry uses either a profile or an inline worker choice", () => {
   const define = (worker: Record<string, string>) =>
-    runAgentCommandSchema.safeParse({
+    concertCommandSchema.safeParse({
       kind: "define",
       concertId: id,
       tasks: [{ ...task, ...worker }],
@@ -56,7 +56,7 @@ void test("a task or retry uses either a profile or an inline worker choice", ()
   assert.equal(define({ profile: "Small", provider: "pi" }), false);
   assert.equal(define({ profile: "Small", thinkingOptionId: "high" }), false);
   const dispatch = (worker: Record<string, string>) =>
-    runAgentCommandSchema.safeParse({
+    concertCommandSchema.safeParse({
       kind: "dispatch",
       concertId: id,
       retryTaskId: "a",
@@ -65,7 +65,7 @@ void test("a task or retry uses either a profile or an inline worker choice", ()
   assert.equal(dispatch({ model: "pi-test" }), true);
   assert.equal(dispatch({ profile: "Small", model: "pi-test" }), false);
   assert.equal(
-    runAgentCommandSchema.safeParse({ kind: "models" }).success,
+    concertCommandSchema.safeParse({ kind: "models" }).success,
     true,
   );
 });

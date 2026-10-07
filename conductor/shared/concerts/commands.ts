@@ -1,7 +1,7 @@
 import { z } from "zod";
 import { identifier } from "../schema";
 import {
-  runIdSchema,
+  uuidSchema,
   scopeSchema,
   taskIdSchema,
   taskReportSchema,
@@ -77,7 +77,7 @@ export const commandTaskSchema = z
   })
   .strict()
   .refine(oneWorkerSource, workerSourceMessage);
-const runAgentCommandUnion = z.discriminatedUnion("kind", [
+const concertCommandUnion = z.discriminatedUnion("kind", [
   z
     .object({
       kind: z.literal("orchestrate"),
@@ -92,14 +92,14 @@ const runAgentCommandUnion = z.discriminatedUnion("kind", [
   z
     .object({
       kind: z.literal("define"),
-      concertId: runIdSchema,
+      concertId: uuidSchema,
       tasks: z.array(commandTaskSchema).min(1).max(12),
     })
     .strict(),
   z
     .object({
       kind: z.literal("dispatch"),
-      concertId: runIdSchema,
+      concertId: uuidSchema,
       retryTaskId: taskIdSchema.optional(),
       ...workerChoiceFields,
     })
@@ -118,18 +118,18 @@ const runAgentCommandUnion = z.discriminatedUnion("kind", [
     })
     .strict(),
   z.object({ kind: z.literal("list") }).strict(),
-  z.object({ kind: z.literal("get"), concertId: runIdSchema }).strict(),
+  z.object({ kind: z.literal("get"), concertId: uuidSchema }).strict(),
   z
     .object({
       kind: z.literal("remove-legacy"),
-      concertId: runIdSchema,
+      concertId: uuidSchema,
       expectedVersion: z.number().int().nonnegative(),
     })
     .strict(),
   z
     .object({
       kind: z.literal("claim"),
-      concertId: runIdSchema,
+      concertId: uuidSchema,
       taskId: taskIdSchema,
       retry: z.boolean().default(false),
     })
@@ -137,33 +137,33 @@ const runAgentCommandUnion = z.discriminatedUnion("kind", [
   z
     .object({
       kind: z.literal("block"),
-      concertId: runIdSchema,
-      attemptId: runIdSchema,
+      concertId: uuidSchema,
+      attemptId: uuidSchema,
       message: text(4000),
     })
     .strict(),
   z
     .object({
       kind: z.literal("report"),
-      concertId: runIdSchema,
-      attemptId: runIdSchema,
+      concertId: uuidSchema,
+      attemptId: uuidSchema,
       report: taskReportSchema,
     })
     .strict(),
   z
     .object({
       kind: z.literal("finish"),
-      concertId: runIdSchema,
+      concertId: uuidSchema,
       summary: text(8000),
     })
     .strict(),
 ]);
-export const runAgentCommandSchema = z.preprocess(
+export const concertCommandSchema = z.preprocess(
   acceptLegacyIds,
-  runAgentCommandUnion,
+  concertCommandUnion,
 );
 export const agentCommandRequestSchema = z
-  .object({ agentId: identifier, command: runAgentCommandSchema })
+  .object({ agentId: identifier, command: concertCommandSchema })
   .strict();
-export type RunAgentCommand = z.infer<typeof runAgentCommandSchema>;
+export type ConcertCommand = z.infer<typeof concertCommandSchema>;
 export type AgentCommandRequest = z.infer<typeof agentCommandRequestSchema>;

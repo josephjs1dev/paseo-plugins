@@ -1,15 +1,15 @@
 import { z } from "zod";
 import { identifier } from "../schema";
 
-export const RUN_LIMITS = {
-  runs: 200,
+export const CONCERT_LIMITS = {
+  concerts: 200,
   tasks: 40,
   revisions: 24,
   snapshotBytes: 2_000_000,
   contextBytes: 128_000,
   attempts: 120,
 } as const;
-export const runIdSchema = z.string().uuid();
+export const uuidSchema = z.string().uuid();
 export const taskIdSchema = z
   .string()
   .regex(/^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$/);
@@ -30,7 +30,7 @@ export const taskSchema = z
     id: taskIdSchema,
     title: text(160),
     outcome: text(4000),
-    prerequisites: z.array(taskIdSchema).max(RUN_LIMITS.tasks),
+    prerequisites: z.array(taskIdSchema).max(CONCERT_LIMITS.tasks),
     inputs: z.array(text(2000)).max(16),
     reads: z.array(scopeSchema).max(32),
     writes: z.array(scopeSchema).max(32),
@@ -50,7 +50,7 @@ export const taskSchema = z
   })
   .strict();
 export const graphSchema = z
-  .object({ tasks: z.array(taskSchema).max(RUN_LIMITS.tasks) })
+  .object({ tasks: z.array(taskSchema).max(CONCERT_LIMITS.tasks) })
   .strict();
 export const contextSchema = z
   .object({
@@ -100,7 +100,7 @@ export const taskReportSchema = z
   })
   .strict();
 export const attemptSchema = z.object({
-  id: runIdSchema,
+  id: uuidSchema,
   taskId: taskIdSchema,
   agentId: identifier,
   state: z.enum(["running", "blocked", "completed", "failed"]),
@@ -132,7 +132,7 @@ export const executionSchema = z.object({
       concurrency: z.number().int().min(1).max(4),
       requestedBy: identifier.nullable(),
       coordinatorLaunch: z.enum(["pending", "started", "uncertain"]),
-      // Absent on runs recorded before self-coordination existed.
+      // Absent on concerts recorded before self-coordination existed.
       coordinator: z.enum(["self", "agent"]).optional(),
       coordinatorProfile: text(160).optional(),
       coordinatorConfig: text(32000).optional(),
@@ -140,14 +140,14 @@ export const executionSchema = z.object({
       notification: z.string().max(128).nullable(),
     })
     .optional(),
-  attempts: z.array(attemptSchema).max(RUN_LIMITS.attempts),
+  attempts: z.array(attemptSchema).max(CONCERT_LIMITS.attempts),
   summary: text(8000).nullable(),
   finishedAt: z.number().int().nonnegative().nullable(),
   interruption: text(4000).nullable(),
 });
-export const runSchema = z.object({
+export const concertSchema = z.object({
   schemaVersion: z.literal(1),
-  id: runIdSchema,
+  id: uuidSchema,
   version: z.number().int().nonnegative(),
   title: text(160),
   source: placementSchema,
@@ -167,9 +167,9 @@ export const runSchema = z.object({
   ]),
   execution: executionSchema.nullable().default(null),
   draft: graphSchema.nullable(),
-  revisions: z.array(revisionSchema).max(RUN_LIMITS.revisions),
+  revisions: z.array(revisionSchema).max(CONCERT_LIMITS.revisions),
 });
-export const runSummarySchema = runSchema
+export const concertSummarySchema = concertSchema
   .omit({
     draft: true,
     revisions: true,
@@ -186,16 +186,16 @@ export const runSummarySchema = runSchema
     message: z.string().max(8000).nullable(),
   });
 export type TaskDefinition = z.infer<typeof taskSchema>;
-export type RunGraph = z.infer<typeof graphSchema>;
-export type RunContext = z.infer<typeof contextSchema>;
-export type RunSource = z.infer<typeof sourceSchema>;
-export type RunPlacement = z.infer<typeof placementSchema>;
-export type StoredRun = z.infer<typeof runSchema>;
-export type RunSummary = z.infer<typeof runSummarySchema>;
-export type RunAttempt = z.infer<typeof attemptSchema>;
+export type ConcertGraph = z.infer<typeof graphSchema>;
+export type ConcertContext = z.infer<typeof contextSchema>;
+export type ConcertSource = z.infer<typeof sourceSchema>;
+export type ConcertPlacement = z.infer<typeof placementSchema>;
+export type StoredConcert = z.infer<typeof concertSchema>;
+export type ConcertSummary = z.infer<typeof concertSummarySchema>;
+export type ConcertAttempt = z.infer<typeof attemptSchema>;
 export type TaskReport = z.infer<typeof taskReportSchema>;
 
-export function runStatusLabel(status: StoredRun["status"]): string {
+export function concertStatusLabel(status: StoredConcert["status"]): string {
   const labels = {
     draft: "Legacy plan · Not started",
     accepted: "Legacy plan · Not started",
@@ -210,20 +210,20 @@ export function runStatusLabel(status: StoredRun["status"]): string {
 }
 
 export function latestAttempt(
-  run: StoredRun,
+  run: StoredConcert,
   taskId: string,
-): RunAttempt | undefined {
+): ConcertAttempt | undefined {
   return run.execution?.attempts
     .slice()
     .reverse()
     .find((attempt) => attempt.taskId === taskId);
 }
 
-export function summarizeRun(run: StoredRun): RunSummary {
+export function summarizeConcert(run: StoredConcert): ConcertSummary {
   const latest = run.revisions.at(-1);
   const tasks = (latest?.graph ?? run.draft)?.tasks ?? [];
   const attempts = tasks.map((task) => latestAttempt(run, task.id));
-  return runSummarySchema.parse({
+  return concertSummarySchema.parse({
     ...run,
     taskCount: tasks.length,
     acceptedRevision: latest?.number ?? null,

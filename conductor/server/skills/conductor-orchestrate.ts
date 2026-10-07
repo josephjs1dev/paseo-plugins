@@ -1,7 +1,7 @@
 // Embedded so Git and npm installs need no extra files or dev dependencies.
 export const ORCHESTRATE_SKILL = `---
 name: conductor-orchestrate
-description: Turn an approved plan or request into a Paseo Conductor concert from this session. Split it into tasks, choose a configured profile or model per task (implement, explore, plan, review), dispatch worker agents, track their reports, and finish with a summary. Use when the user says "orchestrate", "conductor", "concert", "split this into tasks", "dispatch agents", "run this plan with agents", or asks to parallelize work across agents. Requires the Paseo Conductor plugin. Do not use it to create a dedicated orchestrator agent.
+description: Turn an approved plan or request into a Paseo Conductor concert from this session. Split it into tasks, choose a configured profile or model per task (implement, explore, plan, review), dispatch worker agents, track their reports, and finish with a summary. Use when the user says "orchestrate", "conductor", "concert", "split this into tasks", "dispatch agents", "run this plan with agents", or asks to parallelize work across agents. Requires the Paseo Conductor plugin. Do not use it to create a dedicated Conductor agent.
 ---
 
 # Conductor orchestrate
@@ -95,7 +95,7 @@ Fields:
 - \`id\`: letters, digits, \`_\` and \`-\`. It starts with a letter or digit, has 64 characters or fewer, and is unique.
 - \`description\`: 4000 characters or fewer. A worker sees only the goal, its own task and the reports of its prerequisites. It does not see this conversation. Write each description as a standalone contract, in the format below.
 - \`dependsOn\`: the task IDs that must complete first. Do not create cycles. Each dependent worker receives its prerequisites' reports.
-- \`reads\` and \`writes\`: real checkout-relative paths, such as \`server\` or \`client/run-task-card.tsx\`. Do not use \`..\`, wildcards or symbolic links. \`writes: []\` makes a read-only task.
+- \`reads\` and \`writes\`: real checkout-relative paths, such as \`server\` or \`client/concerts/task-card.tsx\`. Do not use \`..\`, wildcards or symbolic links. \`writes: []\` makes a read-only task.
 - \`resources\`: names for exclusive non-file items, such as \`npm-install\` or \`port-8080\`. Names use the \`id\` format. Tasks that share a resource run one at a time.
 - \`checks\`: the exact commands or checks the worker must run and report, such as \`npm run check\`.
 
@@ -143,8 +143,8 @@ Fallback: if a worker choice fails with \`Unknown worker profile\`, \`Ambiguous 
 \`\`\`bash
 node '<helper>' define <<'JSON'
 {"concertId":"<concertId>","tasks":[
-  {"id":"schema","title":"Add inline worker fields","description":"Add provider, model and thinkingOptionId to the task schema. Acceptance: stored runs without the fields still parse.","dependsOn":[],"reads":["shared"],"writes":["shared/run-commands.ts","shared/run-models.ts"],"checks":["npm run typecheck"]},
-  {"id":"review","title":"Review the schema change","description":"Review the schema task for compatibility bugs. Report findings only.","dependsOn":["schema"],"reads":["shared/run-commands.ts","shared/run-models.ts"],"writes":[],"checks":[],"profile":"<profile id from profiles>"}
+  {"id":"schema","title":"Add inline worker fields","description":"Add provider, model and thinkingOptionId to the task schema. Acceptance: stored concerts without the fields still parse.","dependsOn":[],"reads":["shared"],"writes":["shared/concerts/commands.ts","shared/concerts/models.ts"],"checks":["npm run typecheck"]},
+  {"id":"review","title":"Review the schema change","description":"Review the schema task for compatibility bugs. Report findings only.","dependsOn":["schema"],"reads":["shared/concerts/commands.ts","shared/concerts/models.ts"],"writes":[],"checks":[],"profile":"<profile id from profiles>"}
 ]}
 JSON
 \`\`\`

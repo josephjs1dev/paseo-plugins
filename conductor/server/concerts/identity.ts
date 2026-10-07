@@ -1,15 +1,15 @@
 import { createHash } from "node:crypto";
-import type { RunSource } from "../../shared/concerts/models";
+import type { ConcertSource } from "../../shared/concerts/models";
 import type { ConcertHost } from "./host";
-import { runPlacement, type RunPlacementRuntime } from "./placement";
-import { RunError } from "./errors";
+import { concertPlacement, type ConcertPlacementRuntime } from "./placement";
+import { ConcertError } from "./errors";
 
-export interface ExecutionRuntime extends RunPlacementRuntime {
-  source(agentId: string): Promise<RunSource>;
+export interface ExecutionRuntime extends ConcertPlacementRuntime {
+  source(agentId: string): Promise<ConcertSource>;
 }
 export function executionRuntime(host: ConcertHost): ExecutionRuntime {
   return {
-    ...runPlacement(host),
+    ...concertPlacement(host),
     async source(agentId) {
       const agent = await host.agent(agentId);
       if (
@@ -17,7 +17,7 @@ export function executionRuntime(host: ConcertHost): ExecutionRuntime {
         agent.archivedAt ||
         agent.status === "closed"
       ) {
-        throw new RunError(
+        throw new ConcertError(
           "The source agent is unavailable. Use an active agent in the intended workspace.",
         );
       }
@@ -26,7 +26,7 @@ export function executionRuntime(host: ConcertHost): ExecutionRuntime {
   };
 }
 /** Stable RFC-9562 version-8 identity; this is an idempotency key, not a secret. */
-export function commandRunId(agentId: string, key: string): string {
+export function commandConcertId(agentId: string, key: string): string {
   const bytes = createHash("sha256")
     .update(JSON.stringify(["conductor-run", agentId, key]))
     .digest()

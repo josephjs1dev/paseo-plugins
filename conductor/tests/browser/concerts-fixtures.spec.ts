@@ -2,12 +2,12 @@ import { expect, test, type Locator, type Page } from "@playwright/test";
 import { mkdir } from "node:fs/promises";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { longSummary, longTaskTitle } from "../run-fixtures";
+import { longSummary, longTaskTitle } from "../concert-fixtures";
 
 /**
  * Integration verification for the Tasks and Graph UI.
  *
- * Every fixture scenario in tests/preview/runs.ts is exercised end-to-end
+ * Every fixture scenario in tests/preview/concerts.ts is exercised end-to-end
  * through the real preview surface, and representative Tasks/Graph screenshots
  * are written under .artifacts/reviews/20261006-conductor-run-ui/screenshots/
  * for visual inspection. Only fixtures and tests live here; production client
@@ -21,17 +21,17 @@ const SHOTS = fileURLToPath(
   ),
 );
 
-async function openRun(page: Page, fixture: string, extra = "") {
-  await page.goto(`/?runs&run-fixture=${fixture}${extra}`);
+async function openConcert(page: Page, fixture: string, extra = "") {
+  await page.goto(`/?concerts&concert-fixture=${fixture}${extra}`);
   await page.getByRole("tab", { name: "Concerts", exact: true }).click();
   await page
     .getByRole("button", { name: /^Open concert:/ })
     .first()
     .click();
-  await expect(page.getByTestId("run-detail")).toBeVisible();
+  await expect(page.getByTestId("concert-detail")).toBeVisible();
 }
 
-/** Run-detail controls share names with queue rows, so stay inside one detail surface. */
+/** Concert-detail controls share names with queue rows, so stay inside one detail surface. */
 function detailButton(detail: Locator, name: string) {
   return detail.getByRole("button", { name, exact: true }).first();
 }
@@ -45,17 +45,19 @@ async function noPageOverflow(page: Page): Promise<boolean> {
 test("fixture scenarios render their documented task and graph states", async ({
   page,
 }) => {
-  const detail = page.getByTestId("run-detail");
+  const detail = page.getByTestId("concert-detail");
 
   // One-task long-title case: the full title stays visible on the card and in
   // the graph selection label even though the node body truncates it.
-  await openRun(page, "long-title");
-  await expect(page.getByTestId("run-task-migration")).toContainText(
+  await openConcert(page, "long-title");
+  await expect(page.getByTestId("concert-task-migration")).toContainText(
     longTaskTitle,
   );
-  await expect(page.getByTestId("run-task-migration")).toContainText("Running");
+  await expect(page.getByTestId("concert-task-migration")).toContainText(
+    "Running",
+  );
   await detailButton(detail, "Graph").click();
-  const migration = page.getByTestId("run-node-migration");
+  const migration = page.getByTestId("concert-node-migration");
   await expect(migration).toContainText("Running");
   await expect(migration).toHaveAttribute(
     "aria-label",
@@ -63,27 +65,33 @@ test("fixture scenarios render their documented task and graph states", async ({
   );
   await migration.focus();
   await page.keyboard.press("Enter");
-  await expect(page.getByTestId("run-graph-selection")).toContainText(
+  await expect(page.getByTestId("concert-graph-selection")).toContainText(
     longTaskTitle,
   );
 
   // Multi-task graph: running, waiting, blocked, completed + failed check,
   // finishing, ready, and a same-layer resource conflict edge.
-  await openRun(page, "multi");
-  await expect(page.getByTestId("run-task-api")).toContainText("Running");
-  await expect(page.getByTestId("run-task-ui")).toContainText(
+  await openConcert(page, "multi");
+  await expect(page.getByTestId("concert-task-api")).toContainText("Running");
+  await expect(page.getByTestId("concert-task-ui")).toContainText(
     "Waiting · waiting for api",
   );
-  await expect(page.getByTestId("run-task-backend")).toContainText("Blocked");
-  await expect(page.getByTestId("run-task-backend")).toContainText(
+  await expect(page.getByTestId("concert-task-backend")).toContainText(
+    "Blocked",
+  );
+  await expect(page.getByTestId("concert-task-backend")).toContainText(
     "Confirm the pagination compatibility requirement",
   );
-  await expect(page.getByTestId("run-task-collect")).toContainText("Completed");
-  await expect(page.getByTestId("run-task-collect")).toContainText(
+  await expect(page.getByTestId("concert-task-collect")).toContainText(
+    "Completed",
+  );
+  await expect(page.getByTestId("concert-task-collect")).toContainText(
     "✕ Regression suite: Offset export test still red.",
   );
-  await expect(page.getByTestId("run-task-ship")).toContainText("Finishing");
-  const collect = page.getByTestId("run-task-collect");
+  await expect(page.getByTestId("concert-task-ship")).toContainText(
+    "Finishing",
+  );
+  const collect = page.getByTestId("concert-task-collect");
   await detailButton(collect, "Evidence 2").click();
   await expect(collect).toContainText(
     "Reviewed the API cursor implementation and the UI fixtures.",
@@ -92,31 +100,39 @@ test("fixture scenarios render their documented task and graph states", async ({
   await expect(collect).toContainText("✓ Passed");
   await expect(collect).toContainText("API cursor coverage");
   await detailButton(detail, "Graph").click();
-  const graph = page.getByTestId("run-graph");
+  const graph = page.getByTestId("concert-graph");
   await expect(graph).toBeVisible();
-  await expect(page.getByTestId("run-node-api")).toContainText("Running");
-  await expect(page.getByTestId("run-node-ui")).toHaveAttribute(
+  await expect(page.getByTestId("concert-node-api")).toContainText("Running");
+  await expect(page.getByTestId("concert-node-ui")).toHaveAttribute(
     "aria-label",
     /Waits for api/,
   );
-  await expect(page.getByTestId("run-node-collect")).toContainText("Completed");
-  await expect(page.getByTestId("run-node-ship")).toContainText("Finishing");
-  await expect(page.getByTestId("run-edge-api-ui-dependency-0")).toBeVisible();
+  await expect(page.getByTestId("concert-node-collect")).toContainText(
+    "Completed",
+  );
+  await expect(page.getByTestId("concert-node-ship")).toContainText(
+    "Finishing",
+  );
   await expect(
-    page.getByTestId(/run-edge-.*-conflict-0/).first(),
+    page.getByTestId("concert-edge-api-ui-dependency-0"),
+  ).toBeVisible();
+  await expect(
+    page.getByTestId(/concert-edge-.*-conflict-0/).first(),
   ).toBeVisible();
 
-  // Blocked run with an actionable message.
-  await openRun(page, "blocked");
-  await expect(page.getByTestId("run-task-export")).toContainText("Blocked");
+  // Blocked concert with an actionable message.
+  await openConcert(page, "blocked");
+  await expect(page.getByTestId("concert-task-export")).toContainText(
+    "Blocked",
+  );
   await expect(detail).toContainText(
     "Confirm the pagination compatibility requirement in the source conversation.",
   );
 
   // Failed checks survive default collapsed disclosure and Show more keeps the
   // full five-line summary reachable instead of discarding text.
-  await openRun(page, "failed-checks");
-  await expect(page.getByTestId("run-task-review")).toContainText(
+  await openConcert(page, "failed-checks");
+  await expect(page.getByTestId("concert-task-review")).toContainText(
     "✕ Regression suite: Offset export test still red.",
   );
   await expect(detail).toContainText(
@@ -127,22 +143,24 @@ test("fixture scenarios render their documented task and graph states", async ({
   ).toBeVisible();
   await page.getByRole("button", { name: "Show more", exact: true }).click();
   await expect(detail).toContainText(
-    "The full evidence trail is recorded in the run history.",
+    "The full evidence trail is recorded in the concert history.",
   );
 
   // Waiting: api is completed so collect still waits on the unfinished ui.
-  await openRun(page, "waiting");
-  await expect(page.getByTestId("run-task-api")).toContainText("Completed");
-  await expect(page.getByTestId("run-task-ui")).toContainText("Ready");
-  await expect(page.getByTestId("run-task-collect")).toContainText(
+  await openConcert(page, "waiting");
+  await expect(page.getByTestId("concert-task-api")).toContainText("Completed");
+  await expect(page.getByTestId("concert-task-ui")).toContainText("Ready");
+  await expect(page.getByTestId("concert-task-collect")).toContainText(
     "Waiting · waiting for ui",
   );
 
   // Finishing: a reported completion with an unsettled agent launch. History
   // holds one compact row per attempt plus a per-revision task disclosure, and
   // it never repeats the report summary that lives on the task card.
-  await openRun(page, "finishing");
-  await expect(page.getByTestId("run-task-deliver")).toContainText("Finishing");
+  await openConcert(page, "finishing");
+  await expect(page.getByTestId("concert-task-deliver")).toContainText(
+    "Finishing",
+  );
   await detailButton(detail, "History").click();
   await expect(detail).toContainText("ATTEMPTS");
   await expect(detail).toContainText("REVISIONS");
@@ -168,7 +186,7 @@ test("fixture scenarios render their documented task and graph states", async ({
   await expect(revisionRow).toContainText("Investigate deliver");
 
   // Empty: no tasks recorded, so both surface and history say so.
-  await openRun(page, "empty");
+  await openConcert(page, "empty");
   await expect(detail).toContainText("No tasks were recorded.");
   await detailButton(detail, "History").click();
   await expect(detail).toContainText("REVISIONS");
@@ -179,7 +197,7 @@ test("fixture scenarios render their documented task and graph states", async ({
   );
 
   // Planning: the coordinator notice replaces task work.
-  await openRun(page, "planning");
+  await openConcert(page, "planning");
   await expect(detail).toContainText(
     "The Conductor agent is planning this concert.",
   );
@@ -190,41 +208,41 @@ test("captures Tasks and Graph screenshots at the required viewports and themes"
   page,
 }) => {
   await mkdir(SHOTS, { recursive: true });
-  const detail = page.getByTestId("run-detail");
+  const detail = page.getByTestId("concert-detail");
   const snap = (name: string) =>
     page.screenshot({ path: resolve(SHOTS, name), fullPage: false });
 
-  // 1440x900, light and dark, Tasks and Graph of the multi-task run.
+  // 1440x900, light and dark, Tasks and Graph of the multi-task concert.
   for (const [label, suffix] of [
     ["light", ""],
     ["dark", "&dark"],
   ] as const) {
     await page.setViewportSize({ width: 1440, height: 900 });
-    await openRun(page, "multi", suffix);
+    await openConcert(page, "multi", suffix);
     await snap(`wide-${label}-tasks-multi.png`);
     await detailButton(detail, "Graph").click();
-    await expect(page.getByTestId("run-graph")).toBeVisible();
+    await expect(page.getByTestId("concert-graph")).toBeVisible();
     await snap(`wide-${label}-graph-multi.png`);
   }
 
   // The user's one-task long-title case, wide and narrow.
   await page.setViewportSize({ width: 1440, height: 900 });
-  await openRun(page, "long-title");
+  await openConcert(page, "long-title");
   await snap("wide-light-tasks-long-title.png");
   await detailButton(detail, "Graph").click();
   await snap("wide-light-graph-long-title.png");
 
   // 390x844 (compact), light and dark.
   await page.setViewportSize({ width: 390, height: 844 });
-  await openRun(page, "multi", "&global");
+  await openConcert(page, "multi", "&global");
   await snap("narrow-light-tasks-multi.png");
   await detailButton(detail, "Graph").click();
   await snap("narrow-light-graph-multi.png");
-  await openRun(page, "multi", "&global&dark");
+  await openConcert(page, "multi", "&global&dark");
   await snap("narrow-dark-tasks-multi.png");
   await detailButton(detail, "Graph").click();
   await snap("narrow-dark-graph-multi.png");
-  await openRun(page, "long-title", "&global&dark");
+  await openConcert(page, "long-title", "&global&dark");
   await snap("narrow-dark-tasks-long-title.png");
 
   // Remaining states as a narrow dark contact sheet.
@@ -236,7 +254,7 @@ test("captures Tasks and Graph screenshots at the required viewports and themes"
     "empty",
     "planning",
   ]) {
-    await openRun(page, fixture, "&global&dark");
+    await openConcert(page, fixture, "&global&dark");
     await snap(`narrow-dark-tasks-${fixture}.png`);
   }
 });
@@ -244,15 +262,15 @@ test("captures Tasks and Graph screenshots at the required viewports and themes"
 test("768px viewport keeps every tab reachable and the graph internally scrollable", async ({
   page,
 }) => {
-  const detail = page.getByTestId("run-detail");
+  const detail = page.getByTestId("concert-detail");
   await page.setViewportSize({ width: 768, height: 1024 });
-  await openRun(page, "multi");
+  await openConcert(page, "multi");
   expect(await noPageOverflow(page)).toBe(true);
 
   // Every navigation tab stays reachable and switches the view.
   for (const view of ["Tasks", "Graph", "Context", "History"]) {
     await detailButton(detail, view).click();
-    await expect(page.getByTestId("run-detail")).toContainText(
+    await expect(page.getByTestId("concert-detail")).toContainText(
       view === "Tasks" ? "Investigate api" : "",
     );
   }
@@ -267,16 +285,16 @@ test("768px viewport keeps every tab reachable and the graph internally scrollab
   );
   expect(await noPageOverflow(page)).toBe(true);
   await detailButton(detail, "Tasks").click();
-  expect(await page.getByTestId("run-task-api").textContent()).toContain(
+  expect(await page.getByTestId("concert-task-api").textContent()).toContain(
     "Running",
   );
   await detailButton(detail, "Graph").click();
-  await expect(page.getByTestId("run-graph")).toBeVisible();
+  await expect(page.getByTestId("concert-graph")).toBeVisible();
   expect(await noPageOverflow(page)).toBe(true);
 
   // The graph canvas scrolls internally even though the page never does.
   const canvas = await page
-    .getByTestId("run-node-api")
+    .getByTestId("concert-node-api")
     .evaluate((element: HTMLElement) => {
       let node: HTMLElement | null = element.parentElement;
       while (node && node.scrollWidth <= node.clientWidth) {
@@ -299,7 +317,7 @@ test("768px viewport keeps every tab reachable and the graph internally scrollab
   expect(canvas ? canvas.scrollLeft : 0).toBeGreaterThan(0);
 
   // Keyboard activation still opens a worker from the graph.
-  await page.getByTestId("run-node-api").focus();
+  await page.getByTestId("concert-node-api").focus();
   await page.keyboard.press("Enter");
   await expect(page.getByTestId("preview-status")).toContainText("worker-api");
 
@@ -313,11 +331,11 @@ test("768px viewport keeps every tab reachable and the graph internally scrollab
 test("enlarged zoom keeps content unclipped and tabs reachable", async ({
   page,
 }) => {
-  const detail = page.getByTestId("run-detail");
+  const detail = page.getByTestId("concert-detail");
   await page.setViewportSize({ width: 1440, height: 900 });
   const cdp = await page.context().newCDPSession(page);
   await cdp.send("Emulation.setPageScaleFactor", { pageScaleFactor: 1.5 });
-  await openRun(page, "multi");
+  await openConcert(page, "multi");
   expect(await noPageOverflow(page)).toBe(true);
   // The action area wraps instead of pushing the tab strip off-screen.
   await expect(detailButton(detail, "Tasks")).toBeVisible();
@@ -326,10 +344,10 @@ test("enlarged zoom keeps content unclipped and tabs reachable", async ({
     await detailButton(detail, view).click();
   }
   await detailButton(detail, "Graph").click();
-  await expect(page.getByTestId("run-graph")).toBeVisible();
+  await expect(page.getByTestId("concert-graph")).toBeVisible();
   // Graph still scrolls internally under zoom.
   const canvas = await page
-    .getByTestId("run-node-api")
+    .getByTestId("concert-node-api")
     .evaluate((element: HTMLElement) => {
       let node: HTMLElement | null = element.parentElement;
       while (node && node.scrollWidth <= node.clientWidth) {
@@ -350,13 +368,13 @@ test("enlarged zoom keeps content unclipped and tabs reachable", async ({
   await cdp.send("Emulation.setPageScaleFactor", { pageScaleFactor: 1 });
 });
 
-test("fixture runs serialize under the production run schema", async () => {
-  const { runSchema } = await import("../../shared/concerts/models");
-  const { fixtureRuns } = await import("../run-fixtures");
+test("fixture concerts serialize under the production concert schema", async () => {
+  const { concertSchema } = await import("../../shared/concerts/models");
+  const { fixtureConcerts } = await import("../concert-fixtures");
   expect(longSummary.split("\n").length).toBeGreaterThan(3);
   expect(longTaskTitle.length).toBeLessThanOrEqual(160);
-  for (const [name, build] of Object.entries(fixtureRuns)) {
-    const parsed = runSchema.safeParse(build());
-    expect(parsed.success, `${name} must satisfy runSchema`).toBe(true);
+  for (const [name, build] of Object.entries(fixtureConcerts)) {
+    const parsed = concertSchema.safeParse(build());
+    expect(parsed.success, `${name} must satisfy concertSchema`).toBe(true);
   }
 });

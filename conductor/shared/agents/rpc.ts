@@ -9,7 +9,7 @@ import {
   archiveResultSchema,
 } from "./models";
 
-export const getInbox = defineRpc({
+export const getAgents = defineRpc({
   name: "inbox.get",
   input: z.object({ knownAgentIds: z.array(identifier).max(2000).default([]) }),
   output: snapshotSchema,

@@ -1,4 +1,4 @@
-import type { RunCommandAccess } from "./commands/server";
+import type { ConcertCommandAccess } from "./commands/server";
 
 export type CommandLine = (agentId: string, verb: string) => string;
 const shellQuote = (value: string) => `'${value.replaceAll("'", "'\\''")}'`;
@@ -8,7 +8,7 @@ export function launcherCommand(path: string, verb: string): string {
 }
 
 export function agentCommand(
-  access: RunCommandAccess | undefined,
+  access: ConcertCommandAccess | undefined,
   agentId: string,
   verb: string,
 ): string {
@@ -28,12 +28,12 @@ export function jsonCommand(command: string, input: unknown): string {
 export function reportInstructions(
   command: CommandLine,
   agentId: string,
-  runId: string,
+  concertId: string,
   attemptId: string,
   checks: string[],
 ): string {
   const example = jsonCommand(command(agentId, "report"), {
-    concertId: runId,
+    concertId: concertId,
     attemptId,
     report: {
       outcome: "completed",
@@ -46,5 +46,5 @@ export function reportInstructions(
       })),
     },
   });
-  return `Report your own findings using this exact command structure, replacing the sample report with actual evidence. JSON goes on STANDARD INPUT, not in a positional argument. Use the explicit script/socket paths and your agent ID; environment variables may be absent from shell tool calls.\n\n${example}\n\nRead the acknowledgement: a report succeeds only when the command prints JSON containing this concert and your saved attempt report. Exit code zero with empty output is NOT acknowledgement. Never claim you reported without inspecting that JSON. Use ${command(agentId, "get")} with {"concertId":"${runId}"} on stdin to verify an uncertain result. For an unresolved blocker, use ${command(agentId, "block")} with concertId, attemptId and message on stdin. After successful reporting, stop tool work and end your turn.`;
+  return `Report your own findings using this exact command structure, replacing the sample report with actual evidence. JSON goes on STANDARD INPUT, not in a positional argument. Use the explicit script/socket paths and your agent ID; environment variables may be absent from shell tool calls.\n\n${example}\n\nRead the acknowledgement: a report succeeds only when the command prints JSON containing this concert and your saved attempt report. Exit code zero with empty output is NOT acknowledgement. Never claim you reported without inspecting that JSON. Use ${command(agentId, "get")} with {"concertId":"${concertId}"} on stdin to verify an uncertain result. For an unresolved blocker, use ${command(agentId, "block")} with concertId, attemptId and message on stdin. After successful reporting, stop tool work and end your turn.`;
 }

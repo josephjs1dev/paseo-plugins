@@ -6,7 +6,7 @@ import {
   projectGraph,
 } from "../shared/concerts/graph";
 import { graphSchema, scopeSchema } from "../shared/concerts/models";
-import { graph, task } from "./run-fixtures";
+import { graph, task } from "./concert-fixtures";
 
 void test("admission rejects duplicate identities, missing prerequisites, cycles, and explorer writes", () => {
   assert.deepEqual(graphIssues(graph()), []);

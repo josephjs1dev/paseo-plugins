@@ -1,18 +1,18 @@
 import { useState } from "react";
 import { createRoot } from "react-dom/client";
-import { InboxView } from "../../client/podium/view";
-import { InboxSession } from "../../client/podium/session";
+import { PodiumView } from "../../client/podium/view";
+import { PodiumSession } from "../../client/podium/session";
 import { initial, light, dark } from "./fixtures";
-import type { InboxSnapshot } from "../../shared/agents/models";
+import type { AgentsSnapshot } from "../../shared/agents/models";
 import { requestForm } from "../../shared/agents/questions";
-import type { StoredRun } from "../../shared/concerts/models";
-import { usePreviewRuns } from "./runs";
+import type { StoredConcert } from "../../shared/concerts/models";
+import { usePreviewConcerts } from "./concerts";
 
-const session = new InboxSession();
+const session = new PodiumSession();
 const scroll = { offset: 0 };
 function Preview() {
   const params = new URLSearchParams(window.location.search);
-  const [data, setData] = useState<InboxSnapshot>({
+  const [data, setData] = useState<AgentsSnapshot>({
     ...initial,
     items: params.has("empty")
       ? []
@@ -79,11 +79,11 @@ function Preview() {
   const [opened, setOpened] = useState("");
   const [stale, setStale] = useState(params.has("stale"));
   const [sends, setSends] = useState(0);
-  const runs = usePreviewRuns(
+  const runs = usePreviewConcerts(
     session,
-    params.has("run-failed"),
-    params.has("legacy-run"),
-    params.get("run-fixture") ?? undefined,
+    params.has("concert-failed"),
+    params.has("legacy-concert"),
+    params.get("concert-fixture") ?? undefined,
   );
   return (
     <div style={{ height: "100%", display: "flex", flexDirection: "column" }}>
@@ -94,17 +94,17 @@ function Preview() {
       >
         {opened} · sends:{sends}
       </div>
-      <InboxView
-        {...(params.has("runs")
+      <PodiumView
+        {...(params.has("concerts")
           ? {
-              runs: runs.data,
+              concerts: runs.data,
               ...(params.has("global") ? {} : { workspaceId: "ws-api" }),
             }
           : {})}
         theme={params.has("dark") ? dark : light}
         hostLabel="Development host"
         compact={false}
-        deleteRun={async (run: StoredRun) => {
+        deleteConcert={async (run: StoredConcert) => {
           if (params.has("delete-error")) {
             throw new Error("This concert changed. Refresh before deleting.");
           }
@@ -113,7 +113,7 @@ function Preview() {
           }
           await runs.remove(run);
           // Mirror the surface callback: clear the selection after success.
-          session.update({ runSelection: null });
+          session.update({ concertSelection: null });
         }}
         data={data}
         loading={false}
@@ -186,8 +186,8 @@ function Preview() {
           },
         }}
       />
-      {params.has("runs") && !params.get("run-fixture") && (
-        <div data-testid="run-fixture-controls">
+      {params.has("concerts") && !params.get("concert-fixture") && (
+        <div data-testid="concert-fixture-controls">
           <button onClick={() => runs.progress("claim")}>
             Source claims task
           </button>
@@ -195,7 +195,7 @@ function Preview() {
             Source reports blocker
           </button>
           <button onClick={() => runs.progress("complete")}>
-            Source completes run
+            Source completes concert
           </button>
         </div>
       )}

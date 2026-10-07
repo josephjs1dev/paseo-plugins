@@ -1,18 +1,18 @@
 import { useRef, type ElementRef } from "react";
 import { Pressable, ScrollView, Text, View } from "react-native";
 import type { PluginTheme } from "@getpaseo/plugin";
-import type { InboxItem } from "../../shared/agents/models";
-import { ageLabel, isSnoozed } from "../../shared/agents/inbox";
+import type { AgentItem } from "../../shared/agents/models";
+import { ageLabel, isSnoozed } from "../../shared/agents/attention";
 import { queueGroups } from "../../shared/agents/hierarchy";
 import { Button, Label } from "../ui/controls";
 
 interface Props {
-  items: InboxItem[];
+  items: AgentItem[];
   theme: PluginTheme;
   now: number;
   selectedKey: string | null;
   groupBy: "project" | "workspace";
-  onSelect(this: void, item: InboxItem): void;
+  onSelect(this: void, item: AgentItem): void;
   scroll: { offset: number };
   emptyTitle: string;
   emptyDescription: string;
@@ -40,7 +40,7 @@ export function Queue({
       ref={ref}
       style={{ flex: 1 }}
       contentContainerStyle={{ padding: 14, gap: 18 }}
-      testID="inbox-queue"
+      testID="agents-queue"
       scrollEventThrottle={100}
       onScroll={(event) => {
         scroll.offset = event.nativeEvent.contentOffset.y;

@@ -97,7 +97,7 @@ export const itemSchema = z.object({
   marked: z.boolean(),
   delivery: deliverySchema.nullable(),
 });
-export type InboxItem = z.infer<typeof itemSchema>;
+export type AgentItem = z.infer<typeof itemSchema>;
 export const receiptSchema = z.object({
   key: keySchema,
   agentId: identifier,
@@ -115,7 +115,7 @@ export const snapshotSchema = z.object({
   workspaceIncomplete: z.boolean(),
   turnHistoryIncomplete: z.boolean(),
 });
-export type InboxSnapshot = z.infer<typeof snapshotSchema>;
+export type AgentsSnapshot = z.infer<typeof snapshotSchema>;
 export const answerResultSchema = z.object({
   status: z.enum(["answered", "unknown", "stale", "unsupported"]),
 });

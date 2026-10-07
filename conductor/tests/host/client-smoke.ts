@@ -32,11 +32,11 @@ try {
   await page.getByRole("button", { name: "Conductor", exact: true }).click({
     timeout: 30000,
   });
-  const inbox = page.getByTestId("conductor-inbox");
-  await inbox.getByRole("heading", { name: "Podium", exact: true }).waitFor();
-  await inbox.getByText("No agents in this scope", { exact: true }).waitFor();
+  const podium = page.getByTestId("conductor-podium");
+  await podium.getByRole("heading", { name: "Podium", exact: true }).waitFor();
+  await podium.getByText("No agents in this scope", { exact: true }).waitFor();
   assert.equal(
-    await inbox
+    await podium
       .getByRole("button", { name: "Refresh", exact: true })
       .isEnabled(),
     true,
@@ -45,11 +45,11 @@ try {
   // Paseo switches navigation shells at this breakpoint; reopen from its menu.
   await page.getByRole("button", { name: "Open menu", exact: true }).click();
   await page.getByRole("button", { name: "Conductor", exact: true }).click();
-  await inbox.getByRole("heading", { name: "Podium", exact: true }).waitFor();
-  const bounds = await inbox.boundingBox();
+  await podium.getByRole("heading", { name: "Podium", exact: true }).waitFor();
+  const bounds = await podium.boundingBox();
   assert.ok(bounds && bounds.width <= 390);
   console.log(
-    "Host client passed: sidebar opens the real inbox, RPC renders, desktop and compact views load.",
+    "Host client passed: sidebar opens the real Podium, RPC renders, desktop and compact views load.",
   );
 } finally {
   await browser.close();

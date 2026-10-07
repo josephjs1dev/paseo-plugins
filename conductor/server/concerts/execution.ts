@@ -3,42 +3,42 @@ import {
   agentCommandRequestSchema,
   commandTaskSchema,
   workerChoice,
-  type RunAgentCommand,
+  type ConcertCommand,
 } from "../../shared/concerts/commands";
 import { conflictReason, graphIssues } from "../../shared/concerts/graph";
 import {
   latestAttempt,
-  RUN_LIMITS,
-  type StoredRun,
+  CONCERT_LIMITS,
+  type StoredConcert,
   type TaskDefinition,
 } from "../../shared/concerts/models";
-import { commandRunId, type ExecutionRuntime } from "./identity";
-import { RunError } from "./errors";
-import { contentHash, type RunStore } from "./store";
+import { commandConcertId, type ExecutionRuntime } from "./identity";
+import { ConcertError } from "./errors";
+import { contentHash, type ConcertStore } from "./store";
 import { orchestration } from "./orchestration";
-import type { RunCommandAccess } from "./commands/server";
+import type { ConcertCommandAccess } from "./commands/server";
 import { agentCommand } from "./prompts";
 import type { WorkerRuntime } from "./workers";
 import { executionStatus, requirePassingReport } from "./results";
 
-export function runExecution(
-  store: RunStore,
+export function concertExecution(
+  store: ConcertStore,
   getRuntime: () => ExecutionRuntime,
   getWorkers?: () => WorkerRuntime,
-  getAccess?: () => RunCommandAccess,
+  getAccess?: () => ConcertCommandAccess,
 ) {
   const orchestrator = orchestration(
     store,
     getRuntime,
     () => {
       if (!getWorkers) {
-        throw new RunError("Worker runtime is unavailable.");
+        throw new ConcertError("Worker runtime is unavailable.");
       }
       return getWorkers();
     },
     (agentId, verb) => agentCommand(getAccess?.(), agentId, verb),
   );
-  // Serializes read/version/mutate in this controller; RunStore fences other processes too.
+  // Serializes read/version/mutate in this controller; ConcertStore fences other processes too.
   let queue = Promise.resolve();
   const serialize = <T>(action: () => Promise<T>): Promise<T> => {
     const pending = queue.then(action);
@@ -50,7 +50,7 @@ export function runExecution(
   };
   const start = async (
     agentId: string,
-    command: Extract<RunAgentCommand, { kind: "start" }>,
+    command: Extract<ConcertCommand, { kind: "start" }>,
   ) => {
     const runtime = getRuntime();
     const source = await runtime.capture(await runtime.source(agentId));
@@ -68,7 +68,7 @@ export function runExecution(
           title: task.title,
           outcome: task.description,
           prerequisites: task.dependsOn,
-          inputs: ["Run context"],
+          inputs: ["Concert context"],
           reads: task.reads,
           writes: task.writes,
           resources: task.resources,
@@ -85,7 +85,7 @@ export function runExecution(
     };
     const issues = graphIssues(graph);
     if (issues.length) {
-      throw new RunError(issues.slice(0, 5).join(" "));
+      throw new ConcertError(issues.slice(0, 5).join(" "));
     }
     await runtime.validate(source, graph);
     const context = {
@@ -99,7 +99,7 @@ export function runExecution(
     return store.create(
       {
         schemaVersion: 1,
-        id: commandRunId(agentId, command.key),
+        id: commandConcertId(agentId, command.key),
         version: 0,
         title: command.title,
         source,
@@ -131,11 +131,11 @@ export function runExecution(
     );
   };
 
-  const requireCapacity = async (run: StoredRun, task: TaskDefinition) => {
+  const requireCapacity = async (run: StoredConcert, task: TaskDefinition) => {
     const list = await store.list();
     if (list.incomplete || list.unavailable) {
-      throw new RunError(
-        "Run storage coverage is incomplete; resource ownership cannot be checked.",
+      throw new ConcertError(
+        "Concert storage coverage is incomplete; resource ownership cannot be checked.",
       );
     }
     for (const summary of list.runs) {
@@ -157,7 +157,7 @@ export function runExecution(
           ((task.writes.length > 0 && definition.writes.length > 0) ||
             conflictReason(task, definition))
         ) {
-          throw new RunError(
+          throw new ConcertError(
             `Task resources are still owned by ${other.title} / ${definition.id}. Resume or report that work before claiming this task.`,
           );
         }
@@ -168,7 +168,7 @@ export function runExecution(
   const mutate = async (
     agentId: string,
     command: Exclude<
-      RunAgentCommand,
+      ConcertCommand,
       {
         kind:
           | "start"
@@ -199,12 +199,12 @@ export function runExecution(
         ? !assigned
         : initial.source.agentId !== agentId)
     ) {
-      throw new RunError(
-        "Only the assigned task agent can report; only the original source agent in this workspace can control its run.",
+      throw new ConcertError(
+        "Only the assigned task agent can report; only the original source agent in this workspace can control its concert.",
       );
     }
     if (orchestrated && command.kind === "claim") {
-      throw new RunError(
+      throw new ConcertError(
         "Orchestrated tasks are dispatched to child agents, not claimed by the conductor.",
       );
     }
@@ -215,14 +215,14 @@ export function runExecution(
         const execution = current.execution;
         const graph = current.revisions.at(-1)?.graph;
         if (!execution || !graph) {
-          throw new RunError(
+          throw new ConcertError(
             "This is a legacy plan without an execution record.",
           );
         }
         if (command.kind === "finish") {
           if (execution.finishedAt !== null) {
             if (execution.summary !== command.summary) {
-              throw new RunError(
+              throw new ConcertError(
                 "This concert already has a different final report.",
               );
             }
@@ -236,7 +236,7 @@ export function runExecution(
                   !latestAttempt(current, task.id)?.launch?.settled),
             )
           ) {
-            throw new RunError(
+            throw new ConcertError(
               "Finish requires a completed report for every task and settled task agents.",
             );
           }
@@ -245,18 +245,18 @@ export function runExecution(
           execution.interruption = null;
         } else if (command.kind === "claim") {
           if (execution.finishedAt !== null) {
-            throw new RunError("This concert is already complete.");
+            throw new ConcertError("This concert is already complete.");
           }
           const task = graph.tasks.find((entry) => entry.id === command.taskId);
           if (!task) {
-            throw new RunError("Unknown task.");
+            throw new ConcertError("Unknown task.");
           }
           const previous = latestAttempt(current, task.id);
           if (previous?.state === "completed") {
-            throw new RunError("This task already has a completed report.");
+            throw new ConcertError("This task already has a completed report.");
           }
           if (previous?.state === "failed" && !command.retry) {
-            throw new RunError(
+            throw new ConcertError(
               "The last attempt failed. Explicitly set retry to create a new attempt.",
             );
           }
@@ -265,7 +265,7 @@ export function runExecution(
               (id) => latestAttempt(current, id)?.state !== "completed",
             )
           ) {
-            throw new RunError(
+            throw new ConcertError(
               "Task prerequisites do not have completed reports yet.",
             );
           }
@@ -279,8 +279,10 @@ export function runExecution(
             previous.state = "running";
             previous.message = null;
           } else {
-            if (execution.attempts.length >= RUN_LIMITS.attempts) {
-              throw new RunError("The concert attempt limit has been reached.");
+            if (execution.attempts.length >= CONCERT_LIMITS.attempts) {
+              throw new ConcertError(
+                "The concert attempt limit has been reached.",
+              );
             }
             execution.attempts.push({
               id: randomUUID(),
@@ -302,13 +304,13 @@ export function runExecution(
             !attempt ||
             latestAttempt(current, attempt.taskId)?.id !== attempt.id
           ) {
-            throw new RunError(
+            throw new ConcertError(
               "The attempt is missing or has been superseded.",
             );
           }
           if (command.kind === "block") {
             if (attempt.report) {
-              throw new RunError("A reported attempt cannot be blocked.");
+              throw new ConcertError("A reported attempt cannot be blocked.");
             }
             if (attempt.launch) {
               attempt.launch.state = "started";
@@ -324,7 +326,7 @@ export function runExecution(
             const digest = contentHash(JSON.stringify(command.report));
             if (attempt.reportHash) {
               if (attempt.reportHash !== digest) {
-                throw new RunError(
+                throw new ConcertError(
                   "This attempt already has a different report.",
                 );
               }
@@ -334,7 +336,7 @@ export function runExecution(
               (entry) => entry.id === attempt.taskId,
             );
             if (!task) {
-              throw new RunError("Unknown task.");
+              throw new ConcertError("Unknown task.");
             }
             requirePassingReport(task, command.report);
             if (attempt.launch) {
@@ -434,13 +436,13 @@ export function runExecution(
         }
         if (command.kind === "profiles") {
           if (!getWorkers) {
-            throw new RunError("Worker runtime is unavailable.");
+            throw new ConcertError("Worker runtime is unavailable.");
           }
           return { profiles: await getWorkers().profiles() };
         }
         if (command.kind === "models") {
           if (!getWorkers) {
-            throw new RunError("Worker runtime is unavailable.");
+            throw new ConcertError("Worker runtime is unavailable.");
           }
           return { models: await getWorkers().models(agentId) };
         }
@@ -461,7 +463,9 @@ export function runExecution(
             data.run.execution?.orchestration?.requestedBy !== agentId &&
             !data.run.execution?.attempts.some((a) => a.agentId === agentId)
           ) {
-            throw new RunError("This concert belongs to another source agent.");
+            throw new ConcertError(
+              "This concert belongs to another source agent.",
+            );
           }
           return data;
         }

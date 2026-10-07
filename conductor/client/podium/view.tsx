@@ -1,41 +1,41 @@
 import { useState, useSyncExternalStore } from "react";
 import { Text, View } from "react-native";
 import type { PluginTheme } from "@getpaseo/plugin";
-import type { InboxItem, InboxSnapshot } from "../../shared/agents/models";
-import type { StoredRun } from "../../shared/concerts/models";
-import { visibleItems } from "../../shared/agents/inbox";
-import { InboxSession } from "./session";
+import type { AgentItem, AgentsSnapshot } from "../../shared/agents/models";
+import type { StoredConcert } from "../../shared/concerts/models";
+import { visibleItems } from "../../shared/agents/attention";
+import { PodiumSession } from "./session";
 import { Label, Notice } from "../ui/controls";
-import { InboxToolbar } from "./toolbar";
+import { PodiumToolbar } from "./toolbar";
 import { Queue } from "../agents/queue";
 import { RequestDetail, type DetailActions } from "../agents/request-detail";
-import type { RunInboxData } from "../concerts/list";
-import { RunBrowser } from "../concerts/browser";
+import type { ConcertsData } from "../concerts/list";
+import { ConcertBrowser } from "../concerts/browser";
 
-export interface InboxViewProps {
+export interface PodiumViewProps {
   theme: PluginTheme;
   hostLabel: string;
   compact: boolean;
   workspaceId?: string;
-  data: InboxSnapshot | undefined;
+  data: AgentsSnapshot | undefined;
   loading: boolean;
   refreshing: boolean;
   stale: boolean;
   now: number;
-  session: InboxSession;
+  session: PodiumSession;
   scroll: { offset: number };
   actions: DetailActions;
-  runs?: RunInboxData;
-  deleteRun?: (run: StoredRun) => Promise<void>;
+  concerts?: ConcertsData;
+  deleteConcert?: (run: StoredConcert) => Promise<void>;
   refresh(this: void): void;
 }
-export function InboxView(props: InboxViewProps) {
+export function PodiumView(props: PodiumViewProps) {
   const { theme, data, session, now, actions } = props;
   const state = useSyncExternalStore(session.subscribe, session.getSnapshot);
   const [width, setWidth] = useState(0);
   const compact = props.compact || (width > 0 && width < 740);
   const hasSelection = Boolean(state.selectedKey);
-  const isRuns = state.section === "runs" && Boolean(props.runs);
+  const isConcerts = state.section === "concerts" && Boolean(props.concerts);
   const items = visibleItems(
     data?.items ?? [],
     state.filter,
@@ -73,7 +73,7 @@ export function InboxView(props: InboxViewProps) {
       item.delivery === null &&
       !state.notices[item.key],
   );
-  const select = (item: InboxItem) => {
+  const select = (item: AgentItem) => {
     if (item.form?.kind === "native" && actions.canNavigate) {
       actions.openAgent(item.agentId);
       return;
@@ -116,24 +116,28 @@ export function InboxView(props: InboxViewProps) {
   }
   return (
     <View
-      testID="conductor-inbox"
+      testID="conductor-podium"
       onLayout={(event) => setWidth(event.nativeEvent.layout.width)}
       style={{ flex: 1, minHeight: 0, backgroundColor: theme.colors.surface0 }}
     >
-      <InboxToolbar
+      <PodiumToolbar
         {...props}
         compact={compact}
         hasNext={Boolean(next)}
         selectNext={selectNext}
       />
-      {props.runs && (
+      {props.concerts && (
         <View
-          style={{ flex: 1, minHeight: 0, display: isRuns ? "flex" : "none" }}
+          style={{
+            flex: 1,
+            minHeight: 0,
+            display: isConcerts ? "flex" : "none",
+          }}
         >
-          <RunBrowser
+          <ConcertBrowser
             theme={theme}
             now={now}
-            data={props.runs}
+            data={props.concerts}
             state={state}
             session={session}
             compact={compact}
@@ -141,12 +145,14 @@ export function InboxView(props: InboxViewProps) {
             {...(actions.canNavigate
               ? { openAgent: (id: string) => actions.openAgent(id) }
               : {})}
-            {...(props.deleteRun ? { deleteRun: props.deleteRun } : {})}
+            {...(props.deleteConcert
+              ? { deleteConcert: props.deleteConcert }
+              : {})}
           />
         </View>
       )}
       <View
-        style={{ flex: 1, minHeight: 0, display: isRuns ? "none" : "flex" }}
+        style={{ flex: 1, minHeight: 0, display: isConcerts ? "none" : "flex" }}
       >
         {props.loading && !data ? (
           <View style={{ padding: 24 }}>

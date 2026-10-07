@@ -3,7 +3,7 @@ import test from "node:test";
 import { conflictReason } from "../shared/concerts/graph";
 import { graphGeometry, layoutGraph } from "../shared/concerts/layout";
 import type { TaskDefinition } from "../shared/concerts/models";
-import { graph, task } from "./run-fixtures";
+import { graph, task } from "./concert-fixtures";
 
 /** Sixteen-word title that must truncate inside the graph node. */
 function longTask(): TaskDefinition {
@@ -34,7 +34,7 @@ void test("geometry matches the documented node budget in both modes", () => {
   assert.equal(compactGeometry.gapX, 36);
 });
 
-void test("a single-node run stays small; content height leaves no empty stage", () => {
+void test("a single-node concert stays small; content height leaves no empty stage", () => {
   const single = layoutGraph({ tasks: [task("only")] }, false);
   assert.deepEqual(
     { w: single.width, h: single.height },

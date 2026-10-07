@@ -9,7 +9,7 @@ import {
   reportInstructions,
 } from "../server/concerts/prompts";
 import { testDirectory } from "./fixtures";
-import { runId } from "./run-fixtures";
+import { fixtureConcertId } from "./concert-fixtures";
 
 void test("assigned command works without Conductor environment variables and safely quotes paths", async () => {
   const directory = join(await testDirectory(), "command's location");
@@ -20,7 +20,7 @@ void test("assigned command works without Conductor environment variables and sa
   try {
     const command = jsonCommand(
       agentCommand(server.access, "worker-1", "get"),
-      { concertId: runId },
+      { concertId: fixtureConcertId },
     );
     const result = await new Promise<{
       code: number | null;
@@ -41,14 +41,14 @@ void test("assigned command works without Conductor environment variables and sa
     assert.deepEqual(JSON.parse(result.stdout) as unknown, {
       acknowledged: {
         agentId: "worker-1",
-        command: { kind: "get", concertId: runId },
+        command: { kind: "get", concertId: fixtureConcertId },
       },
     });
     const prompt = reportInstructions(
       (agent, verb) => agentCommand(server.access, agent, verb),
       "worker-1",
-      runId,
-      runId,
+      fixtureConcertId,
+      fixtureConcertId,
       ["Verify result"],
     );
     assert.ok(prompt.includes("<<'CONDUCTOR_JSON'"));

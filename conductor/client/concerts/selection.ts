@@ -1,1 +1,1 @@
-export type RunSelection = { kind: "run"; id: string };
+export type ConcertSelection = { kind: "concert"; id: string };

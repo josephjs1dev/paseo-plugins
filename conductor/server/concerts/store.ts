@@ -3,59 +3,59 @@ import { lstat, mkdir, opendir, rmdir, unlink } from "node:fs/promises";
 import { join } from "node:path";
 import {
   contextSchema,
-  RUN_LIMITS,
-  runIdSchema,
-  runSchema,
-  summarizeRun,
-  type RunContext,
-  type StoredRun,
-  type RunSummary,
+  CONCERT_LIMITS,
+  uuidSchema,
+  concertSchema,
+  summarizeConcert,
+  type ConcertContext,
+  type StoredConcert,
+  type ConcertSummary,
 } from "../../shared/concerts/models";
 import { graphIssues } from "../../shared/concerts/graph";
 import { validateExecution } from "./results";
 import { exists, missing } from "../files";
 import {
-  ensureRunDirectory,
-  readRunFile,
-  syncRunDirectory,
-  writeRunFile,
+  ensureConcertDirectory,
+  readConcertFile,
+  syncConcertDirectory,
+  writeConcertFile,
 } from "./files";
-import { RunError } from "./errors";
+import { ConcertError } from "./errors";
 
-export interface RunStore {
+export interface ConcertStore {
   list(): Promise<{
-    runs: RunSummary[];
+    runs: ConcertSummary[];
     unavailable: number;
     incomplete: boolean;
   }>;
-  read(id: string): Promise<{ run: StoredRun; context: RunContext }>;
-  create(run: StoredRun, context: RunContext): Promise<StoredRun>;
+  read(id: string): Promise<{ run: StoredConcert; context: ConcertContext }>;
+  create(run: StoredConcert, context: ConcertContext): Promise<StoredConcert>;
   removeLegacy(
     id: string,
     version: number,
     source: { agentId: string; workspaceId: string },
   ): Promise<void>;
-  /** Delete one finished execution run. Refuses active, blocked, unsettled, or stale records. */
+  /** Delete one finished concert. Refuses active, blocked, unsettled, or stale records. */
   remove(id: string, version: number): Promise<void>;
   update(
     id: string,
     version: number,
-    change: (run: StoredRun) => StoredRun | Promise<StoredRun>,
-  ): Promise<StoredRun>;
+    change: (run: StoredConcert) => StoredConcert | Promise<StoredConcert>,
+  ): Promise<StoredConcert>;
 }
 
 export function contentHash(content: string): string {
   return createHash("sha256").update(content).digest("hex");
 }
 
-function validateEnvelope(value: unknown): StoredRun {
-  const run = runSchema.parse(value);
+function validateEnvelope(value: unknown): StoredConcert {
+  const run = concertSchema.parse(value);
   if (
     (!run.execution &&
       (run.status === "accepted") !== run.revisions.length > 0) ||
     (run.status === "draft" && run.draft === null)
   ) {
-    throw new RunError("Run state is inconsistent.");
+    throw new ConcertError("Concert state is inconsistent.");
   }
   validateExecution(run);
   for (const [index, revision] of run.revisions.entries()) {
@@ -65,21 +65,21 @@ function validateEnvelope(value: unknown): StoredRun {
       !revision.graph.tasks.length ||
       graphIssues(revision.graph).length
     ) {
-      throw new RunError("Stored graph history is invalid.");
+      throw new ConcertError("Stored graph history is invalid.");
     }
   }
   return run;
 }
 
-export function fileRunStore(directory: string): RunStore {
+export function fileConcertStore(directory: string): ConcertStore {
   const runs = join(directory, "runs");
   const artifacts = join(directory, "artifacts");
   const lock = join(directory, "run-write-lock");
-  const path = (id: string) => join(runs, `${runIdSchema.parse(id)}.json`);
+  const path = (id: string) => join(runs, `${uuidSchema.parse(id)}.json`);
   const initialize = async () => {
-    await ensureRunDirectory(directory);
-    await ensureRunDirectory(runs);
-    await ensureRunDirectory(artifacts);
+    await ensureConcertDirectory(directory);
+    await ensureConcertDirectory(runs);
+    await ensureConcertDirectory(artifacts);
   };
   // Serialization within an installation; mkdir additionally fences other installations/processes.
   // Never steal an orphan lock based on time/PID: an uncertain writer must stay fenced.
@@ -91,18 +91,18 @@ export function fileRunStore(directory: string): RunStore {
         await mkdir(lock, { mode: 0o700 });
       } catch (error) {
         if (exists(error)) {
-          throw new RunError(
-            "Run storage is locked by another writer or interrupted save. Retry; if it persists, follow storage recovery in the Conductor README.",
+          throw new ConcertError(
+            "Concert storage is locked by another writer or interrupted save. Retry; if it persists, follow storage recovery in the Conductor README.",
           );
         }
         throw error;
       }
       try {
-        await syncRunDirectory(directory);
+        await syncConcertDirectory(directory);
         return await action();
       } finally {
         await rmdir(lock);
-        await syncRunDirectory(directory);
+        await syncConcertDirectory(directory);
       }
     });
     queue = pending.then(
@@ -115,18 +115,18 @@ export function fileRunStore(directory: string): RunStore {
     await initialize();
     const run = validateEnvelope(
       JSON.parse(
-        await readRunFile(path(id), RUN_LIMITS.snapshotBytes),
+        await readConcertFile(path(id), CONCERT_LIMITS.snapshotBytes),
       ) as unknown,
     );
     if (run.id !== id) {
-      throw new RunError("Run identity is inconsistent.");
+      throw new ConcertError("Concert identity is inconsistent.");
     }
-    const raw = await readRunFile(
+    const raw = await readConcertFile(
       join(artifacts, `${run.contextHash}.json`),
-      RUN_LIMITS.contextBytes,
+      CONCERT_LIMITS.contextBytes,
     );
     if (contentHash(raw) !== run.contextHash) {
-      throw new RunError("Stored plan integrity check failed.");
+      throw new ConcertError("Stored plan integrity check failed.");
     }
     return { run, context: contextSchema.parse(JSON.parse(raw) as unknown) };
   };
@@ -137,19 +137,19 @@ export function fileRunStore(directory: string): RunStore {
     const entries = await opendir(runs);
     let inspected = 0;
     for await (const entry of entries) {
-      if (++inspected > RUN_LIMITS.runs * 2) {
+      if (++inspected > CONCERT_LIMITS.concerts * 2) {
         incomplete = true;
         break;
       }
       if (!entry.name.endsWith(".json")) {
         continue;
       }
-      const id = runIdSchema.safeParse(entry.name.slice(0, -5));
+      const id = uuidSchema.safeParse(entry.name.slice(0, -5));
       if (!entry.isFile() || !id.success) {
         invalid++;
         continue;
       }
-      if (ids.length === RUN_LIMITS.runs) {
+      if (ids.length === CONCERT_LIMITS.concerts) {
         incomplete = true;
         break;
       }
@@ -157,15 +157,15 @@ export function fileRunStore(directory: string): RunStore {
     }
     return { ids, invalid, incomplete };
   };
-  const save = async (run: StoredRun) => {
+  const save = async (run: StoredConcert) => {
     const valid = validateEnvelope(run);
     const content = JSON.stringify(valid);
-    if (Buffer.byteLength(content) > RUN_LIMITS.snapshotBytes) {
-      throw new RunError(
-        "Run history is full. Delete finished runs before preparing further work.",
+    if (Buffer.byteLength(content) > CONCERT_LIMITS.snapshotBytes) {
+      throw new ConcertError(
+        "Concert history is full. Delete finished concerts before preparing further work.",
       );
     }
-    await writeRunFile(path(valid.id), content);
+    await writeConcertFile(path(valid.id), content);
     return valid;
   };
   return {
@@ -177,44 +177,44 @@ export function fileRunStore(directory: string): RunStore {
           run.source.agentId !== source.agentId ||
           run.source.workspaceId !== source.workspaceId
         ) {
-          throw new RunError(
+          throw new ConcertError(
             "Only the original source agent in this workspace can remove its legacy plan.",
           );
         }
         if (run.execution || !["draft", "accepted"].includes(run.status)) {
-          throw new RunError(
-            "Execution runs cannot be removed by legacy cleanup.",
+          throw new ConcertError(
+            "Executed concerts cannot be removed by legacy cleanup.",
           );
         }
         if (run.version !== version) {
-          throw new RunError(
+          throw new ConcertError(
             "This legacy plan changed elsewhere. Read it again before removing it.",
           );
         }
         // Keep immutable context: another record may reference the same artifact.
         await unlink(path(id));
-        await syncRunDirectory(runs);
+        await syncConcertDirectory(runs);
       }),
     remove: (id, version) =>
       exclusive(async () => {
-        let run: StoredRun;
+        let run: StoredConcert;
         try {
           run = (await read(id)).run;
         } catch (error) {
           if (missing(error)) {
-            throw new RunError(
+            throw new ConcertError(
               "This concert no longer exists. Refresh the concert list.",
             );
           }
           throw error;
         }
         if (!run.execution) {
-          throw new RunError(
+          throw new ConcertError(
             "Only finished execution concerts can be deleted.",
           );
         }
         if (run.status !== "completed" && run.status !== "failed") {
-          throw new RunError("Only finished concerts can be deleted.");
+          throw new ConcertError("Only finished concerts can be deleted.");
         }
         if (
           run.execution.attempts.some(
@@ -224,7 +224,7 @@ export function fileRunStore(directory: string): RunStore {
               (attempt.launch !== undefined && !attempt.launch.settled),
           )
         ) {
-          throw new RunError(
+          throw new ConcertError(
             "This concert still has work in progress. Wait for every attempt to settle.",
           );
         }
@@ -232,14 +232,16 @@ export function fileRunStore(directory: string): RunStore {
           run.execution.orchestration?.phase === "planning" &&
           run.execution.orchestration.coordinatorLaunch === "pending"
         ) {
-          throw new RunError("This concert is still planning.");
+          throw new ConcertError("This concert is still planning.");
         }
         if (run.version !== version) {
-          throw new RunError("This concert changed. Refresh before deleting.");
+          throw new ConcertError(
+            "This concert changed. Refresh before deleting.",
+          );
         }
         await unlink(path(id));
-        await syncRunDirectory(runs);
-        // Remove the content-addressed artifact only when no remaining run can
+        await syncConcertDirectory(runs);
+        // Remove the content-addressed artifact only when no remaining concert can
         // reference it. An unreadable or partially scanned record keeps it.
         const found = await scan();
         let provablyUnreferenced = !found.incomplete && found.invalid === 0;
@@ -264,17 +266,17 @@ export function fileRunStore(directory: string): RunStore {
               throw error;
             }
           }
-          await syncRunDirectory(artifacts);
+          await syncConcertDirectory(artifacts);
         }
       }),
     async list() {
       await initialize();
       const found = await scan();
-      const summaries: RunSummary[] = [];
+      const summaries: ConcertSummary[] = [];
       let unavailable = found.invalid;
       for (const id of found.ids) {
         try {
-          summaries.push(summarizeRun((await read(id)).run));
+          summaries.push(summarizeConcert((await read(id)).run));
         } catch {
           unavailable++;
         }
@@ -291,10 +293,10 @@ export function fileRunStore(directory: string): RunStore {
       exclusive(async () => {
         const raw = JSON.stringify(contextSchema.parse(context));
         if (
-          Buffer.byteLength(raw) > RUN_LIMITS.contextBytes ||
+          Buffer.byteLength(raw) > CONCERT_LIMITS.contextBytes ||
           contentHash(raw) !== run.contextHash
         ) {
-          throw new RunError(
+          throw new ConcertError(
             "Selected plan exceeds the context limit or has an invalid digest.",
           );
         }
@@ -312,24 +314,27 @@ export function fileRunStore(directory: string): RunStore {
           if (prior.requestHash === run.requestHash) {
             return prior;
           }
-          throw new RunError(
-            "This run ID belongs to another plan. Refresh the run list before creating another plan.",
+          throw new ConcertError(
+            "This concert ID belongs to another plan. Refresh the concert list before creating another plan.",
           );
         }
         const found = await scan();
         if (
           found.incomplete ||
-          found.ids.length + found.invalid >= RUN_LIMITS.runs
+          found.ids.length + found.invalid >= CONCERT_LIMITS.concerts
         ) {
-          throw new RunError(
-            "Run storage is full. Delete finished runs before adding more.",
+          throw new ConcertError(
+            "Concert storage is full. Delete finished concerts before adding more.",
           );
         }
         // Context is immutable and durable before an envelope can reference it.
         const artifact = join(artifacts, `${run.contextHash}.json`);
         try {
-          if ((await readRunFile(artifact, RUN_LIMITS.contextBytes)) !== raw) {
-            throw new RunError("Stored context is damaged.");
+          if (
+            (await readConcertFile(artifact, CONCERT_LIMITS.contextBytes)) !==
+            raw
+          ) {
+            throw new ConcertError("Stored context is damaged.");
           }
         } catch (error) {
           if (!missing(error)) {
@@ -340,17 +345,17 @@ export function fileRunStore(directory: string): RunStore {
           let count = 0;
           for await (const entry of entries) {
             if (!entry.isFile()) {
-              throw new RunError(
+              throw new ConcertError(
                 "Context storage contains an unsupported entry.",
               );
             }
-            if (++count >= RUN_LIMITS.runs) {
-              throw new RunError(
-                "Context storage is full. Delete finished runs and follow storage recovery before adding more.",
+            if (++count >= CONCERT_LIMITS.concerts) {
+              throw new ConcertError(
+                "Context storage is full. Delete finished concerts and follow storage recovery before adding more.",
               );
             }
           }
-          await writeRunFile(artifact, raw);
+          await writeConcertFile(artifact, raw);
         }
         return save(run);
       }),
@@ -358,8 +363,8 @@ export function fileRunStore(directory: string): RunStore {
       exclusive(async () => {
         const { run } = await read(id);
         if (run.version !== version) {
-          throw new RunError(
-            "This run changed elsewhere. Refresh it and review your draft before saving again.",
+          throw new ConcertError(
+            "This concert changed elsewhere. Refresh it and review your draft before saving again.",
           );
         }
         const next = await change(structuredClone(run));
@@ -374,7 +379,7 @@ export function fileRunStore(directory: string): RunStore {
           JSON.stringify(next.revisions.slice(0, run.revisions.length)) !==
             JSON.stringify(run.revisions)
         ) {
-          throw new RunError(
+          throw new ConcertError(
             "Accepted history and captured context cannot be rewritten.",
           );
         }

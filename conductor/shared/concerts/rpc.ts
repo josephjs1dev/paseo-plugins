@@ -2,38 +2,38 @@ import { defineRpc } from "@getpaseo/plugin";
 import { z } from "zod";
 import {
   contextSchema,
-  runIdSchema,
-  runSchema,
-  runSummarySchema,
-  RUN_LIMITS,
+  uuidSchema,
+  concertSchema,
+  concertSummarySchema,
+  CONCERT_LIMITS,
 } from "./models";
 import { identifier } from "../schema";
 
-export const listRuns = defineRpc({
+export const listConcerts = defineRpc({
   name: "runs.list",
   input: z.object({ workspaceId: identifier.optional() }),
   output: z.object({
-    runs: z.array(runSummarySchema).max(RUN_LIMITS.runs),
+    runs: z.array(concertSummarySchema).max(CONCERT_LIMITS.concerts),
     unavailable: z.number().int().nonnegative(),
     incomplete: z.boolean(),
   }),
 });
-export const readRun = defineRpc({
+export const readConcert = defineRpc({
   name: "runs.read",
-  input: z.object({ id: runIdSchema }),
-  output: z.object({ run: runSchema, context: contextSchema }),
+  input: z.object({ id: uuidSchema }),
+  output: z.object({ run: concertSchema, context: contextSchema }),
 });
-export const deleteRun = defineRpc({
+export const deleteConcert = defineRpc({
   name: "runs.delete",
   input: z
     .object({
-      id: runIdSchema,
+      id: uuidSchema,
       version: z.number().int().nonnegative(),
     })
     .strict(),
   output: z.object({ deleted: z.literal(true) }),
 });
-export const getRunAccess = defineRpc({
+export const getConcertAccess = defineRpc({
   name: "runs.access",
   input: z.object({}),
   output: z.object({

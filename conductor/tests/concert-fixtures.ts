@@ -1,21 +1,21 @@
 import type {
-  RunAttempt,
-  RunContext,
-  RunGraph,
-  RunPlacement,
-  StoredRun,
+  ConcertAttempt,
+  ConcertContext,
+  ConcertGraph,
+  ConcertPlacement,
+  StoredConcert,
   TaskDefinition,
 } from "../shared/concerts/models";
 
-export const runId = "f1151538-5302-4fbf-b50b-f6a55f2a5940";
-export const planContext: RunContext = {
+export const fixtureConcertId = "f1151538-5302-4fbf-b50b-f6a55f2a5940";
+export const planContext: ConcertContext = {
   plan: "Investigate API and UI pagination, then collect the findings.",
   provenance: "Selected source-agent plan",
   decisions: ["Keep cursor pagination"],
   constraints: ["Read only"],
   expectedOutcome: "Reports with evidence and remaining uncertainties",
 };
-export const placement: RunPlacement = {
+export const placement: ConcertPlacement = {
   workspaceId: "ws-api",
   agentId: "agent-1",
   workspaceName: "Conductor workspace",
@@ -44,7 +44,7 @@ export function task(
     ...patch,
   };
 }
-export function graph(): RunGraph {
+export function graph(): ConcertGraph {
   return {
     tasks: [
       task("api"),
@@ -53,10 +53,10 @@ export function graph(): RunGraph {
     ],
   };
 }
-export function storedRun(): StoredRun {
+export function storedConcert(): StoredConcert {
   return {
     schemaVersion: 1,
-    id: runId,
+    id: fixtureConcertId,
     version: 0,
     title: "Pagination investigation",
     source: placement,
@@ -72,7 +72,7 @@ export function storedRun(): StoredRun {
 }
 
 // === Integration scenario fixtures (additive; base fixtures above are unchanged) ===
-// Each returns a schema-valid, post-acceptance StoredRun exercising one visible
+// Each returns a schema-valid, post-acceptance StoredConcert exercising one visible
 // state for the preview and browser verification. IDs are fixed so screenshots
 // and assertions stay reproducible.
 
@@ -81,10 +81,10 @@ export const longTaskTitle =
 
 export function fixtureAttempt(
   taskId: string,
-  state: RunAttempt["state"],
+  state: ConcertAttempt["state"],
   id: string,
-  patch: Partial<RunAttempt> = {},
-): RunAttempt {
+  patch: Partial<ConcertAttempt> = {},
+): ConcertAttempt {
   const started = 1791201600000;
   return {
     id,
@@ -103,35 +103,35 @@ export function fixtureAttempt(
 export function fixtureLaunch(
   settled: boolean,
   state: "started" | "uncertain" = "started",
-): NonNullable<RunAttempt["launch"]> {
+): NonNullable<ConcertAttempt["launch"]> {
   return { state, prompt: "Carry out the task and report evidence", settled };
 }
 
-/** A long multi-line run summary that must trigger the Show more control. */
+/** A long multi-line concert summary that must trigger the Show more control. */
 export const longSummary = [
   "Reviewed the export endpoint and the UI fixtures.",
   "Cursor pagination passes; offset pagination stays flagged.",
   "The regression suite still fails on the offset export test.",
   "Recommend finishing the migration before the next release window.",
-  "The full evidence trail is recorded in the run history.",
+  "The full evidence trail is recorded in the concert history.",
 ].join("\n");
 
-function fixtureRun(
+function fixtureConcert(
   tasks: TaskDefinition[],
   options: {
     id: string;
     title?: string;
-    status?: StoredRun["status"];
-    origin?: NonNullable<StoredRun["execution"]>["origin"];
-    attempts?: RunAttempt[];
+    status?: StoredConcert["status"];
+    origin?: NonNullable<StoredConcert["execution"]>["origin"];
+    attempts?: ConcertAttempt[];
     summary?: string | null;
     finishedAt?: number | null;
     orchestration?: NonNullable<
-      NonNullable<StoredRun["execution"]>["orchestration"]
+      NonNullable<StoredConcert["execution"]>["orchestration"]
     >;
   },
-): StoredRun {
-  const base = storedRun();
+): StoredConcert {
+  const base = storedConcert();
   return {
     ...base,
     id: options.id,
@@ -162,8 +162,8 @@ function fixtureRun(
 }
 
 /** The user's one-task long-title case: a single task with a wrapping title. */
-export function longTitleRun(): StoredRun {
-  return fixtureRun([task("migration", { title: longTaskTitle })], {
+export function longTitleConcert(): StoredConcert {
+  return fixtureConcert([task("migration", { title: longTaskTitle })], {
     id: "f1151538-5302-4fbf-b50b-f6a55f2a5a41",
     title: "Cursor pagination migration",
     status: "running",
@@ -182,8 +182,8 @@ export function longTitleRun(): StoredRun {
  * A multi-task graph: running, waiting, blocked, completed (with one failed
  * check), finishing, ready and a same-layer resource conflict pair.
  */
-export function multiTaskRun(): StoredRun {
-  return fixtureRun(
+export function multiTaskConcert(): StoredConcert {
+  return fixtureConcert(
     [
       task("api"),
       task("probe"),
@@ -279,9 +279,9 @@ export function multiTaskRun(): StoredRun {
   );
 }
 
-/** Run with one explicitly blocked task and an actionable message. */
-export function blockedRun(): StoredRun {
-  return fixtureRun([task("export")], {
+/** Concert with one explicitly blocked task and an actionable message. */
+export function blockedConcert(): StoredConcert {
+  return fixtureConcert([task("export")], {
     id: "f1151538-5302-4fbf-b50b-f6a55f2a5a43",
     title: "Export blocker",
     status: "blocked",
@@ -300,8 +300,8 @@ export function blockedRun(): StoredRun {
 }
 
 /** Completed run whose report carries a failed check and a long summary. */
-export function failedChecksRun(): StoredRun {
-  return fixtureRun([task("review")], {
+export function failedChecksConcert(): StoredConcert {
+  return fixtureConcert([task("review")], {
     id: "f1151538-5302-4fbf-b50b-f6a55f2a5a44",
     title: "Check failures",
     status: "completed",
@@ -346,9 +346,9 @@ export function failedChecksRun(): StoredRun {
   });
 }
 
-/** Run where downstream tasks wait on an incomplete prerequisite. */
-export function waitingRun(): StoredRun {
-  return fixtureRun(
+/** Concert where downstream tasks wait on an incomplete prerequisite. */
+export function waitingConcert(): StoredConcert {
+  return fixtureConcert(
     [
       task("api"),
       task("ui", { prerequisites: ["api"] }),
@@ -379,9 +379,9 @@ export function waitingRun(): StoredRun {
   );
 }
 
-/** Run whose only task reported completion while its agent still settles. */
-export function finishingRun(): StoredRun {
-  return fixtureRun([task("deliver")], {
+/** Concert whose only task reported completion while its agent still settles. */
+export function finishingConcert(): StoredConcert {
+  return fixtureConcert([task("deliver")], {
     id: "f1151538-5302-4fbf-b50b-f6a55f2a5a46",
     title: "Delivery hand-off",
     status: "running",
@@ -411,18 +411,18 @@ export function finishingRun(): StoredRun {
   });
 }
 
-/** Run whose accepted graph recorded no tasks. */
-export function emptyRun(): StoredRun {
-  return fixtureRun([], {
+/** Concert whose accepted graph recorded no tasks. */
+export function emptyConcert(): StoredConcert {
+  return fixtureConcert([], {
     id: "f1151538-5302-4fbf-b50b-f6a55f2a5a47",
     title: "Empty exploration",
     status: "running",
   });
 }
 
-/** Run still in the planning phase with no tasks recorded yet. */
-export function planningRun(): StoredRun {
-  return fixtureRun([], {
+/** Concert still in the planning phase with no tasks recorded yet. */
+export function planningConcert(): StoredConcert {
+  return fixtureConcert([], {
     id: "f1151538-5302-4fbf-b50b-f6a55f2a5a48",
     title: "Planned migration",
     status: "planning",
@@ -437,13 +437,13 @@ export function planningRun(): StoredRun {
   });
 }
 
-export const fixtureRuns: Record<string, () => StoredRun> = {
-  "long-title": longTitleRun,
-  multi: multiTaskRun,
-  blocked: blockedRun,
-  "failed-checks": failedChecksRun,
-  waiting: waitingRun,
-  finishing: finishingRun,
-  empty: emptyRun,
-  planning: planningRun,
+export const fixtureConcerts: Record<string, () => StoredConcert> = {
+  "long-title": longTitleConcert,
+  multi: multiTaskConcert,
+  blocked: blockedConcert,
+  "failed-checks": failedChecksConcert,
+  waiting: waitingConcert,
+  finishing: finishingConcert,
+  empty: emptyConcert,
+  planning: planningConcert,
 };

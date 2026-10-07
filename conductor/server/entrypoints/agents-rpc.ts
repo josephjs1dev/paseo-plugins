@@ -3,25 +3,25 @@ import {
   annotate,
   answerRequest,
   archiveAgent,
-  getInbox,
+  getAgents,
 } from "../../shared/agents/rpc";
 import { answer } from "../agents/answer";
 import { archiveInactive } from "../agents/archive";
 import { agentKey } from "../agents/identity";
 import { snapshot } from "../agents/snapshot";
-import type { InboxStore } from "../agents/store";
+import type { AgentsStore } from "../agents/store";
 import type { TurnJournal } from "../agents/turns";
 import { paseoAgentsHost } from "../paseo/agents-host";
 
 export function registerAgentsRpc(
   server: Pick<PluginServerContext, "handle">,
-  store: InboxStore,
+  store: AgentsStore,
   turns: TurnJournal,
 ): void {
   server.handle(archiveAgent, (input, { paseo }) =>
     archiveInactive(paseoAgentsHost(paseo), input),
   );
-  server.handle(getInbox, async (input, { paseo }) => {
+  server.handle(getAgents, async (input, { paseo }) => {
     try {
       return await snapshot(
         paseoAgentsHost(paseo),
@@ -65,7 +65,7 @@ export function registerAgentsRpc(
       }
       return {};
     } catch {
-      throw new Error("Conductor could not save this inbox preference.");
+      throw new Error("Conductor could not save this Podium preference.");
     }
   });
 }

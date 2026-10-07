@@ -6,10 +6,10 @@ import { request } from "node:http";
 import { stat } from "node:fs/promises";
 import { z } from "zod";
 import { commandServer } from "../server/concerts/commands/server";
-import { runExecution } from "../server/concerts/execution";
-import { fileRunStore } from "../server/concerts/store";
-import { RunError } from "../server/concerts/errors";
-import { placement } from "./run-fixtures";
+import { concertExecution } from "../server/concerts/execution";
+import { fileConcertStore } from "../server/concerts/store";
+import { ConcertError } from "../server/concerts/errors";
+import { placement } from "./concert-fixtures";
 import { testDirectory } from "./fixtures";
 
 function cli(file: string, socket: string, command: string, input: unknown) {
@@ -41,7 +41,7 @@ const responseSchema = z.object({
 
 void test("standalone command supports a real start/claim/report/finish over an owner-only socket", async () => {
   const directory = await testDirectory();
-  const store = fileRunStore(directory);
+  const store = fileConcertStore(directory);
   const runtime = {
     source: async (agentId: string) => ({ agentId, workspaceId: "ws-api" }),
     capture: async (source: {
@@ -50,7 +50,7 @@ void test("standalone command supports a real start/claim/report/finish over an 
     }) => ({ ...placement, ...source }),
     validate: async () => {},
   };
-  const engine = runExecution(store, () => runtime);
+  const engine = concertExecution(store, () => runtime);
   const server = await commandServer(directory, engine.execute);
   const { socketPath, commandPath } = server.access;
   assert.ok(socketPath && commandPath);
@@ -62,10 +62,11 @@ void test("standalone command supports a real start/claim/report/finish over an 
       goal: "Verify the real command",
     });
     assert.equal(started.code, 0, started.error);
-    const runId = responseSchema.parse(JSON.parse(started.output) as unknown)
-      .run.id;
+    const concertId = responseSchema.parse(
+      JSON.parse(started.output) as unknown,
+    ).run.id;
     const claimed = await cli(commandPath, socketPath, "claim", {
-      concertId: runId,
+      concertId: concertId,
       taskId: "work",
     });
     assert.equal(claimed.code, 0, claimed.error);
@@ -77,7 +78,7 @@ void test("standalone command supports a real start/claim/report/finish over an 
     const resumed = await commandServer(directory, engine.execute);
     try {
       const result = await cli(commandPath, socketPath, "report", {
-        concertId: runId,
+        concertId: concertId,
         attemptId,
         report: {
           outcome: "completed",
@@ -90,13 +91,13 @@ void test("standalone command supports a real start/claim/report/finish over an 
       assert.equal(
         (
           await cli(commandPath, socketPath, "finish", {
-            concertId: runId,
+            concertId: concertId,
             summary: "All command operations passed",
           })
         ).code,
         0,
       );
-      assert.equal((await store.read(runId)).run.status, "completed");
+      assert.equal((await store.read(concertId)).run.status, "completed");
       assert.equal((await cli(commandPath, socketPath, "help", {})).code, 0);
     } finally {
       await resumed.close();
@@ -124,8 +125,8 @@ void test("a second command server cannot steal ownership and cleanup releases t
 
 void test("CLI reports missing runtime context and refuses malformed command fields", async () => {
   const directory = await testDirectory();
-  const engine = runExecution(fileRunStore(directory), () => {
-    throw new RunError("Runtime context unavailable");
+  const engine = concertExecution(fileConcertStore(directory), () => {
+    throw new ConcertError("Runtime context unavailable");
   });
   const server = await commandServer(directory, engine.execute);
   const { commandPath, socketPath } = server.access;

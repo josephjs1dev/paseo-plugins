@@ -1,6 +1,6 @@
 import type { PluginServerContext } from "@getpaseo/plugin/server";
 import type { PaseoApi } from "../paseo/types";
-import type { RunCommandAccess } from "../concerts/commands/server";
+import type { ConcertCommandAccess } from "../concerts/commands/server";
 import {
   bindAgentCommand,
   newAgentCommand,
@@ -8,12 +8,12 @@ import {
 import { launcherCommand } from "../concerts/prompts";
 
 const guidance = (command: string) => `[Conductor agent commands]
-When the user asks to orchestrate work, use ${launcherCommand(command, "orchestrate")} with a stable key, title and goal as JSON on stdin. You become the concert's Conductor agent: the acknowledgement includes instructions to split the work and dispatch separate task agents from this conversation. Add "coordinator":"agent" (optionally with coordinatorProfile) only when the user wants a dedicated Conductor agent instead. Follow the conductor-orchestrate skill when it is installed. Do not substitute a source-only tracking run for orchestration. Do not ask the user to fill plan/task forms. Small edits need no concert unless requested.
-Run ${launcherCommand(command, "help")} for JSON commands. This explicit helper already supplies your agent identity and daemon socket; it works without CONDUCTOR environment variables in shell tools. Inspect the returned JSON acknowledgement; empty output is not success. An assigned task agent must report/block its existing concert and attempt; never start another concert or orchestrator for that assignment. Only its Conductor agent defines/dispatches/finishes the concert. Report actual evidence and required checks, then stop tool work and end the turn. Never infer completion from idle. Existing start/claim commands track the current agent only and do not delegate. Preserve the user's permissions and authorized scope.`;
+When the user asks to orchestrate work, use ${launcherCommand(command, "orchestrate")} with a stable key, title and goal as JSON on stdin. You become the concert's Conductor agent: the acknowledgement includes instructions to split the work and dispatch separate task agents from this conversation. Add "coordinator":"agent" (optionally with coordinatorProfile) only when the user wants a dedicated Conductor agent instead. Follow the conductor-orchestrate skill when it is installed. Do not substitute a source-only tracking concert for orchestration. Do not ask the user to fill plan/task forms. Small edits need no concert unless requested.
+Run ${launcherCommand(command, "help")} for JSON commands. This explicit helper already supplies your agent identity and daemon socket; it works without CONDUCTOR environment variables in shell tools. Inspect the returned JSON acknowledgement; empty output is not success. An assigned task agent must report/block its existing concert and attempt; never start another concert or Conductor agent for that assignment. Only its Conductor agent defines/dispatches/finishes the concert. Report actual evidence and required checks, then stop tool work and end the turn. Never infer completion from idle. Existing start/claim commands track the current agent only and do not delegate. Preserve the user's permissions and authorized scope.`;
 
 export function commandHooks(
   server: Pick<PluginServerContext, "before" | "on">,
-  access: RunCommandAccess,
+  access: ConcertCommandAccess,
   remember: (paseo: PaseoApi) => void,
   interrupt: (agentId: string, message: string) => Promise<void>,
   ready: Promise<void> = Promise.resolve(),

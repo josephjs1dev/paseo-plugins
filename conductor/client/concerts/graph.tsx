@@ -3,7 +3,7 @@ import { Pressable, ScrollView, Text, View } from "react-native";
 import type { PluginTheme } from "@getpaseo/plugin";
 import {
   latestAttempt,
-  type StoredRun,
+  type StoredConcert,
   type TaskDefinition,
 } from "../../shared/concerts/models";
 import {
@@ -118,7 +118,7 @@ function Edge({ edge, theme }: { edge: GraphEdgeLayout; theme: PluginTheme }) {
         return next ? (
           <Segment
             key={index}
-            testID={`run-edge-${edge.from}-${edge.to}-${edge.kind}-${index}`}
+            testID={`concert-edge-${edge.from}-${edge.to}-${edge.kind}-${index}`}
             p1={point}
             p2={next}
             color={color}
@@ -165,7 +165,7 @@ function GraphNode({
 }: {
   theme: PluginTheme;
   task: TaskDefinition;
-  run: StoredRun;
+  run: StoredConcert;
   node: { x: number; y: number; width: number; height: number };
   padding: number;
   selected: boolean;
@@ -197,7 +197,7 @@ function GraphNode({
   };
   return (
     <Pressable
-      testID={`run-node-${task.id}`}
+      testID={`concert-node-${task.id}`}
       accessibilityRole="button"
       accessibilityLabel={label}
       accessibilityState={{ selected }}
@@ -317,7 +317,7 @@ function Legend({ theme }: { theme: PluginTheme }) {
   );
 }
 
-export function RunGraphView({
+export function ConcertGraphView({
   theme,
   run,
   graph,
@@ -325,7 +325,7 @@ export function RunGraphView({
   compact = false,
 }: {
   theme: PluginTheme;
-  run: StoredRun;
+  run: StoredConcert;
   graph: { tasks: TaskDefinition[] };
   openAgent?: (id: string) => void;
   compact?: boolean;
@@ -351,7 +351,7 @@ export function RunGraphView({
         })
     : [];
   return (
-    <View style={{ gap: 10 }} testID="run-graph">
+    <View style={{ gap: 10 }} testID="concert-graph">
       <ScrollView
         horizontal
         contentContainerStyle={{ padding: 2 }}
@@ -400,7 +400,7 @@ export function RunGraphView({
       <Legend theme={theme} />
       {selectedTask && (
         <Text
-          testID="run-graph-selection"
+          testID="concert-graph-selection"
           selectable
           style={{
             color: theme.colors.foregroundMuted,
@@ -416,8 +416,8 @@ export function RunGraphView({
           {selectedConflicts.map((conflict) => (
             <Text key={conflict.other.id}>
               {"\n"}
-              Conflict with {conflict.other.id}: {conflict.reason} — their runs
-              are serialized without adding a prerequisite.
+              Conflict with {conflict.other.id}: {conflict.reason} — their work
+              is serialized without adding a prerequisite.
             </Text>
           ))}
         </Text>

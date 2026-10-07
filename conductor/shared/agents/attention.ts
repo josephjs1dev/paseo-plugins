@@ -1,6 +1,6 @@
-import type { InboxItem } from "./models";
+import type { AgentItem } from "./models";
 export type Filter = "attention" | "running" | "inactive" | "all";
-export function category(item: InboxItem): Exclude<Filter, "all"> {
+export function category(item: AgentItem): Exclude<Filter, "all"> {
   if (
     item.bucket === "failed" ||
     item.marked ||
@@ -14,20 +14,20 @@ export function category(item: InboxItem): Exclude<Filter, "all"> {
   }
   return "inactive";
 }
-export function isSnoozed(item: InboxItem, now: number): boolean {
+export function isSnoozed(item: AgentItem, now: number): boolean {
   return (item.snoozedUntil ?? 0) > now;
 }
-export function needsAttention(item: InboxItem): boolean {
+export function needsAttention(item: AgentItem): boolean {
   return category(item) === "attention";
 }
 export function visibleItems(
-  items: readonly InboxItem[],
+  items: readonly AgentItem[],
   filter: Filter,
   query: string,
   workspaceId: string | undefined,
   now: number,
   showSnoozed = false,
-): InboxItem[] {
+): AgentItem[] {
   const search = query.trim().toLocaleLowerCase();
   return items
     .filter((item) => {
@@ -53,7 +53,7 @@ export function visibleItems(
       );
     })
     .sort((left, right) => {
-      const rank = (item: InboxItem) => (needsAttention(item) ? 0 : 1);
+      const rank = (item: AgentItem) => (needsAttention(item) ? 0 : 1);
       return (
         rank(left) - rank(right) ||
         timestamp(left.since) - timestamp(right.since) ||

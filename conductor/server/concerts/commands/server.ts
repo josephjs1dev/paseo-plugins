@@ -6,11 +6,11 @@ import {
 import { chmod } from "node:fs/promises";
 import { join } from "node:path";
 import { z } from "zod";
-import { RUN_COMMAND_SOURCE } from "./source";
-import { RunError } from "../errors";
-import { ensureRunDirectory, writeRunFile } from "../files";
+import { CONCERT_COMMAND_SOURCE } from "./source";
+import { ConcertError } from "../errors";
+import { ensureConcertDirectory, writeConcertFile } from "../files";
 
-export interface RunCommandAccess {
+export interface ConcertCommandAccess {
   available: boolean;
   commandPath: string | null;
   socketPath: string | null;
@@ -29,7 +29,7 @@ export async function commandServer(
       commandPath: null,
       socketPath: null,
       message,
-    } satisfies RunCommandAccess,
+    } satisfies ConcertCommandAccess,
     close: () => Promise.resolve(),
   });
   if (process.platform === "win32" || Buffer.byteLength(socketPath) > 100) {
@@ -37,7 +37,7 @@ export async function commandServer(
       "Agent commands need a local Unix socket path shorter than 100 bytes on this host.",
     );
   }
-  await ensureRunDirectory(directory);
+  await ensureConcertDirectory(directory);
   await chmod(directory, 0o700);
   const respond = (
     response: ServerResponse,
@@ -76,7 +76,7 @@ export async function commandServer(
     if (inFlight >= 16) {
       respond(response, 429, {
         error:
-          "Conductor has too many pending commands. Inspect the run before retrying.",
+          "Conductor has too many pending commands. Inspect the concert before retrying.",
       });
       return;
     }
@@ -108,15 +108,15 @@ export async function commandServer(
       try {
         input = JSON.parse(Buffer.concat(chunks).toString("utf8")) as unknown;
       } catch {
-        throw new RunError("Command input must be valid JSON.");
+        throw new ConcertError("Command input must be valid JSON.");
       }
       if (!response.writableEnded) {
         respond(response, 200, await execute(input));
       }
     } catch (error) {
       let message =
-        "The command could not be checked or saved. Inspect the run before retrying.";
-      if (error instanceof RunError) {
+        "The command could not be checked or saved. Inspect the concert before retrying.";
+      if (error instanceof ConcertError) {
         message = error.message;
       }
       if (error instanceof z.ZodError) {
@@ -156,7 +156,7 @@ export async function commandServer(
     });
   try {
     await chmod(socketPath, 0o600);
-    await writeRunFile(commandPath, RUN_COMMAND_SOURCE);
+    await writeConcertFile(commandPath, CONCERT_COMMAND_SOURCE);
   } catch (error) {
     await close();
     throw error;
@@ -167,7 +167,7 @@ export async function commandServer(
       commandPath,
       socketPath,
       message: null,
-    } satisfies RunCommandAccess,
+    } satisfies ConcertCommandAccess,
     close,
   };
 }

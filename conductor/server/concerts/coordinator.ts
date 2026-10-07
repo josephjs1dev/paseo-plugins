@@ -1,43 +1,46 @@
 import { jsonCommand, type CommandLine } from "./prompts";
 import {
   workerChoice,
-  type RunAgentCommand,
+  type ConcertCommand,
 } from "../../shared/concerts/commands";
 import { graphIssues } from "../../shared/concerts/graph";
 import type {
-  RunSource,
-  StoredRun,
+  ConcertSource,
+  StoredConcert,
   TaskDefinition,
 } from "../../shared/concerts/models";
-import { commandRunId, type ExecutionRuntime } from "./identity";
-import { contentHash, type RunStore } from "./store";
-import { RunError } from "./errors";
+import { commandConcertId, type ExecutionRuntime } from "./identity";
+import { contentHash, type ConcertStore } from "./store";
+import { ConcertError } from "./errors";
 import type { WorkerRuntime } from "./workers";
 
-type Start = Extract<RunAgentCommand, { kind: "orchestrate" }>;
-type Define = Extract<RunAgentCommand, { kind: "define" }>;
-export function runCoordinator(
-  store: RunStore,
+type Start = Extract<ConcertCommand, { kind: "orchestrate" }>;
+type Define = Extract<ConcertCommand, { kind: "define" }>;
+export function concertCoordinator(
+  store: ConcertStore,
   runtime: () => ExecutionRuntime,
   workers: () => WorkerRuntime,
-  change: (id: string, update: (run: StoredRun) => void) => Promise<StoredRun>,
+  change: (
+    id: string,
+    update: (run: StoredConcert) => void,
+  ) => Promise<StoredConcert>,
   commandLine: CommandLine,
 ) {
-  const owner = async (agentId: string, runId: string) => {
+  const owner = async (agentId: string, concertId: string) => {
     const source = await runtime().source(agentId);
-    const { run } = await store.read(runId);
+    const { run } = await store.read(concertId);
     if (
       run.source.agentId !== agentId ||
       source.workspaceId !== run.source.workspaceId ||
       !run.execution?.orchestration
     ) {
-      throw new RunError(
+      throw new ConcertError(
         "Only this concert's Conductor agent can define or dispatch its tasks.",
       );
     }
     return run;
   };
-  const launchCoordinator = async (run: StoredRun) => {
+  const launchCoordinator = async (run: StoredConcert) => {
     const meta = run.execution?.orchestration;
     if (!meta || !run.source.agentId || meta.coordinatorLaunch === "started") {
       return run;
@@ -73,16 +76,16 @@ export function runCoordinator(
         if (current.execution?.orchestration) {
           current.execution.orchestration.coordinatorLaunch = "uncertain";
           current.execution.interruption =
-            error instanceof RunError
+            error instanceof ConcertError
               ? error.message
               : "Conductor agent creation could not be confirmed. Retry the same orchestration command; its agent identity is preserved.";
         }
       });
     }
   };
-  const startFrom = async (requestSource: RunSource, command: Start) => {
+  const startFrom = async (requestSource: ConcertSource, command: Start) => {
     const agentId = requestSource.agentId;
-    // A requesting agent coordinates its own run unless it asks for a dedicated
+    // A requesting agent coordinates its own concert unless it asks for a dedicated
     // Conductor agent; a profile can only apply to a newly created agent.
     const self =
       command.coordinator === "self" ||
@@ -90,18 +93,18 @@ export function runCoordinator(
         agentId !== null &&
         !command.coordinatorProfile);
     if (self && !agentId) {
-      throw new RunError("Self-coordination requires a requesting agent.");
+      throw new ConcertError("Self-coordination requires a requesting agent.");
     }
     if (self && command.coordinatorProfile) {
-      throw new RunError(
+      throw new ConcertError(
         'coordinatorProfile requires coordinator "agent"; the requesting agent keeps its own settings.',
       );
     }
     const source = await runtime().capture(requestSource);
     const identity = agentId ?? `workspace:${requestSource.workspaceId}`;
-    const id = commandRunId(identity, `orchestrate:${command.key}`);
+    const id = commandConcertId(identity, `orchestrate:${command.key}`);
     const conductorId =
-      self && agentId ? agentId : commandRunId(id, "conductor");
+      self && agentId ? agentId : commandConcertId(id, "conductor");
     const profiles = await workers().profiles();
     const context = {
       plan: command.goal,
@@ -160,7 +163,7 @@ export function runCoordinator(
     );
     const meta = run.execution?.orchestration;
     if (meta?.coordinator === "self") {
-      // A replayed key returns the stored instructions, never a second run.
+      // A replayed key returns the stored instructions, never a second concert.
       return { run, instructions: meta.prompt };
     }
     return { run: await launchCoordinator(run) };
@@ -174,7 +177,7 @@ export function runCoordinator(
           title: task.title,
           outcome: task.description,
           prerequisites: task.dependsOn,
-          inputs: ["Run goal and prerequisite reports"],
+          inputs: ["Concert goal and prerequisite reports"],
           reads: task.reads,
           writes: task.writes,
           resources: task.resources,
@@ -196,13 +199,15 @@ export function runCoordinator(
     };
     const issues = graphIssues(graph);
     if (issues.length) {
-      throw new RunError(issues.slice(0, 5).join(" "));
+      throw new ConcertError(issues.slice(0, 5).join(" "));
     }
     if (run.execution?.orchestration?.phase !== "planning") {
       if (JSON.stringify(run.revisions[0]?.graph) === JSON.stringify(graph)) {
         return { run };
       }
-      throw new RunError("This concert already has a different task graph.");
+      throw new ConcertError(
+        "This concert already has a different task graph.",
+      );
     }
     await runtime().validate(run.source, graph);
     return {

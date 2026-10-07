@@ -3,35 +3,35 @@ import { ScrollView, Text, View } from "react-native";
 import type { PluginTheme } from "@getpaseo/plugin";
 import {
   latestAttempt,
-  runStatusLabel,
-  type RunContext,
-  type StoredRun,
+  concertStatusLabel,
+  type ConcertContext,
+  type StoredConcert,
 } from "../../shared/concerts/models";
 import { Button, Label, Notice } from "../ui/controls";
-import { RunDeleteAction } from "./delete-action";
-import { RunInspection } from "./inspection";
+import { ConcertDeleteAction } from "./delete-action";
+import { ConcertInspection } from "./inspection";
 import {
-  RunTaskCard,
+  ConcertTaskCard,
   type TaskDisclosures,
   type TaskDisclosure,
 } from "./task-card";
 
-export function RunDetail({
+export function ConcertDetail({
   theme,
   run,
   context,
   stale,
   compact = false,
   openAgent,
-  deleteRun,
+  deleteConcert,
 }: {
   theme: PluginTheme;
-  run: StoredRun;
-  context: RunContext;
+  run: StoredConcert;
+  context: ConcertContext;
   stale: boolean;
   compact?: boolean;
   openAgent?: (id: string) => void;
-  deleteRun?: (run: StoredRun) => Promise<void>;
+  deleteConcert?: (run: StoredConcert) => Promise<void>;
 }) {
   const [view, setView] = useState<"tasks" | "graph" | "context" | "history">(
     "tasks",
@@ -81,9 +81,11 @@ export function RunDetail({
   return (
     <ScrollView
       contentContainerStyle={{ padding: compact ? 16 : 24, gap: 16 }}
-      testID="run-detail"
+      testID="concert-detail"
     >
-      <Label theme={theme}>{runStatusLabel(run.status).toUpperCase()}</Label>
+      <Label theme={theme}>
+        {concertStatusLabel(run.status).toUpperCase()}
+      </Label>
       <Text
         accessibilityRole="header"
         style={{
@@ -155,7 +157,7 @@ export function RunDetail({
             />
           ))}
         </ScrollView>
-        {(openAgent && run.source.agentId) || deleteRun ? (
+        {(openAgent && run.source.agentId) || deleteConcert ? (
           <View
             style={{
               flexShrink: 1,
@@ -179,13 +181,17 @@ export function RunDetail({
                 }}
               />
             )}
-            {deleteRun && (
-              <RunDeleteAction theme={theme} run={run} deleteRun={deleteRun} />
+            {deleteConcert && (
+              <ConcertDeleteAction
+                theme={theme}
+                run={run}
+                deleteConcert={deleteConcert}
+              />
             )}
           </View>
         ) : null}
       </View>
-      <RunInspection
+      <ConcertInspection
         view={view}
         theme={theme}
         run={run}
@@ -200,7 +206,7 @@ export function RunDetail({
             <Notice theme={theme}>No tasks were recorded.</Notice>
           )}
           {graph.tasks.map((task) => (
-            <RunTaskCard
+            <ConcertTaskCard
               key={task.id}
               theme={theme}
               run={run}

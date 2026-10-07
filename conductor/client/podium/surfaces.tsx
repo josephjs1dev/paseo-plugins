@@ -7,22 +7,22 @@ import {
   type PluginSidebarItemProps,
 } from "@getpaseo/plugin/client";
 // Namespace import permits loading on 0.10, whose UI module has no SidebarRow.
-// InboxSidebar is registered only when the 0.11 sidebar API is present.
+// PodiumSidebar is registered only when the 0.11 sidebar API is present.
 import * as PluginUi from "@getpaseo/plugin/client/ui";
 import { useQueryClient } from "@tanstack/react-query";
 import { annotate, answerRequest, archiveAgent } from "../../shared/agents/rpc";
-import { isSnoozed, needsAttention } from "../../shared/agents/inbox";
-import type { StoredRun } from "../../shared/concerts/models";
-import { InboxView } from "./view";
-import { InboxSession } from "./session";
-import { inboxKey, useInbox } from "../agents/query";
-import { useRuns } from "../concerts/query";
+import { isSnoozed, needsAttention } from "../../shared/agents/attention";
+import type { StoredConcert } from "../../shared/concerts/models";
+import { PodiumView } from "./view";
+import { PodiumSession } from "./session";
+import { agentsQueryKey, useAgents } from "../agents/query";
+import { useConcerts } from "../concerts/query";
 
 export class Sessions {
   private readonly entries = new Map<
     string,
     {
-      session: InboxSession;
+      session: PodiumSession;
       scroll: { offset: number };
       workspaceId: string | undefined;
     }
@@ -32,7 +32,7 @@ export class Sessions {
     let entry = this.entries.get(key);
     if (!entry) {
       entry = {
-        session: new InboxSession(),
+        session: new PodiumSession(),
         scroll: { offset: 0 },
         workspaceId,
       };
@@ -55,14 +55,14 @@ export function useClock() {
   }, []);
   return now;
 }
-export function InboxSurface(
+export function PodiumSurface(
   props: PluginSurfaceProps & {
     sessions: Sessions;
     workspaceId?: string;
     params?: PluginScreenProps["params"];
   },
 ) {
-  const query = useInbox(props.host.id);
+  const query = useAgents(props.host.id);
   const cache = useQueryClient();
   const send = useRpc(answerRequest);
   const change = useRpc(annotate);
@@ -72,37 +72,41 @@ export function InboxSurface(
     props.host.id,
     props.workspaceId,
   );
-  const initialRun = props.params?.runId;
+  const initialConcert = props.params?.runId;
   const initialSection = props.params?.section;
   useEffect(() => {
-    if (initialSection === "runs" && typeof initialRun !== "string") {
-      session.update({ section: "runs", runSelection: null });
+    if (initialSection === "runs" && typeof initialConcert !== "string") {
+      session.update({ section: "concerts", concertSelection: null });
     }
-    if (typeof initialRun === "string") {
+    if (typeof initialConcert === "string") {
       session.update({
-        section: "runs",
-        runSelection: { kind: "run", id: initialRun },
+        section: "concerts",
+        concertSelection: { kind: "concert", id: initialConcert },
       });
     }
-  }, [initialRun, initialSection, session]);
+  }, [initialConcert, initialSection, session]);
   const state = useSyncExternalStore(session.subscribe, session.getSnapshot);
-  const runs = useRuns(props.host.id, props.workspaceId, state.runSelection);
+  const runs = useConcerts(
+    props.host.id,
+    props.workspaceId,
+    state.concertSelection,
+  );
   const refresh = async () => {
-    await cache.invalidateQueries({ queryKey: inboxKey(props.host.id) });
+    await cache.invalidateQueries({ queryKey: agentsQueryKey(props.host.id) });
   };
   return (
-    <InboxView
+    <PodiumView
       theme={props.theme}
       hostLabel={props.host.label}
       compact={props.layout.compact}
       {...(props.workspaceId ? { workspaceId: props.workspaceId } : {})}
       data={query.data}
-      deleteRun={async (run: StoredRun) => {
+      deleteConcert={async (run: StoredConcert) => {
         await runs.remove(run.id, run.version);
         // Only reached on success: drop the selection so the detail closes.
-        session.update({ runSelection: null });
+        session.update({ concertSelection: null });
       }}
-      runs={{
+      concerts={{
         access: runs.access.data,
         list: runs.summaries.data,
         loading: runs.summaries.isPending,
@@ -112,7 +116,7 @@ export function InboxSurface(
       }}
       loading={query.isPending}
       refreshing={
-        state.section === "runs"
+        state.section === "concerts"
           ? runs.summaries.isFetching || runs.detail.isFetching
           : query.isFetching
       }
@@ -121,7 +125,7 @@ export function InboxSurface(
       session={session}
       scroll={scroll}
       refresh={() => {
-        const work = state.section === "runs" ? runs.refresh() : refresh();
+        const work = state.section === "concerts" ? runs.refresh() : refresh();
         work.catch(() => undefined);
       }}
       actions={{
@@ -176,8 +180,8 @@ export function InboxSurface(
     />
   );
 }
-export function InboxSidebar(props: PluginSidebarItemProps) {
-  const query = useInbox(props.host.id);
+export function PodiumSidebar(props: PluginSidebarItemProps) {
+  const query = useAgents(props.host.id);
   const now = useClock();
   const count =
     query.data?.items.filter(

@@ -17,7 +17,7 @@ export function RefreshButton({
     <Pressable
       accessibilityRole="button"
       accessibilityLabel="Refresh"
-      accessibilityHint="Refresh the current inbox tab"
+      accessibilityHint="Refresh the current Podium section"
       accessibilityState={{ disabled: refreshing, busy: refreshing }}
       aria-busy={refreshing}
       disabled={refreshing}

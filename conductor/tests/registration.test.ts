@@ -1,8 +1,8 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
-  openInbox,
-  registerInboxNavigation,
+  openPodium,
+  registerPodiumNavigation,
 } from "../client/podium/registration";
 
 function fixture() {
@@ -18,18 +18,18 @@ function fixture() {
     addSidebarItem: ({ surface }: { surface: string }) =>
       register("sidebar", surface),
     addCommandCenterItem: ({ id }: { id: string }) => register("command", id),
-  } satisfies Parameters<typeof registerInboxNavigation>[0];
+  } satisfies Parameters<typeof registerPodiumNavigation>[0];
   const modern = {
     ...legacy,
     addScreen: ({ id }: { id: string }) => register("screen", id),
     addSidebarHeaderItem: ({ id }: { id: string }) => register("header", id),
-  } satisfies Parameters<typeof registerInboxNavigation>[0];
+  } satisfies Parameters<typeof registerPodiumNavigation>[0];
   return { calls, legacy, modern };
 }
 
 await test("0.10 registers a host-wide surface and native sidebar entry, with cleanup", async () => {
   const { calls, legacy } = fixture();
-  const removers = registerInboxNavigation(
+  const removers = registerPodiumNavigation(
     legacy,
     () => null,
     () => null,
@@ -51,7 +51,7 @@ await test("0.10 registers a host-wide surface and native sidebar entry, with cl
 
 await test("0.11 registers only the modern screen and live sidebar contribution", () => {
   const { calls, modern } = fixture();
-  registerInboxNavigation(
+  registerPodiumNavigation(
     modern,
     () => null,
     () => null,
@@ -65,7 +65,7 @@ await test("0.11 registers only the modern screen and live sidebar contribution"
 
 await test("an incomplete modern capability set keeps the working legacy entry points", () => {
   const { calls, legacy, modern } = fixture();
-  registerInboxNavigation(
+  registerPodiumNavigation(
     { ...legacy, addScreen: modern.addScreen },
     () => null,
     () => null,
@@ -76,8 +76,8 @@ await test("an incomplete modern capability set keeps the working legacy entry p
 await test("Command Center opens the selected host through its available navigation API", () => {
   const calls: string[] = [];
   const legacy = { openSurface: (id: string) => calls.push(`surface:${id}`) };
-  openInbox(legacy);
-  openInbox({
+  openPodium(legacy);
+  openPodium({
     ...legacy,
     openScreen: ({ screenId }) => {
       calls.push(`screen:${screenId}`);

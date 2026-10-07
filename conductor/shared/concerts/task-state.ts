@@ -1,9 +1,9 @@
-import type { RunAttempt, StoredRun, TaskDefinition } from "./models";
+import type { ConcertAttempt, StoredConcert, TaskDefinition } from "./models";
 import { latestAttempt } from "./models";
 
 /**
  * Display states for a single task. These are render-only projections; they
- * never change scheduling or run storage.
+ * never change scheduling or concert storage.
  */
 export type TaskStateKey =
   | "ready"
@@ -35,12 +35,12 @@ const LABELS: Record<TaskStateKey, string> = {
  * True when the task's agent is still settling: a launch exists on the attempt
  * and has not been marked settled, so the work is not inertly done.
  */
-function unsettled(attempt: RunAttempt | undefined): boolean {
+function unsettled(attempt: ConcertAttempt | undefined): boolean {
   return Boolean(attempt?.launch && !attempt.launch.settled);
 }
 
 /**
- * Derive the display state of one task from a stored run. Latest-attempt
+ * Derive the display state of one task from a stored concert. Latest-attempt
  * outcome wins for running/blocked/failed; a completed attempt whose agent
  * launch is still settling reads as "finishing"; legacy completed attempts
  * without launch metadata read as "completed". With no attempt, the task
@@ -48,7 +48,7 @@ function unsettled(attempt: RunAttempt | undefined): boolean {
  * unsettled launch, otherwise it is ready. Idle is never treated as completion.
  */
 export function taskState(
-  run: StoredRun,
+  run: StoredConcert,
   task: TaskDefinition,
 ): TaskDisplayState {
   const attempt = latestAttempt(run, task.id);

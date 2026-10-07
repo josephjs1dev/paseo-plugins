@@ -1,6 +1,6 @@
-import { graphSchema, type RunGraph, type TaskDefinition } from "./models";
+import { graphSchema, type ConcertGraph, type TaskDefinition } from "./models";
 
-export function graphIssues(graph: RunGraph): string[] {
+export function graphIssues(graph: ConcertGraph): string[] {
   const parsed = graphSchema.safeParse(graph);
   if (!parsed.success) {
     return parsed.error.issues.map(
@@ -76,7 +76,7 @@ export function conflictReason(
 }
 
 /** A planning projection only: prerequisites and resource conflicts are distinct. */
-export function projectGraph(graph: RunGraph) {
+export function projectGraph(graph: ConcertGraph) {
   return graph.tasks.map((task) => ({
     task,
     waitsFor: [...task.prerequisites],

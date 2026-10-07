@@ -39,14 +39,14 @@ Legacy manual plans and creation/edit/accept endpoints are removed from the podi
 
 Up to four read-only workers can run concurrently (three by default). Workers share
 the current checkout; writers are serialized, including against existing recorded
-runs. Scope declarations guide coordination and prompts; they are not filesystem
+concerts. Scope declarations guide coordination and prompts; they are not filesystem
 sandboxes. Profiles preserve configured settings without silently granting broader
-permissions. Small edits need no run unless requested.
+permissions. Small edits need no concert unless requested.
 
 A report alone does not release an orchestrated worker's resources. Dependencies
 wait for an explicit completed report with all required checks passed **and** an
 observed end to the worker's turn. Idle/stopped without a report becomes a blocker.
-The Conductor agent reviews all results and finishes the run with a summary.
+The Conductor agent reviews all results and finishes the concert with a summary.
 
 ### Orchestration command flow
 
@@ -88,7 +88,7 @@ mode is never selected inline: a worker on the same provider copies the Conducto
 mode, and another provider starts in its default mode. Assignments carry the goal,
 prerequisite reports, declared scopes/checks, and exact concert/attempt identity.
 Workers call `report` or `block` for their existing assignment, then stop. They do
-not create another run or claim the coordinator's task. The scheduler observes
+not create another concert or claim the coordinator's task. The scheduler observes
 settlement, starts dependents, and notifies the Conductor agent of blockers or the
 completed graph. Notifications wait until the coordinator can receive them.
 
@@ -107,7 +107,7 @@ New agents receive an explicit command in their system guidance. Its helper is
 bound to the agent and daemon before the first interactive turn, so shell tools
 can use it even when they do not inherit session environment variables. No manual
 agent registration is needed. Paseo's SDK handles agent creation and lifecycle;
-this helper sends Conductor-specific run and report operations.
+this helper sends Conductor-specific concert and report operations.
 
 Assignments include explicit script/socket paths, the assigned agent ID, and an
 executable heredoc that sends JSON on standard input. Workers must inspect the
@@ -135,7 +135,7 @@ JSON
 ```
 
 The older `start`/`claim` workflow tracks only the calling agent; it is not
-orchestration. Start returns the run. Omitting tasks creates one assignment named `work` with
+orchestration. Start returns the concert. Omitting tasks creates one assignment named `work` with
 conservative checkout-wide read/write scope. A key is stable per source agent:
 repeat identical input after lost acknowledgement; changed input under that key
 is rejected. Distinct work needs a distinct key.
@@ -148,7 +148,7 @@ JSON
 
 Save the returned `attempt.id`, then work through normal agent tools. Claims are
 recorded before work starts. Repeating a claim returns its unfinished attempt.
-Conflicts across recorded runs in the same checkout block new claims; blocked or
+Conflicts across recorded concerts in the same checkout block new claims; blocked or
 interrupted work retains ownership. Scopes coordinate these assignments, not
 external processes or file sandbox permissions.
 
@@ -180,18 +180,18 @@ from `get`. It removes only the original source agent's non-executed legacy plan
 in the same workspace. A stale version or any execution record refuses removal.
 Immutable context artifacts are retained because other records may reference them.
 The source's command `list` still includes old plans for this maintenance purpose;
-normal inbox queries exclude them. After an uncertain removal response, use `list`
+normal Concerts queries exclude them. After an uncertain removal response, use `list`
 to confirm the record is absent before retrying.
 
 The transport trusts the daemon OS account through a private directory and
 mode-0600 Unix socket; it does not isolate agents sharing that account. Declared
 source identity and workspace are checked against Paseo on mutation; a source may
-update only its own recorded runs. No HTTP port is exposed. Request/response limits
+update only its own recorded concerts. No HTTP port is exposed. Request/response limits
 are 256 KiB / 2.2 MB, with 16 pending commands, a 12-second response deadline, and
 15-second CLI timeout. Uncertain acknowledgement is not proof of failure: inspect
-the run and reuse its identities.
+the concert and reuse its identities.
 
-A callback or Inbox RPC supplies the subprocess-lifetime SDK connection. A cold
+A callback or an `inbox.*` RPC supplies the subprocess-lifetime SDK connection. A cold
 command before either fails explicitly; agent lifecycle hooks normally supply it
 before work. Unix socket paths must be at most 100 bytes. Monitoring remains
 available when command transport is unsupported or unavailable.
@@ -317,12 +317,18 @@ For focused checks, use `npm run typecheck`, `npm test`, or `npm run test:ui`.
 `npm run preview` serves fixtures at `http://127.0.0.1:5178`;
 `npm run build:preview` builds them. `npm run audit` checks high/critical advisories.
 
-| Path                          | Responsibility                                                                           |
-| ----------------------------- | ---------------------------------------------------------------------------------------- |
-| `index.client.tsx`, `client/` | Inbox surfaces, queue and request UI, drafts, navigation, and subscriptions.             |
-| `index.server.ts`, `server/`  | Inbox snapshots, request delivery, persistence, turn observation, and guarded archiving. |
-| `shared/`                     | Runtime-neutral Zod RPC contracts, request models, filters, and hierarchy.               |
-| `tests/`                      | Unit tests, fixture preview, browser tests, and optional host smoke tests.               |
+| Path                  | Responsibility                                                              |
+| --------------------- | --------------------------------------------------------------------------- |
+| `index.client.tsx`    | Client entry point and feature registration.                                |
+| `client/podium/`      | Podium shell and shared navigation.                                         |
+| `client/agents/`      | Agent snapshots, queue, request UI, drafts, navigation, and subscriptions.  |
+| `client/concerts/`    | Concert graph, task progress, blockers, and reports.                        |
+| `server/agents/`      | Agent snapshots, request delivery, turn observation, and guarded archiving. |
+| `server/concerts/`    | Concert orchestration, execution, persistence, and recovery.                |
+| `server/entrypoints/` | Server RPC registration and command handling.                               |
+| `server/paseo/`       | Paseo SDK integration and host adapters.                                    |
+| `shared/`             | Runtime-neutral Zod RPC contracts, request models, filters, and hierarchy.  |
+| `tests/`              | Unit tests, fixture preview, browser tests, and optional host smoke tests.  |
 
 - Read the repository's [AGENTS.md](../AGENTS.md),
   [security rules](../.agents/rules/security.md), and
@@ -366,22 +372,22 @@ pointing to a disposable daemon at `ws://127.0.0.1:<port>/ws` with ID `conductor
 running. The client test needs its web app; the host test installs a fixture
 provider and creates temporary workspaces/agents. These are separate from `check`.
 
-### Run storage and recovery
+### Concert storage and recovery
 
-Run envelopes remain in `plugin-data/conductor/runs/<uuid>.json`; immutable goal
+Concert envelopes remain in `plugin-data/conductor/runs/<uuid>.json`; immutable goal
 context is in `artifacts/<sha256>.json`. Definitions, attempts, blockers, report
 hashes, and final summaries are stored together. Legacy schema-v1 records load
 with empty execution metadata and retain their history. Git metadata and the
 tracked-diff/status fingerprint are context, not settlement proof.
 
-Bounds are 200 runs and 200 context artifacts (including orphans), 40 tasks,
-120 attempts per run, 24 definition revisions, a 2,000,000-byte envelope, and
+Bounds are 200 concerts and 200 context artifacts (including orphans), 40 tasks,
+120 attempts per concert, 24 definition revisions, a 2,000,000-byte envelope, and
 128,000-byte context. Field/command bounds also apply. Limits refuse new history
 instead of pruning evidence. Corrupt records are isolated from healthy reads and
-the native inbox. Incomplete coverage blocks resource claims because existing
+the Concerts view. Incomplete coverage blocks resource claims because existing
 ownership cannot be established.
 
-RunStore serializes updates, fences processes with `run-write-lock`, checks
+`ConcertStore` serializes updates, fences processes with `run-write-lock`, checks
 versions, syncs files and Unix directories, and atomically replaces snapshots.
 Context is durable before publication. The socket admits one live server; another
 installation cannot steal it. Graceful reload releases the socket/hooks.
@@ -395,12 +401,12 @@ installation using the root, confirm its processes exited, and back up the recor
 Inspect unresolved attempts before removing a stale lock/socket and reloading.
 Never remove a live owner's files or native-answer receipts.
 
-There is no automatic purge, but Conductor can delete one finished execution run
+There is no automatic purge, but Conductor can delete one finished concert
 at a time. Deletion is refused while an attempt is running or blocked, while an
-agent launch is unsettled, and for runs that are not complete or failed. Deleting
-a run removes its snapshot and removes its content-addressed context artifact
-only when no remaining run references it; shared context is retained. Offline
+agent launch is unsettled, and for concerts that are not complete or failed. Deleting
+a concert removes its snapshot and removes its content-addressed context artifact
+only when no remaining concert references it; shared context is retained. Offline
 maintenance must still preserve unresolved claims.
 Orchestration dispatches real children and observes settlement through the host.
-Workers run their own checks and submit evidence. Cancellation of a run, isolated
+Workers run their own checks and submit evidence. Cancellation of a concert, isolated
 worktrees, parallel writers, and recurring schedules are not part of this release.

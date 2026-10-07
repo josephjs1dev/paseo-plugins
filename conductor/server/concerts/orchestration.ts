@@ -1,28 +1,28 @@
 import { reportInstructions, type CommandLine } from "./prompts";
-import { runCoordinator } from "./coordinator";
+import { concertCoordinator } from "./coordinator";
 import { randomUUID } from "node:crypto";
 import { conflictReason } from "../../shared/concerts/graph";
 import {
   latestAttempt,
-  RUN_LIMITS,
-  type RunAttempt,
-  type StoredRun,
+  CONCERT_LIMITS,
+  type ConcertAttempt,
+  type StoredConcert,
   type TaskDefinition,
 } from "../../shared/concerts/models";
 import {
   workerChoice,
   type WorkerChoice,
 } from "../../shared/concerts/commands";
-import { commandRunId, type ExecutionRuntime } from "./identity";
-import { contentHash, type RunStore } from "./store";
-import { RunError } from "./errors";
+import { commandConcertId, type ExecutionRuntime } from "./identity";
+import { contentHash, type ConcertStore } from "./store";
+import { ConcertError } from "./errors";
 import { executionStatus } from "./results";
 import { LaunchRejectedError } from "./errors";
 import type { WorkerRuntime } from "./workers";
 
 /** The worker a launch uses; "inherit" means no profile is passed. */
 function launchChoice(
-  launch: NonNullable<RunAttempt["launch"]>,
+  launch: NonNullable<ConcertAttempt["launch"]>,
   task: TaskDefinition,
 ): WorkerChoice {
   const { profile, ...inline } =
@@ -36,12 +36,12 @@ function launchChoice(
 }
 
 export function orchestration(
-  store: RunStore,
+  store: ConcertStore,
   runtime: () => ExecutionRuntime,
   workers: () => WorkerRuntime,
   command: CommandLine,
 ) {
-  const change = async (id: string, update: (run: StoredRun) => void) => {
+  const change = async (id: string, update: (run: StoredConcert) => void) => {
     const { run } = await store.read(id);
     return store.update(id, run.version, (value) => {
       update(value);
@@ -49,7 +49,7 @@ export function orchestration(
       return value;
     });
   };
-  const { owner, start, define } = runCoordinator(
+  const { owner, start, define } = concertCoordinator(
     store,
     runtime,
     workers,
@@ -62,7 +62,7 @@ export function orchestration(
         (!attempt.report || (attempt.launch && !attempt.launch.settled)),
     );
   const reserve = async (
-    runId: string,
+    concertId: string,
     task: TaskDefinition,
     retry = false,
     replacement?: WorkerChoice,
@@ -72,9 +72,9 @@ export function orchestration(
     const choice = Object.keys(override).length
       ? { profile: "inherit", ...override }
       : workerChoice(task.worker);
-    const { run } = await store.read(runId);
+    const { run } = await store.read(concertId);
     let reserved = false;
-    await store.update(runId, run.version, async (current) => {
+    await store.update(concertId, run.version, async (current) => {
       const execution = current.execution;
       if (!execution?.orchestration || execution.finishedAt !== null) {
         return current;
@@ -102,8 +102,8 @@ export function orchestration(
       }
       const list = await store.list();
       if (list.incomplete || list.unavailable) {
-        throw new RunError(
-          "Run coverage is incomplete; worker ownership cannot be checked.",
+        throw new ConcertError(
+          "Concert coverage is incomplete; worker ownership cannot be checked.",
         );
       }
       for (const summary of list.runs) {
@@ -124,11 +124,11 @@ export function orchestration(
           }
         }
       }
-      if (execution.attempts.length >= RUN_LIMITS.attempts) {
-        throw new RunError("Concert attempt limit reached.");
+      if (execution.attempts.length >= CONCERT_LIMITS.attempts) {
+        throw new ConcertError("Concert attempt limit reached.");
       }
       const attemptId = randomUUID();
-      const workerId = commandRunId(current.id, attemptId);
+      const workerId = commandConcertId(current.id, attemptId);
       const { context } = await store.read(current.id);
       const prerequisiteReports = task.prerequisites.map((id) => {
         const report = latestAttempt(current, id)?.report;
@@ -171,8 +171,8 @@ export function orchestration(
     });
     return reserved;
   };
-  const launchAttempt = async (runId: string, task: TaskDefinition) => {
-    const { run } = await store.read(runId);
+  const launchAttempt = async (concertId: string, task: TaskDefinition) => {
+    const { run } = await store.read(concertId);
     const attempt = latestAttempt(run, task.id);
     if (
       !attempt?.launch ||
@@ -198,7 +198,7 @@ export function orchestration(
       };
       const config = attempt.launch.config ?? (await workers().prepare(input));
       if (!attempt.launch.config) {
-        await change(runId, (current) => {
+        await change(concertId, (current) => {
           const a = latestAttempt(current, task.id);
           if (a?.launch && a.id === attempt.id) {
             a.launch.config = config;
@@ -207,7 +207,7 @@ export function orchestration(
       }
       creationStarted = true;
       await workers().launch({ ...input, config });
-      await change(runId, (current) => {
+      await change(concertId, (current) => {
         const active = latestAttempt(current, task.id);
         if (active?.launch && active.id === attempt.id) {
           active.launch.state = "started";
@@ -217,7 +217,7 @@ export function orchestration(
       });
     } catch (error) {
       const rejected = !creationStarted || error instanceof LaunchRejectedError;
-      await change(runId, (current) => {
+      await change(concertId, (current) => {
         const active = latestAttempt(current, task.id);
         if (active?.launch && active.id === attempt.id) {
           if (rejected) {
@@ -228,7 +228,7 @@ export function orchestration(
             active.report = {
               outcome: "failed",
               summary:
-                error instanceof RunError
+                error instanceof ConcertError
                   ? error.message
                   : "Task validation failed before any agent was created.",
               evidence: [
@@ -255,16 +255,16 @@ export function orchestration(
   };
   const dispatch = async (
     agentId: string,
-    runId: string,
+    concertId: string,
     retryTaskId?: string,
     replacement?: WorkerChoice,
   ) => {
-    let run = await owner(agentId, runId);
+    let run = await owner(agentId, concertId);
     if (
       run.execution?.orchestration?.phase !== "working" ||
       run.execution.finishedAt !== null
     ) {
-      throw new RunError("This concert is not ready to dispatch.");
+      throw new ConcertError("This concert is not ready to dispatch.");
     }
     const tasks = run.revisions.at(-1)?.graph.tasks ?? [];
     if (retryTaskId) {
@@ -275,16 +275,16 @@ export function orchestration(
         !attempt?.launch?.settled ||
         (attempt.state !== "failed" && attempt.state !== "blocked")
       ) {
-        throw new RunError(
+        throw new ConcertError(
           "Retry requires a settled failed or blocked task agent.",
         );
       }
       const status = await workers().inspect(attempt.agentId);
       if (status.active) {
-        throw new RunError("The task agent is still active.");
+        throw new ConcertError("The task agent is still active.");
       }
       if (attempt.state === "blocked" && attempt.launch.state === "started") {
-        await change(runId, (current) => {
+        await change(concertId, (current) => {
           const a = latestAttempt(current, retryTaskId);
           if (a?.launch) {
             a.state = "running";
@@ -295,19 +295,19 @@ export function orchestration(
         });
         await workers().wake(
           attempt.agentId,
-          `Resume task ${task.id} in concert ${runId}, attempt ${attempt.id}. Resolve the blocker using the source conversation.
-${reportInstructions(command, attempt.agentId, runId, attempt.id, task.checks)}`,
+          `Resume task ${task.id} in concert ${concertId}, attempt ${attempt.id}. Resolve the blocker using the source conversation.
+${reportInstructions(command, attempt.agentId, concertId, attempt.id, task.checks)}`,
           `resume:${attempt.id}:${run.version}`,
         );
       } else if (attempt.state === "failed") {
-        await reserve(runId, task, true, replacement);
+        await reserve(concertId, task, true, replacement);
       }
     }
     for (const task of tasks) {
-      await reserve(runId, task);
-      await launchAttempt(runId, task);
+      await reserve(concertId, task);
+      await launchAttempt(concertId, task);
     }
-    run = (await store.read(runId)).run;
+    run = (await store.read(concertId)).run;
     return { run };
   };
   const reconcile = async () => {
@@ -417,10 +417,10 @@ ${reportInstructions(command, attempt.agentId, runId, attempt.id, task.checks)}`
           });
         }
       } catch (error) {
-        // One busy/unreachable coordinator must not starve independent runs.
+        // One busy/unreachable Conductor agent must not starve independent concerts.
         // Ownership stays fenced while observation/notification is retried.
         if (
-          error instanceof RunError &&
+          error instanceof ConcertError &&
           error.message.includes("unavailable")
         ) {
           await change(summary.id, (current) => {

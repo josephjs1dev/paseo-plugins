@@ -4,16 +4,16 @@ import { dirname } from "node:path";
 import { randomUUID } from "node:crypto";
 import { missing } from "../files";
 
-import { RunError } from "./errors";
+import { ConcertError } from "./errors";
 
-export async function ensureRunDirectory(path: string): Promise<void> {
+export async function ensureConcertDirectory(path: string): Promise<void> {
   await mkdir(path, { recursive: true, mode: 0o700 });
   if (!(await lstat(path)).isDirectory()) {
-    throw new RunError("Run storage must use real directories.");
+    throw new ConcertError("Concert storage must use real directories.");
   }
 }
 
-export async function readRunFile(
+export async function readConcertFile(
   path: string,
   limit: number,
 ): Promise<string> {
@@ -21,7 +21,9 @@ export async function readRunFile(
   try {
     const stat = await handle.stat();
     if (!stat.isFile() || stat.size > limit) {
-      throw new RunError("Run storage exceeds its size limit or is invalid.");
+      throw new ConcertError(
+        "Concert storage exceeds its size limit or is invalid.",
+      );
     }
     // Read at most limit + 1 even if a file grows after stat.
     const buffer = Buffer.alloc(limit + 1);
@@ -39,7 +41,7 @@ export async function readRunFile(
       offset += bytesRead;
     }
     if (offset > limit) {
-      throw new RunError("Run storage exceeds its size limit.");
+      throw new ConcertError("Concert storage exceeds its size limit.");
     }
     return buffer.subarray(0, offset).toString("utf8");
   } finally {
@@ -47,8 +49,8 @@ export async function readRunFile(
   }
 }
 
-export async function syncRunDirectory(path: string): Promise<void> {
-  // This release stores plans only. Windows directory durability is not a dispatch guarantee.
+export async function syncConcertDirectory(path: string): Promise<void> {
+  // Windows directory durability is not a dispatch guarantee.
   if (process.platform === "win32") {
     return;
   }
@@ -61,7 +63,7 @@ export async function syncRunDirectory(path: string): Promise<void> {
 }
 
 /** Publish one complete envelope; callers hold the namespace write lock. */
-export async function writeRunFile(
+export async function writeConcertFile(
   path: string,
   content: string,
 ): Promise<void> {
@@ -75,7 +77,7 @@ export async function writeRunFile(
       await handle.close();
     }
     await rename(temporary, path);
-    await syncRunDirectory(dirname(path));
+    await syncConcertDirectory(dirname(path));
   } finally {
     await unlink(temporary).catch((error: unknown) => {
       if (!missing(error)) {

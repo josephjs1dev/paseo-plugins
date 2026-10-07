@@ -1,20 +1,22 @@
 import { useEffect } from "react";
 import { usePaseo, useRpc } from "@getpaseo/plugin/client";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { getInbox } from "../../shared/agents/rpc";
-import type { InboxSnapshot } from "../../shared/agents/models";
+import { getAgents } from "../../shared/agents/rpc";
+import type { AgentsSnapshot } from "../../shared/agents/models";
 import { observeDirectory } from "../paseo/observation";
 
-export const inboxKey = (hostId: string) =>
+export const agentsQueryKey = (hostId: string) =>
   ["conductor", hostId, "inbox"] as const;
-export function useInbox(hostId: string) {
-  const fetch = useRpc(getInbox);
+export function useAgents(hostId: string) {
+  const fetch = useRpc(getAgents);
   const paseo = usePaseo();
   const cache = useQueryClient();
   const query = useQuery({
-    queryKey: inboxKey(hostId),
+    queryKey: agentsQueryKey(hostId),
     queryFn: () => {
-      const previous = cache.getQueryData<InboxSnapshot>(inboxKey(hostId));
+      const previous = cache.getQueryData<AgentsSnapshot>(
+        agentsQueryKey(hostId),
+      );
       const knownAgentIds = [
         ...new Set(
           previous?.items
@@ -32,7 +34,7 @@ export function useInbox(hostId: string) {
     () =>
       observeDirectory(paseo, () => {
         cache
-          .invalidateQueries({ queryKey: inboxKey(hostId) })
+          .invalidateQueries({ queryKey: agentsQueryKey(hostId) })
           .catch(() => undefined);
       }),
     [paseo, cache, hostId],

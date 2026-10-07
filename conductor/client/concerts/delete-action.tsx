@@ -1,20 +1,20 @@
 import { useState } from "react";
 import { Text, View } from "react-native";
 import type { PluginTheme } from "@getpaseo/plugin";
-import type { StoredRun } from "../../shared/concerts/models";
+import type { StoredConcert } from "../../shared/concerts/models";
 import { Button, rowStyle } from "../ui/controls";
 
 interface Props {
   theme: PluginTheme;
-  run: StoredRun;
-  deleteRun(this: void, run: StoredRun): Promise<void>;
+  run: StoredConcert;
+  deleteConcert(this: void, run: StoredConcert): Promise<void>;
 }
 
 /**
- * Mirrors the store's remove() rule client-side: only finished runs whose
+ * Mirrors the store's remove() rule client-side: only finished concerts whose
  * attempts have all settled may be deleted. The server enforces the same rule.
  */
-function deletable(run: StoredRun): boolean {
+function deletable(run: StoredConcert): boolean {
   if (!run.execution) {
     return false;
   }
@@ -35,7 +35,7 @@ function deletable(run: StoredRun): boolean {
   );
 }
 
-export function RunDeleteAction({ theme, run, deleteRun }: Props) {
+export function ConcertDeleteAction({ theme, run, deleteConcert }: Props) {
   const [confirming, setConfirming] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -44,7 +44,7 @@ export function RunDeleteAction({ theme, run, deleteRun }: Props) {
     setBusy(true);
     setError(null);
     try {
-      await deleteRun(run);
+      await deleteConcert(run);
       setConfirming(false);
     } catch (cause) {
       setError(
@@ -58,7 +58,7 @@ export function RunDeleteAction({ theme, run, deleteRun }: Props) {
   };
   return (
     <View
-      testID="run-delete-action"
+      testID="concert-delete-action"
       style={{ gap: 8, maxWidth: 420, flexShrink: 1, minWidth: 0 }}
     >
       {confirming ? (
@@ -76,7 +76,7 @@ export function RunDeleteAction({ theme, run, deleteRun }: Props) {
           <View style={rowStyle}>
             <Button
               theme={theme}
-              testID="run-delete-confirm"
+              testID="concert-delete-confirm"
               label={busy ? "Deleting…" : "Delete concert"}
               danger
               disabled={busy}
@@ -86,7 +86,7 @@ export function RunDeleteAction({ theme, run, deleteRun }: Props) {
             />
             <Button
               theme={theme}
-              testID="run-delete-cancel"
+              testID="concert-delete-cancel"
               label="Cancel"
               variant="quiet"
               disabled={busy}
@@ -101,7 +101,7 @@ export function RunDeleteAction({ theme, run, deleteRun }: Props) {
         <View style={{ gap: 4, alignItems: "flex-start" }}>
           <Button
             theme={theme}
-            testID="run-delete"
+            testID="concert-delete"
             variant="quiet"
             danger
             label="Delete concert"

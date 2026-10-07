@@ -311,7 +311,7 @@ test("closed sessions and recorded turn endings are distinct from verified compl
     "Outcome unknown",
   );
   await expect(
-    page.getByTestId("inbox-queue").getByText(/Last turn|Turn outcome/),
+    page.getByTestId("agents-queue").getByText(/Last turn|Turn outcome/),
   ).toHaveCount(0);
   await expect(
     page.getByRole("button", { name: "Needs my reply", exact: true }),

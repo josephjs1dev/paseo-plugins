@@ -1,17 +1,20 @@
 import { useState } from "react";
 import { Pressable, Text, View } from "react-native";
 import type { PluginTheme } from "@getpaseo/plugin";
-import { ageLabel } from "../../shared/agents/inbox";
-import { runStatusLabel, type RunSummary } from "../../shared/concerts/models";
+import { ageLabel } from "../../shared/agents/attention";
+import {
+  concertStatusLabel,
+  type ConcertSummary,
+} from "../../shared/concerts/models";
 
-export function RunRow({
+export function ConcertRow({
   run,
   theme,
   now,
   selected,
   onSelect,
 }: {
-  run: RunSummary;
+  run: ConcertSummary;
   theme: PluginTheme;
   now: number;
   selected: boolean;
@@ -20,7 +23,7 @@ export function RunRow({
   const [focused, setFocused] = useState(false);
   return (
     <Pressable
-      testID={`run-row-${run.id}`}
+      testID={`concert-row-${run.id}`}
       accessibilityRole="button"
       accessibilityLabel={`Open concert: ${run.title}`}
       accessibilityState={{ selected }}
@@ -61,7 +64,7 @@ export function RunRow({
             flexShrink: 1,
           }}
         >
-          {runStatusLabel(run.status)}
+          {concertStatusLabel(run.status)}
         </Text>
         <Text
           style={{

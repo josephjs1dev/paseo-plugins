@@ -67,7 +67,7 @@ export function ReportFooter({
             label={`Evidence ${report.evidence.length}`}
             expanded={evidenceOpen}
             onToggle={() => onToggle("evidence")}
-            testID={`run-task-evidence-${taskId}`}
+            testID={`concert-task-evidence-${taskId}`}
             dense={!compact}
           />
         )}
@@ -78,7 +78,7 @@ export function ReportFooter({
             danger={failedChecks > 0}
             expanded={checksOpen}
             onToggle={() => onToggle("checks")}
-            testID={`run-task-checks-${taskId}`}
+            testID={`concert-task-checks-${taskId}`}
             dense={!compact}
           />
         )}

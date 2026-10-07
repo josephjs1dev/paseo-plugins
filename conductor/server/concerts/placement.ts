@@ -3,28 +3,30 @@ import { lstat, realpath } from "node:fs/promises";
 import { isAbsolute, join, relative, sep } from "node:path";
 import { promisify } from "node:util";
 import type {
-  RunGraph,
-  RunPlacement,
-  RunSource,
+  ConcertGraph,
+  ConcertPlacement,
+  ConcertSource,
 } from "../../shared/concerts/models";
 import type { ConcertHost } from "./host";
 import { contentHash } from "./store";
 import { missing } from "../files";
-import { RunError } from "./errors";
+import { ConcertError } from "./errors";
 
 const execute = promisify(execFile);
-export interface RunPlacementRuntime {
-  capture(source: RunSource): Promise<RunPlacement>;
-  validate(source: RunPlacement, graph: RunGraph): Promise<void>;
+export interface ConcertPlacementRuntime {
+  capture(source: ConcertSource): Promise<ConcertPlacement>;
+  validate(source: ConcertPlacement, graph: ConcertGraph): Promise<void>;
 }
 
 /** Reject symlinks in every scope component, including existing parents of new files. */
-export async function validateRunScopes(
+export async function validateConcertScopes(
   checkout: string,
-  graph: RunGraph,
+  graph: ConcertGraph,
 ): Promise<void> {
   if ((await realpath(checkout)) !== checkout) {
-    throw new RunError("The checkout location changed. Prepare a new concert.");
+    throw new ConcertError(
+      "The checkout location changed. Prepare a new concert.",
+    );
   }
   for (const scope of new Set(
     graph.tasks.flatMap((task) => [...task.reads, ...task.writes]),
@@ -32,14 +34,14 @@ export async function validateRunScopes(
     const candidate = join(checkout, scope);
     const child = relative(checkout, candidate);
     if (isAbsolute(child) || child === ".." || child.startsWith(`..${sep}`)) {
-      throw new RunError("Task scope leaves the selected checkout.");
+      throw new ConcertError("Task scope leaves the selected checkout.");
     }
     let current = checkout;
     for (const part of child.split(sep).filter(Boolean)) {
       current = join(current, part);
       try {
         if ((await lstat(current)).isSymbolicLink()) {
-          throw new RunError("Task scopes cannot include symbolic links.");
+          throw new ConcertError("Task scopes cannot include symbolic links.");
         }
       } catch (error) {
         if (!missing(error)) {
@@ -50,11 +52,11 @@ export async function validateRunScopes(
   }
 }
 
-export function runPlacement(host: ConcertHost): RunPlacementRuntime {
-  const workspace = async (source: RunSource) => {
+export function concertPlacement(host: ConcertHost): ConcertPlacementRuntime {
+  const workspace = async (source: ConcertSource) => {
     const value = await host.workspace(source.workspaceId);
     if (!value?.directory) {
-      throw new RunError("The selected workspace is unavailable.");
+      throw new ConcertError("The selected workspace is unavailable.");
     }
     const checkout = await realpath(value.directory);
     if (source.agentId) {
@@ -64,7 +66,7 @@ export function runPlacement(host: ConcertHost): RunPlacementRuntime {
         agent.workspaceId !== source.workspaceId ||
         (await realpath(agent.cwd)) !== checkout
       ) {
-        throw new RunError(
+        throw new ConcertError(
           "The source agent no longer belongs to this checkout.",
         );
       }
@@ -119,11 +121,11 @@ export function runPlacement(host: ConcertHost): RunPlacementRuntime {
     async validate(source, graph) {
       const current = await workspace(source);
       if (current.checkout !== source.checkout) {
-        throw new RunError(
+        throw new ConcertError(
           "The workspace moved. Prepare a new concert in its current checkout.",
         );
       }
-      await validateRunScopes(source.checkout, graph);
+      await validateConcertScopes(source.checkout, graph);
     },
   };
 }

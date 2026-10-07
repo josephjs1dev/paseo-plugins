@@ -1,16 +1,16 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { runExecution } from "../server/concerts/execution";
-import { fileRunStore } from "../server/concerts/store";
+import { concertExecution } from "../server/concerts/execution";
+import { fileConcertStore } from "../server/concerts/store";
 import { LaunchRejectedError } from "../server/concerts/errors";
 import type { WorkerLaunch, WorkerRuntime } from "../server/concerts/workers";
 import type { ExecutionRuntime } from "../server/concerts/identity";
-import { latestAttempt, type StoredRun } from "../shared/concerts/models";
-import { placement } from "./run-fixtures";
+import { latestAttempt, type StoredConcert } from "../shared/concerts/models";
+import { placement } from "./concert-fixtures";
 import { testDirectory } from "./fixtures";
 
 async function fixture() {
-  const store = fileRunStore(await testDirectory());
+  const store = fileConcertStore(await testDirectory());
   const launches = new Map<string, WorkerLaunch>();
   const active = new Map<string, boolean>();
   const wakes: string[] = [];
@@ -64,7 +64,7 @@ async function fixture() {
     capture: async (source) => ({ ...placement, ...source }),
     validate: async () => {},
   };
-  let engine = runExecution(
+  let engine = concertExecution(
     store,
     () => runtime,
     () => workers,
@@ -86,7 +86,7 @@ async function fixture() {
     assert.ok("run" in result);
     return result.run;
   };
-  const define = async (run: StoredRun, tasks: unknown[]) => {
+  const define = async (run: StoredConcert, tasks: unknown[]) => {
     assert.ok(run.source.agentId);
     await send(run.source.agentId, {
       kind: "define",
@@ -126,7 +126,7 @@ async function fixture() {
     reconcile: () => engine.reconcile(),
     interrupt: () => engine.interrupt(null, "Plugin reloaded"),
     reload: () => {
-      engine = runExecution(
+      engine = concertExecution(
         store,
         () => runtime,
         () => workers,
@@ -152,7 +152,7 @@ const task = (id: string, dependsOn: string[] = [], writes: string[] = []) => ({
   profile: "Small",
 });
 
-void test("orchestrator creates distinct children and joins explicit reports only after settlement", async () => {
+void test("Conductor agent creates distinct children and joins explicit reports only after settlement", async () => {
   const f = await fixture();
   const planning = await f.start();
   assert.equal(planning.status, "planning");
@@ -324,7 +324,7 @@ void test("unreported stopped workers block; resume keeps identity and failure r
   assert.notEqual(retry?.agentId, a.agentId);
 });
 
-void test("uncertain conductor creation retries preserve the planning run", async () => {
+void test("uncertain conductor creation retries preserve the planning concert", async () => {
   const f = await fixture();
   f.loseAck();
   const first = await f.start();
@@ -406,7 +406,7 @@ void test("a report after manual resume requires a fresh settlement observation"
   assert.ok(latestAttempt(await f.read(plan.id), "join"));
 });
 
-void test("busy coordinator notifications do not starve another run", async () => {
+void test("busy coordinator notifications do not starve another concert", async () => {
   const f = await fixture();
   const one = await f.start("one");
   const two = await f.start("two");
@@ -454,7 +454,7 @@ void test("the same blocker after resume wakes the conductor once in each genera
   );
 });
 
-void test("a requesting agent coordinates its own run without creating a Conductor agent", async () => {
+void test("a requesting agent coordinates its own concert without creating a Conductor agent", async () => {
   const f = await fixture();
   const first = await f.orchestrate("self");
   assert.ok("run" in first && "instructions" in first);
@@ -486,7 +486,7 @@ void test("a requesting agent coordinates its own run without creating a Conduct
   assert.equal((await f.read(run.id)).status, "completed");
 });
 
-void test("a dedicated coordinator remains available and profiles require one", async () => {
+void test("a dedicated Conductor agent remains available and coordinatorProfile names one", async () => {
   const f = await fixture();
   await assert.rejects(
     f.orchestrate("profile", {

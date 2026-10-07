@@ -1,19 +1,19 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { runExecution } from "../server/concerts/execution";
+import { concertExecution } from "../server/concerts/execution";
 import {
-  commandRunId,
+  commandConcertId,
   type ExecutionRuntime,
 } from "../server/concerts/identity";
-import { contentHash, fileRunStore } from "../server/concerts/store";
-import { storedRun, planContext } from "./run-fixtures";
+import { contentHash, fileConcertStore } from "../server/concerts/store";
+import { storedConcert, planContext } from "./concert-fixtures";
 import { latestAttempt, type TaskReport } from "../shared/concerts/models";
 import { testDirectory } from "./fixtures";
 
-void test("legacy cleanup checks source, workspace and version and cannot remove execution runs", async () => {
+void test("legacy cleanup checks source, workspace and version and cannot remove executed concerts", async () => {
   const f = await fixture();
   const legacy = {
-    ...storedRun(),
+    ...storedConcert(),
     contextHash: contentHash(JSON.stringify(planContext)),
   };
   await f.store.create(legacy, planContext);
@@ -37,7 +37,7 @@ void test("legacy cleanup checks source, workspace and version and cannot remove
   const managedId = await f.start("cleanup-protected");
   await assert.rejects(
     f.send({ ...removal, concertId: managedId }),
-    /Execution runs cannot/,
+    /Executed concerts cannot/,
   );
   const attempt = await f.claim(managedId);
   await f.send({
@@ -57,7 +57,7 @@ void test("legacy cleanup checks source, workspace and version and cannot remove
       concertId: managedId,
       expectedVersion: (await f.read(managedId)).version,
     }),
-    /Execution runs cannot/,
+    /Executed concerts cannot/,
   );
   await f.send(removal);
   assert.deepEqual(
@@ -68,12 +68,12 @@ void test("legacy cleanup checks source, workspace and version and cannot remove
   assert.equal((await f.read(managedId)).status, "completed");
   // A second legacy record can reuse the immutable context after removal.
   await f.store.create(
-    { ...legacy, id: commandRunId("agent-1", "shared-context") },
+    { ...legacy, id: commandConcertId("agent-1", "shared-context") },
     planContext,
   );
   assert.equal((await f.store.list()).runs.length, 2);
 });
-import { placement } from "./run-fixtures";
+import { placement } from "./concert-fixtures";
 
 const runtime: ExecutionRuntime = {
   source: async (agentId) => ({ agentId, workspaceId: "ws-api" }),
@@ -88,8 +88,8 @@ const report: TaskReport = {
 };
 async function fixture() {
   const directory = await testDirectory();
-  const store = fileRunStore(directory);
-  const engine = runExecution(store, () => runtime);
+  const store = fileConcertStore(directory);
+  const engine = concertExecution(store, () => runtime);
   const send = (command: unknown, agentId = "agent-1") =>
     engine.execute({ agentId, command });
   const start = async (key: string, tasks?: unknown[]) => {
@@ -100,12 +100,12 @@ async function fixture() {
       goal: "Implement the requested fix",
       ...(tasks ? { tasks } : {}),
     });
-    return commandRunId("agent-1", key);
+    return commandConcertId("agent-1", key);
   };
-  const read = async (runId: string) => (await store.read(runId)).run;
-  const claim = async (runId: string, taskId = "work", retry = false) => {
-    await send({ kind: "claim", concertId: runId, taskId, retry });
-    const attempt = latestAttempt(await read(runId), taskId);
+  const read = async (concertId: string) => (await store.read(concertId)).run;
+  const claim = async (concertId: string, taskId = "work", retry = false) => {
+    await send({ kind: "claim", concertId: concertId, taskId, retry });
+    const attempt = latestAttempt(await read(concertId), taskId);
     assert.ok(attempt);
     return attempt;
   };
@@ -149,7 +149,7 @@ void test("agent commands create, execute and report without a draft or manual a
   assert.equal(
     (await f.read(id)).status,
     "ready",
-    "A task report is not the run summary",
+    "A task report is not the concert summary",
   );
   await f.send({
     kind: "finish",
@@ -158,7 +158,7 @@ void test("agent commands create, execute and report without a draft or manual a
   });
   const done = await f.read(id);
   assert.equal(done.status, "completed");
-  assert.deepEqual((await fileRunStore(f.directory).read(id)).run, done);
+  assert.deepEqual((await fileConcertStore(f.directory).read(id)).run, done);
   await f.send({
     kind: "finish",
     concertId: id,
@@ -225,7 +225,7 @@ void test("same-checkout claims remain reserved through blockers and reload", as
   });
   assert.equal((await f.read(first)).status, "blocked");
   await assert.rejects(f.claim(second), /still owned/);
-  const fresh = runExecution(fileRunStore(f.directory), () => runtime);
+  const fresh = concertExecution(fileConcertStore(f.directory), () => runtime);
   await fresh.interrupt(null, "Reloaded");
   await assert.rejects(f.claim(second), /still owned/);
   assert.equal((await f.claim(first)).id, attempt.id);
@@ -272,7 +272,7 @@ void test("source and workspace mismatches cannot take over an assignment", asyn
     f.send({ kind: "get", concertId: id }, "agent-2"),
     /another source/,
   );
-  const moved = runExecution(f.store, () => ({
+  const moved = concertExecution(f.store, () => ({
     ...runtime,
     source: async (agentId) => ({ agentId, workspaceId: "elsewhere" }),
   }));
@@ -320,7 +320,7 @@ void test("explicit retries preserve prior reports and reject superseded or chan
   assert.equal((await f.read(id)).execution?.attempts.length, 2);
 });
 
-void test("schema bounds and graph rejection do not create runs", async () => {
+void test("schema bounds and graph rejection do not create concerts", async () => {
   const f = await fixture();
   await assert.rejects(
     f.start("cycle", [

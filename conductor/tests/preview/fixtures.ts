@@ -1,4 +1,4 @@
-import type { InboxItem, InboxSnapshot } from "../../shared/agents/models";
+import type { AgentItem, AgentsSnapshot } from "../../shared/agents/models";
 import type { PluginTheme } from "@getpaseo/plugin";
 import { requestForm } from "../../shared/agents/questions";
 
@@ -32,7 +32,7 @@ export const dark: PluginTheme = {
     statusDanger: "#ff9b9f",
   },
 };
-const base: InboxItem = {
+const base: AgentItem = {
   key: "a".repeat(64),
   agentId: "agent-api",
   requestId: "request-api",
@@ -79,7 +79,7 @@ const base: InboxItem = {
   marked: false,
   delivery: null,
 };
-export const initial: InboxSnapshot = {
+export const initial: AgentsSnapshot = {
   fetchedAt: Date.now(),
   incomplete: false,
   workspaceIncomplete: false,

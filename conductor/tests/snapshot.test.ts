@@ -3,10 +3,10 @@ import { test } from "node:test";
 import { fileStore } from "../server/agents/store";
 import { snapshot } from "../server/agents/snapshot";
 import { agentKey } from "../server/agents/identity";
-import { visibleItems, ageLabel } from "../shared/agents/inbox";
+import { visibleItems, ageLabel } from "../shared/agents/attention";
 import { snapshotSchema } from "../shared/agents/models";
 import { agent, question, runtime, testDirectory } from "./fixtures";
-import { InboxSession } from "../client/podium/session";
+import { PodiumSession } from "../client/podium/session";
 
 async function store() {
   return fileStore(await testDirectory());
@@ -37,7 +37,7 @@ await test("the default attention queue combines questions, approvals, failures,
     agents: async () => ({ entries: agents, next: null }),
   });
   const initial = await snapshot(host, storage, [], 1000);
-  const filter = new InboxSession().getSnapshot().filter;
+  const filter = new PodiumSession().getSnapshot().filter;
   assert.equal(filter, "attention");
   const attention = visibleItems(initial.items, filter, "", undefined, 1000);
   assert.deepEqual(attention.map((item) => item.agentId).sort(), [
@@ -207,7 +207,7 @@ await test("drafts survive selecting another request and remain bound to their o
   const second = result.items[1];
   assert.ok(first);
   assert.ok(second);
-  const session = new InboxSession();
+  const session = new PodiumSession();
   session.select(first);
   session.draft(first.key, {
     kind: "answers",

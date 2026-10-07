@@ -1,8 +1,8 @@
 import { conflictReason } from "./graph";
-import type { RunGraph } from "./models";
+import type { ConcertGraph } from "./models";
 
 /**
- * Deterministic geometry for the run dependency graph. Pure math only: shared
+ * Deterministic geometry for the concert dependency graph. Pure math only: shared
  * modules must not import React Native, so the client renderer consumes these
  * coordinates directly with absolutely positioned views.
  */
@@ -81,7 +81,7 @@ export function graphGeometry(compact: boolean): GraphGeometry {
 }
 
 /** Longest-path layering; cycle members fall back to layer 0. */
-function taskLayers(graph: RunGraph): Map<string, number> {
+function taskLayers(graph: ConcertGraph): Map<string, number> {
   const ids = new Set(graph.tasks.map((task) => task.id));
   const byId = new Map(graph.tasks.map((task) => [task.id, task]));
   const layers = new Map<string, number>();
@@ -123,7 +123,7 @@ const spread = (
     ? center
     : center - height / 2 + height / 4 + (height / 2 / (count - 1)) * index;
 
-export function layoutGraph(graph: RunGraph, compact = false): GraphLayout {
+export function layoutGraph(graph: ConcertGraph, compact = false): GraphLayout {
   const geometry = graphGeometry(compact);
   const layers = taskLayers(graph);
   const columns = new Map<number, string[]>();

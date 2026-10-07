@@ -7,24 +7,30 @@ import { join } from "node:path";
 import test from "node:test";
 import {
   contentHash,
-  fileRunStore,
-  type RunStore,
+  fileConcertStore,
+  type ConcertStore,
 } from "../server/concerts/store";
-import { legacyRunService } from "./legacy-run-service";
+import { legacyConcertService } from "./legacy-concert-service";
 import {
-  validateRunScopes,
-  type RunPlacementRuntime,
+  validateConcertScopes,
+  type ConcertPlacementRuntime,
 } from "../server/concerts/placement";
-import { RunError } from "../server/concerts/errors";
+import { ConcertError } from "../server/concerts/errors";
 import {
-  RUN_LIMITS,
-  type RunAttempt,
-  type StoredRun,
+  CONCERT_LIMITS,
+  type ConcertAttempt,
+  type StoredConcert,
 } from "../shared/concerts/models";
-import { graph, placement, planContext, runId, task } from "./run-fixtures";
+import {
+  graph,
+  placement,
+  planContext,
+  fixtureConcertId,
+  task,
+} from "./concert-fixtures";
 import { testDirectory } from "./fixtures";
 
-const runtime: RunPlacementRuntime = {
+const runtime: ConcertPlacementRuntime = {
   capture: async (source) => ({ ...placement, ...source }),
   validate: async () => {},
 };
@@ -38,12 +44,12 @@ const input = () => ({
 
 void test("durable plans, conditional edits, accepted history, and lost-create acknowledgement", async () => {
   const directory = await testDirectory();
-  const store = fileRunStore(directory);
-  const service = legacyRunService(store, runtime);
+  const store = fileConcertStore(directory);
+  const service = legacyConcertService(store, runtime);
   const request = input();
   let run = await service.prepare(request);
   assert.deepEqual(
-    (await fileRunStore(directory).read(run.id)).context,
+    (await fileConcertStore(directory).read(run.id)).context,
     request.context,
   );
   assert.equal((await service.prepare(request)).id, run.id);
@@ -82,15 +88,15 @@ void test("durable plans, conditional edits, accepted history, and lost-create a
     command: { kind: "accept", reason: "Narrow the followup" },
   });
   assert.equal(run.revisions[1]?.parent, 1);
-  assert.deepEqual((await fileRunStore(directory).read(run.id)).run, run);
+  assert.deepEqual((await fileConcertStore(directory).read(run.id)).run, run);
   // A retry of the original create returns this same run, even after revisions.
   assert.equal((await service.prepare(request)).version, 3);
 });
 
 void test("two independent store instances cannot both commit the same version", async () => {
   const directory = await testDirectory();
-  const first = legacyRunService(fileRunStore(directory), runtime);
-  const second = legacyRunService(fileRunStore(directory), runtime);
+  const first = legacyConcertService(fileConcertStore(directory), runtime);
+  const second = legacyConcertService(fileConcertStore(directory), runtime);
   const run = await first.prepare(input());
   const command = {
     id: run.id,
@@ -105,13 +111,13 @@ void test("two independent store instances cannot both commit the same version",
     results.filter((result) => result.status === "fulfilled").length,
     1,
   );
-  assert.equal((await fileRunStore(directory).read(run.id)).run.version, 1);
+  assert.equal((await fileConcertStore(directory).read(run.id)).run.version, 1);
 });
 
 void test("orphan write locks fence mutations while reads and native metadata remain accessible", async () => {
   const directory = await testDirectory();
-  const store = fileRunStore(directory);
-  const service = legacyRunService(store, runtime);
+  const store = fileConcertStore(directory);
+  const service = legacyConcertService(store, runtime);
   const run = await service.prepare(input());
   await mkdir(join(directory, "run-write-lock"));
   await assert.rejects(
@@ -128,8 +134,8 @@ void test("orphan write locks fence mutations while reads and native metadata re
 
 void test("corrupt, oversized, missing-context and symlink records are isolated", async () => {
   const directory = await testDirectory();
-  const store = fileRunStore(directory);
-  const service = legacyRunService(store, runtime);
+  const store = fileConcertStore(directory);
+  const service = legacyConcertService(store, runtime);
   const healthy = await service.prepare(input());
   await writeFile(
     join(directory, "runs", `${randomUUID()}.json`),
@@ -137,11 +143,11 @@ void test("corrupt, oversized, missing-context and symlink records are isolated"
   );
   await writeFile(
     join(directory, "runs", `${randomUUID()}.json`),
-    "x".repeat(RUN_LIMITS.snapshotBytes + 1),
+    "x".repeat(CONCERT_LIMITS.snapshotBytes + 1),
   );
   await symlink(
     join(directory, "runs", `${healthy.id}.json`),
-    join(directory, "runs", `${runId}.json`),
+    join(directory, "runs", `${fixtureConcertId}.json`),
   );
   const missingContext = {
     ...healthy,
@@ -166,8 +172,8 @@ void test("corrupt, oversized, missing-context and symlink records are isolated"
 
 void test("invalid admissions and placement failure leave the previous version intact and release the lock", async () => {
   const directory = await testDirectory();
-  const store = fileRunStore(directory);
-  const service = legacyRunService(store, runtime);
+  const store = fileConcertStore(directory);
+  const service = legacyConcertService(store, runtime);
   const run = await service.prepare(input());
   const before = await readFile(
     join(directory, "runs", `${run.id}.json`),
@@ -184,7 +190,7 @@ void test("invalid admissions and placement failure leave the previous version i
     }),
     /missing/,
   );
-  const unavailable = legacyRunService(store, {
+  const unavailable = legacyConcertService(store, {
     ...runtime,
     validate: async () => {
       throw new Error("Workspace moved");
@@ -219,22 +225,22 @@ void test("scope admission rejects symlink parents and permits new descendants i
   const outside = await testDirectory();
   await symlink(outside, join(directory, "linked"));
   await assert.rejects(
-    validateRunScopes(directory, {
+    validateConcertScopes(directory, {
       tasks: [task("a", { reads: ["linked/new-file"] })],
     }),
     /symbolic/,
   );
-  await validateRunScopes(directory, {
+  await validateConcertScopes(directory, {
     tasks: [task("a", { reads: ["src/new-file"] })],
   });
 });
 
-void test("run and revision bounds refuse new history without pruning earlier acceptance", async () => {
+void test("concert and revision bounds refuse new history without pruning earlier acceptance", async () => {
   const directory = await testDirectory();
-  const store = fileRunStore(directory);
-  const service = legacyRunService(store, runtime);
+  const store = fileConcertStore(directory);
+  const service = legacyConcertService(store, runtime);
   let run = await service.prepare(input());
-  for (let index = 0; index < RUN_LIMITS.revisions; index++) {
+  for (let index = 0; index < CONCERT_LIMITS.revisions; index++) {
     if (index) {
       run = await service.change({
         id: run.id,
@@ -263,9 +269,9 @@ void test("run and revision bounds refuse new history without pruning earlier ac
   );
   assert.equal(
     (await store.read(run.id)).run.revisions.length,
-    RUN_LIMITS.revisions,
+    CONCERT_LIMITS.revisions,
   );
-  for (let index = 1; index < RUN_LIMITS.runs; index++) {
+  for (let index = 1; index < CONCERT_LIMITS.concerts; index++) {
     await writeFile(join(directory, "runs", `${randomUUID()}.json`), "corrupt");
   }
   await assert.rejects(service.prepare(input()), /full/);
@@ -276,8 +282,8 @@ void test(
   { timeout: 15000 },
   async (t) => {
     const directory = await testDirectory();
-    const store = fileRunStore(directory);
-    const service = legacyRunService(store, runtime);
+    const store = fileConcertStore(directory);
+    const service = legacyConcertService(store, runtime);
     const run = await service.prepare(input());
     const child = spawn(
       process.execPath,
@@ -287,8 +293,8 @@ void test(
         "--input-type=module",
         "-e",
         `
-    import { fileRunStore } from './server/concerts/store.ts';
-    await fileRunStore(process.argv[1]).update(process.argv[2], 0, async (run) => {
+    import { fileConcertStore } from './server/concerts/store.ts';
+    await fileConcertStore(process.argv[1]).update(process.argv[2], 0, async (run) => {
       process.stdout.write('locked');
       await new Promise((resolve) => process.stdin.once('data', resolve));
       return run;
@@ -314,13 +320,16 @@ void test(
     child.kill("SIGKILL");
     await exit;
     await assert.rejects(change(), /locked/);
-    assert.equal((await fileRunStore(directory).read(run.id)).run.version, 0);
+    assert.equal(
+      (await fileConcertStore(directory).read(run.id)).run.version,
+      0,
+    );
   },
 );
 
-void test("a repeated create cannot overwrite a damaged existing run", async () => {
+void test("a repeated create cannot overwrite a damaged existing concert", async () => {
   const directory = await testDirectory();
-  const service = legacyRunService(fileRunStore(directory), runtime);
+  const service = legacyConcertService(fileConcertStore(directory), runtime);
   const request = input();
   const run = await service.prepare(request);
   await unlink(join(directory, "artifacts", `${run.contextHash}.json`));
@@ -337,8 +346,8 @@ void test("a repeated create cannot overwrite a damaged existing run", async () 
 
 void test("pre-execution schema-v1 envelopes remain readable without rewriting legacy history", async () => {
   const directory = await testDirectory();
-  const store = fileRunStore(directory);
-  const service = legacyRunService(store, runtime);
+  const store = fileConcertStore(directory);
+  const service = legacyConcertService(store, runtime);
   const run = await service.prepare(input());
   const file = join(directory, "runs", `${run.id}.json`);
   const old = JSON.parse(await readFile(file, "utf8")) as Record<
@@ -366,7 +375,7 @@ function completedReport(taskId: string) {
   };
 }
 
-function attemptBase(taskId: string): Omit<RunAttempt, "state"> {
+function attemptBase(taskId: string): Omit<ConcertAttempt, "state"> {
   return {
     id: randomUUID(),
     taskId,
@@ -379,7 +388,7 @@ function attemptBase(taskId: string): Omit<RunAttempt, "state"> {
   };
 }
 
-function settledAttempt(taskId: string): RunAttempt {
+function settledAttempt(taskId: string): ConcertAttempt {
   const report = completedReport(taskId);
   return {
     ...attemptBase(taskId),
@@ -390,7 +399,7 @@ function settledAttempt(taskId: string): RunAttempt {
   };
 }
 
-function runningAttempt(taskId: string): RunAttempt {
+function runningAttempt(taskId: string): ConcertAttempt {
   return {
     ...attemptBase(taskId),
     state: "running",
@@ -399,7 +408,7 @@ function runningAttempt(taskId: string): RunAttempt {
   };
 }
 
-function blockedAttempt(taskId: string): RunAttempt {
+function blockedAttempt(taskId: string): ConcertAttempt {
   return {
     ...runningAttempt(taskId),
     state: "blocked",
@@ -407,7 +416,7 @@ function blockedAttempt(taskId: string): RunAttempt {
   };
 }
 
-function failedUnsettledAttempt(taskId: string): RunAttempt {
+function failedUnsettledAttempt(taskId: string): ConcertAttempt {
   const report = {
     outcome: "failed" as const,
     summary: "The task failed.",
@@ -427,11 +436,11 @@ function failedUnsettledAttempt(taskId: string): RunAttempt {
   };
 }
 
-function executionRun(
+function executionConcert(
   id: string,
-  status: StoredRun["status"],
-  attempts: RunAttempt[],
-): StoredRun {
+  status: StoredConcert["status"],
+  attempts: ConcertAttempt[],
+): StoredConcert {
   return {
     schemaVersion: 1,
     id,
@@ -472,15 +481,20 @@ function executionRun(
   };
 }
 
-async function createRun(store: RunStore, run: StoredRun): Promise<void> {
+async function createConcert(
+  store: ConcertStore,
+  run: StoredConcert,
+): Promise<void> {
   await store.create(run, planContext);
 }
 
-void test("deleting a finished run removes its snapshot and unreferenced context", async () => {
+void test("deleting a finished concert removes its snapshot and unreferenced context", async () => {
   const directory = await testDirectory();
-  const store = fileRunStore(directory);
-  const run = executionRun(randomUUID(), "completed", [settledAttempt("work")]);
-  await createRun(store, run);
+  const store = fileConcertStore(directory);
+  const run = executionConcert(randomUUID(), "completed", [
+    settledAttempt("work"),
+  ]);
+  await createConcert(store, run);
   const artifact = join(directory, "artifacts", `${run.contextHash}.json`);
   assert.equal((await store.list()).runs.length, 1);
   await store.remove(run.id, run.version);
@@ -489,17 +503,17 @@ void test("deleting a finished run removes its snapshot and unreferenced context
   await assert.rejects(readFile(artifact), /ENOENT/);
 });
 
-void test("deleting one run keeps context another run still references", async () => {
+void test("deleting one concert keeps context another concert still references", async () => {
   const directory = await testDirectory();
-  const store = fileRunStore(directory);
-  const first = executionRun(randomUUID(), "completed", [
+  const store = fileConcertStore(directory);
+  const first = executionConcert(randomUUID(), "completed", [
     settledAttempt("work"),
   ]);
-  const second = executionRun(randomUUID(), "completed", [
+  const second = executionConcert(randomUUID(), "completed", [
     settledAttempt("work"),
   ]);
-  await createRun(store, first);
-  await createRun(store, second);
+  await createConcert(store, first);
+  await createConcert(store, second);
   const artifact = join(directory, "artifacts", `${first.contextHash}.json`);
   await store.remove(first.id, first.version);
   assert.equal((await store.list()).runs.length, 1);
@@ -507,17 +521,17 @@ void test("deleting one run keeps context another run still references", async (
   assert.equal(Buffer.byteLength(await readFile(artifact, "utf8")) > 0, true);
 });
 
-void test("deleting a run keeps context while another record is unreadable", async () => {
+void test("deleting a concert keeps context while another record is unreadable", async () => {
   const directory = await testDirectory();
-  const store = fileRunStore(directory);
-  const first = executionRun(randomUUID(), "completed", [
+  const store = fileConcertStore(directory);
+  const first = executionConcert(randomUUID(), "completed", [
     settledAttempt("work"),
   ]);
-  const damaged = executionRun(randomUUID(), "completed", [
+  const damaged = executionConcert(randomUUID(), "completed", [
     settledAttempt("work"),
   ]);
-  await createRun(store, first);
-  await createRun(store, damaged);
+  await createConcert(store, first);
+  await createConcert(store, damaged);
   await writeFile(join(directory, "runs", `${damaged.id}.json`), "{incomplete");
   const artifact = join(directory, "artifacts", `${first.contextHash}.json`);
   await store.remove(first.id, first.version);
@@ -531,27 +545,30 @@ void test("deleting a run keeps context while another record is unreadable", asy
   assert.equal((await store.list()).unavailable, 1);
 });
 
-void test("deletion refuses active, blocked, unsettled, and stale runs intact", async () => {
+void test("deletion refuses active, blocked, unsettled, and stale concerts intact", async () => {
   const directory = await testDirectory();
-  const store = fileRunStore(directory);
-  const running = executionRun(randomUUID(), "running", [
+  const store = fileConcertStore(directory);
+  const running = executionConcert(randomUUID(), "running", [
     runningAttempt("work"),
   ]);
-  const blocked = executionRun(randomUUID(), "blocked", [
+  const blocked = executionConcert(randomUUID(), "blocked", [
     blockedAttempt("work"),
   ]);
-  const unsettled = executionRun(randomUUID(), "failed", [
+  const unsettled = executionConcert(randomUUID(), "failed", [
     failedUnsettledAttempt("work"),
   ]);
-  const completed = executionRun(randomUUID(), "completed", [
+  const completed = executionConcert(randomUUID(), "completed", [
     settledAttempt("work"),
   ]);
   for (const run of [running, blocked, unsettled, completed]) {
-    await createRun(store, run);
+    await createConcert(store, run);
   }
-  await assert.rejects(store.remove(running.id, running.version), RunError);
-  await assert.rejects(store.remove(blocked.id, blocked.version), RunError);
-  await assert.rejects(store.remove(unsettled.id, unsettled.version), RunError);
+  await assert.rejects(store.remove(running.id, running.version), ConcertError);
+  await assert.rejects(store.remove(blocked.id, blocked.version), ConcertError);
+  await assert.rejects(
+    store.remove(unsettled.id, unsettled.version),
+    ConcertError,
+  );
   await assert.rejects(
     store.remove(completed.id, completed.version + 1),
     /changed/,
@@ -563,9 +580,9 @@ void test("deletion refuses active, blocked, unsettled, and stale runs intact", 
   assert.equal((await store.read(completed.id)).run.version, completed.version);
 });
 
-void test("deleting a missing run reports the documented error", async () => {
+void test("deleting a missing concert reports the documented error", async () => {
   const directory = await testDirectory();
-  const store = fileRunStore(directory);
+  const store = fileConcertStore(directory);
   await assert.rejects(
     store.remove(randomUUID(), 0),
     /This concert no longer exists\. Refresh the concert list\./,

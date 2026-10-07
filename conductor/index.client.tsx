@@ -3,20 +3,24 @@ import type {
   PluginSurfaceProps,
   PluginWorkspacePanelProps,
 } from "@getpaseo/plugin/client";
-import { InboxSurface, InboxSidebar, Sessions } from "./client/podium/surfaces";
+import {
+  PodiumSurface,
+  PodiumSidebar,
+  Sessions,
+} from "./client/podium/surfaces";
 import { registerSkillCommands } from "./client/skills";
-import { registerInboxNavigation } from "./client/podium/registration";
+import { registerPodiumNavigation } from "./client/podium/registration";
 
 export default function contribute(client: PluginClientContext) {
   const sessions = new Sessions();
   const removers = [
     ...registerSkillCommands(client),
-    ...registerInboxNavigation(
+    ...registerPodiumNavigation(
       client,
       (props: PluginSurfaceProps) => (
-        <InboxSurface {...props} sessions={sessions} />
+        <PodiumSurface {...props} sessions={sessions} />
       ),
-      InboxSidebar,
+      PodiumSidebar,
     ),
     client.addWorkspacePanel({
       id: "inbox",
@@ -25,7 +29,7 @@ export default function contribute(client: PluginClientContext) {
       context: "workspace",
       locations: ["explorer", "workspace"],
       Component: (props: PluginWorkspacePanelProps) => (
-        <InboxSurface {...props} sessions={sessions} />
+        <PodiumSurface {...props} sessions={sessions} />
       ),
     }),
     client.addCommandCenterItem({

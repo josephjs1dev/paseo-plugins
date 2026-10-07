@@ -1,7 +1,7 @@
 import type {
   Bucket,
-  InboxItem,
-  InboxSnapshot,
+  AgentItem,
+  AgentsSnapshot,
   TurnOutcome,
 } from "../../shared/agents/models";
 import { requestForm } from "../../shared/agents/questions";
@@ -12,7 +12,7 @@ import type {
   PaseoWorkspace,
 } from "../paseo/types";
 import type { AgentsHost } from "./host";
-import type { InboxStore } from "./store";
+import type { AgentsStore } from "./store";
 import type { TurnJournal } from "./turns";
 import { pages } from "./directory";
 import { archiveKey } from "./archive";
@@ -46,11 +46,11 @@ async function row(
   agent: PaseoAgent,
   request: AgentPermissionRequest | undefined,
   workspace: PaseoWorkspace | undefined,
-  store: InboxStore,
+  store: AgentsStore,
   lastTurn: TurnOutcome | null,
   agents: Map<string, PaseoAgent>,
   children: Map<string, number>,
-): Promise<InboxItem> {
+): Promise<AgentItem> {
   const key = request ? requestKey(agent, request) : agentKey(agent.id);
   const [annotation, agentAnnotation, receipt] = await Promise.all([
     store.annotation(key),
@@ -98,11 +98,11 @@ async function row(
 }
 export async function snapshot(
   runtime: AgentsHost,
-  store: InboxStore,
+  store: AgentsStore,
   knownAgentIds: string[],
   now = Date.now(),
   turns?: TurnJournal,
-): Promise<InboxSnapshot> {
+): Promise<AgentsSnapshot> {
   const [agents, workspaces, receipts] = await Promise.all([
     pages((cursor) => runtime.agents(cursor)),
     pages((cursor) => runtime.workspaces(cursor)).catch(() => ({
@@ -139,7 +139,7 @@ export async function snapshot(
       childCounts.set(parent, (childCounts.get(parent) ?? 0) + 1);
     }
   }
-  const items: InboxItem[] = [];
+  const items: AgentItem[] = [];
   let incomplete = agents.incomplete;
   let turnHistoryIncomplete = false;
   for (const agent of byId.values()) {

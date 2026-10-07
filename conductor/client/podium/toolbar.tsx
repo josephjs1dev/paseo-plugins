@@ -1,17 +1,17 @@
 import { useState, useSyncExternalStore } from "react";
 import { ScrollView, Text, TextInput, View } from "react-native";
 import type { PluginTheme } from "@getpaseo/plugin";
-import type { InboxSnapshot } from "../../shared/agents/models";
+import type { AgentsSnapshot } from "../../shared/agents/models";
 import {
   visibleItems,
   isSnoozed,
   category,
   type Filter,
-} from "../../shared/agents/inbox";
-import type { InboxSession } from "./session";
+} from "../../shared/agents/attention";
+import type { PodiumSession } from "./session";
 import { Button, Label, Notice, rowStyle } from "../ui/controls";
-import { visibleRuns, type RunInboxData } from "../concerts/list";
-import { RunToolbar } from "../concerts/toolbar";
+import { visibleConcerts, type ConcertsData } from "../concerts/list";
+import { ConcertToolbar } from "../concerts/toolbar";
 import { RefreshButton } from "../ui/refresh-button";
 
 const filters: { id: Filter; label: string }[] = [
@@ -25,9 +25,9 @@ interface Props {
   theme: PluginTheme;
   hostLabel: string;
   workspaceId?: string;
-  data: InboxSnapshot | undefined;
-  runs?: RunInboxData;
-  session: InboxSession;
+  data: AgentsSnapshot | undefined;
+  concerts?: ConcertsData;
+  session: PodiumSession;
   compact: boolean;
   stale: boolean;
   refreshing: boolean;
@@ -38,23 +38,25 @@ interface Props {
   selectNext(this: void): void;
 }
 
-export function InboxToolbar(props: Props) {
+export function PodiumToolbar(props: Props) {
   const { theme, data, session, compact, now } = props;
   const state = useSyncExternalStore(session.subscribe, session.getSnapshot);
   const [showHistory, setShowHistory] = useState(false);
   const scoped = (data?.items ?? []).filter(
     (item) => !props.workspaceId || item.workspaceId === props.workspaceId,
   );
-  const runCount = visibleRuns(
-    props.runs?.list?.runs ?? [],
-    { ...state, runQuery: "", runFilter: "all" },
+  const concertCount = visibleConcerts(
+    props.concerts?.list?.runs ?? [],
+    { ...state, concertQuery: "", concertFilter: "all" },
     props.workspaceId,
   ).length;
   const agentCount = new Set(scoped.map((item) => item.agentId)).size;
   const reliable = data && !props.stale;
   const controls = { theme, dense: !compact };
-  const isRuns = state.section === "runs" && Boolean(props.runs);
-  const hasSelection = Boolean(isRuns ? state.runSelection : state.selectedKey);
+  const isConcerts = state.section === "concerts" && Boolean(props.concerts);
+  const hasSelection = Boolean(
+    isConcerts ? state.concertSelection : state.selectedKey,
+  );
   return (
     <View
       style={{
@@ -95,11 +97,11 @@ export function InboxToolbar(props: Props) {
           >
             {props.hostLabel} ·{" "}
             {props.workspaceId ? "This workspace" : "All workspaces"}
-            {!isRuns && data
+            {!isConcerts && data
               ? ` · ${agentCount}${data.incomplete ? "+" : ""} agents${props.stale ? " · last known" : ""}`
               : ""}
-            {isRuns && props.runs?.list
-              ? ` · ${runCount} ${runCount === 1 ? "concert" : "concerts"}${props.runs.stale ? " · last known" : ""}`
+            {isConcerts && props.concerts?.list
+              ? ` · ${concertCount} ${concertCount === 1 ? "concert" : "concerts"}${props.concerts.stale ? " · last known" : ""}`
               : ""}
           </Text>
         </View>
@@ -107,11 +109,13 @@ export function InboxToolbar(props: Props) {
           {compact && hasSelection && (
             <Button
               {...controls}
-              label={isRuns ? "← Back to concerts" : "← Back to queue"}
+              label={isConcerts ? "← Back to concerts" : "← Back to queue"}
               variant="quiet"
               onPress={() =>
                 session.update(
-                  isRuns ? { runSelection: null } : { selectedKey: null },
+                  isConcerts
+                    ? { concertSelection: null }
+                    : { selectedKey: null },
                 )
               }
             />
@@ -121,7 +125,7 @@ export function InboxToolbar(props: Props) {
             refreshing={props.refreshing}
             onPress={props.refresh}
           />
-          {!isRuns && (
+          {!isConcerts && (
             <Button
               {...controls}
               label="Next item →"
@@ -131,7 +135,7 @@ export function InboxToolbar(props: Props) {
           )}
         </View>
       </View>
-      {props.runs && (
+      {props.concerts && (
         <View
           accessibilityRole="tablist"
           accessibilityLabel="Podium sections"
@@ -141,7 +145,7 @@ export function InboxToolbar(props: Props) {
             borderBottomColor: theme.colors.border,
           }}
         >
-          {(["agents", "runs"] as const).map((section) => (
+          {(["agents", "concerts"] as const).map((section) => (
             <Button
               key={section}
               {...controls}
@@ -154,40 +158,40 @@ export function InboxToolbar(props: Props) {
           ))}
         </View>
       )}
-      {!isRuns && props.stale && (
+      {!isConcerts && props.stale && (
         <Notice theme={theme} warning>
           Could not refresh this host. Showing the last known state; answer
           controls are disabled.
         </Notice>
       )}
-      {!isRuns && data?.incomplete && (
+      {!isConcerts && data?.incomplete && (
         <Notice theme={theme} warning>
           Directory is incomplete. Counts are a lower bound; previously waiting
           agents are checked separately.
         </Notice>
       )}
-      {!isRuns && data?.workspaceIncomplete && (
+      {!isConcerts && data?.workspaceIncomplete && (
         <Notice theme={theme}>
           Some workspace names are unavailable. Agent requests remain visible.
         </Notice>
       )}
-      {!isRuns && data?.turnHistoryIncomplete && (
+      {!isConcerts && data?.turnHistoryIncomplete && (
         <Notice theme={theme} warning>
           Some recorded turn outcomes could not be loaded. Missing outcomes
           remain unknown.
         </Notice>
       )}
-      {isRuns && props.runs && (!compact || !hasSelection) && (
-        <RunToolbar
+      {isConcerts && props.concerts && (!compact || !hasSelection) && (
+        <ConcertToolbar
           theme={theme}
-          data={props.runs}
+          data={props.concerts}
           state={state}
           session={session}
           compact={compact}
           {...(props.workspaceId ? { workspaceId: props.workspaceId } : {})}
         />
       )}
-      {!isRuns && (!compact || !hasSelection) && (
+      {!isConcerts && (!compact || !hasSelection) && (
         <>
           <ScrollView
             horizontal
@@ -229,7 +233,7 @@ export function InboxToolbar(props: Props) {
             ))}
           </ScrollView>
           <View
-            testID="inbox-tools"
+            testID="podium-tools"
             style={{ ...rowStyle, alignItems: "center" }}
           >
             <TextInput
@@ -292,7 +296,7 @@ export function InboxToolbar(props: Props) {
           </View>
         </>
       )}
-      {!isRuns && data && (
+      {!isConcerts && data && (
         <Text
           style={{
             fontSize: 11,
@@ -307,7 +311,7 @@ export function InboxToolbar(props: Props) {
           })}
         </Text>
       )}
-      {!isRuns && showHistory && (
+      {!isConcerts && showHistory && (
         <View style={{ gap: 8 }}>
           <Label theme={theme}>RECENT RESPONSE DELIVERY</Label>
           {data?.receipts.length === 0 && (

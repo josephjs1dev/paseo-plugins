@@ -1,16 +1,16 @@
 import { useState } from "react";
 import { Text, View } from "react-native";
 import type { PluginTheme } from "@getpaseo/plugin";
-import type { ArchiveResult, InboxItem } from "../../shared/agents/models";
-import { category } from "../../shared/agents/inbox";
+import type { ArchiveResult, AgentItem } from "../../shared/agents/models";
+import { category } from "../../shared/agents/attention";
 import { Button, rowStyle } from "../ui/controls";
 
 interface Props {
   theme: PluginTheme;
-  item: InboxItem;
+  item: AgentItem;
   stale: boolean;
   directoryIncomplete: boolean;
-  archive(this: void, item: InboxItem): Promise<ArchiveResult>;
+  archive(this: void, item: AgentItem): Promise<ArchiveResult>;
 }
 const errors = {
   stale:

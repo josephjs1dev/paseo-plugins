@@ -13,7 +13,7 @@ const annotationSchema = z.object({
   marked: z.boolean(),
 });
 export type Annotation = z.infer<typeof annotationSchema>;
-export interface InboxStore {
+export interface AgentsStore {
   claim(receipt: Receipt): Promise<boolean>;
   receipt(key: string): Promise<Receipt | undefined>;
   complete(receipt: Receipt): Promise<void>;
@@ -21,10 +21,10 @@ export interface InboxStore {
   annotation(key: string): Promise<Annotation | undefined>;
   annotate(value: Annotation): Promise<void>;
 }
-export function fileStore(directory: string): InboxStore {
+export function fileStore(directory: string): AgentsStore {
   const path = (kind: string, key: string) =>
     join(directory, kind, `${keySchema.parse(key)}.json`);
-  // A bounded recent-actions index keeps each inbox refresh independent of ledger size.
+  // A bounded recent-actions index keeps each Podium refresh independent of ledger size.
   // Receipt files remain authoritative and are never pruned while they may fence a native request.
   const historyPath = join(directory, "recent.json");
   const historySchema = z.array(receiptSchema).max(30);

@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import type { PaseoApi } from "../server/paseo/types";
-import { LaunchRejectedError, RunError } from "../server/concerts/errors";
+import { LaunchRejectedError, ConcertError } from "../server/concerts/errors";
 import { paseoWorkers } from "../server/paseo/concerts-host";
 import type { WorkerLaunch } from "../server/concerts/workers";
 import { agent } from "./fixtures";
@@ -475,7 +475,7 @@ void test("known elevated profile modes are rejected when the parent lacks them"
   }
 });
 
-void test("unknown profiles and unavailable providers produce RunError", async () => {
+void test("unknown profiles and unavailable providers produce ConcertError", async () => {
   const base = {
     agents: [parent()],
     profiles: [
@@ -494,7 +494,7 @@ void test("unknown profiles and unavailable providers produce RunError", async (
     }),
     (error: unknown) =>
       error instanceof LaunchRejectedError &&
-      error instanceof RunError &&
+      error instanceof ConcertError &&
       /Unknown worker profile/.test(error.message),
   );
 
@@ -506,7 +506,7 @@ void test("unknown profiles and unavailable providers produce RunError", async (
     }),
     (error: unknown) =>
       error instanceof LaunchRejectedError &&
-      error instanceof RunError &&
+      error instanceof ConcertError &&
       /provider is unavailable/.test(error.message),
   );
 });

@@ -34,13 +34,13 @@ type Probe = {
 };
 
 async function openMulti(page: Page, theme: string) {
-  await page.goto(`/?runs&run-fixture=multi${theme}`);
+  await page.goto(`/?concerts&concert-fixture=multi${theme}`);
   await page.getByRole("tab", { name: "Concerts", exact: true }).click();
   await page
     .getByRole("button", { name: /^Open concert:/ })
     .first()
     .click();
-  await expect(page.getByTestId("run-detail")).toBeVisible();
+  await expect(page.getByTestId("concert-detail")).toBeVisible();
 }
 
 async function probeLayout(
@@ -49,10 +49,10 @@ async function probeLayout(
   theme: string,
   view: "tasks" | "graph",
 ): Promise<Probe> {
-  const detail = page.getByTestId("run-detail");
+  const detail = page.getByTestId("concert-detail");
   if (view === "graph") {
     await detail.getByRole("button", { name: "Graph", exact: true }).click();
-    await expect(page.getByTestId("run-graph")).toBeVisible();
+    await expect(page.getByTestId("concert-graph")).toBeVisible();
   }
   const overflow = await page.evaluate(() => ({
     pageOverflow: document.documentElement.scrollWidth > innerWidth,
@@ -62,7 +62,7 @@ async function probeLayout(
   const canvas =
     view === "graph"
       ? await page
-          .getByTestId("run-node-api")
+          .getByTestId("concert-node-api")
           .evaluate((element: HTMLElement) => {
             let node: HTMLElement | null = element.parentElement;
             while (node && node.scrollWidth <= node.clientWidth) {
@@ -83,7 +83,7 @@ async function probeLayout(
   const nodeTitle: Probe["nodeTitle"] =
     view === "graph"
       ? ((await page
-          .getByTestId("run-node-api")
+          .getByTestId("concert-node-api")
           .evaluate((element: HTMLElement) => {
             let best: {
               clientHeight: number;
@@ -114,7 +114,7 @@ async function probeLayout(
   const cardTitle: Probe["cardTitle"] =
     view === "tasks"
       ? ((await page
-          .getByTestId("run-task-api")
+          .getByTestId("concert-task-api")
           .evaluate((element: HTMLElement) => {
             let best: {
               clientHeight: number;
@@ -220,7 +220,7 @@ test("layout probe collects geometry at the required viewports and themes", asyn
       `${probe.viewport}/${probe.theme}/${probe.view} must not overflow the page`,
     ).toBe(false);
     if (probe.view === "graph") {
-      // The multi-run graph is wider than every probed detail pane, so the
+      // The multi-concert graph is wider than every probed detail pane, so the
       // canvas must scroll internally instead of the page.
       expect(
         probe.graphCanvas.found,
@@ -244,21 +244,21 @@ test("layout probe collects geometry at the required viewports and themes", asyn
     ).toBe(true);
   }
 
-  // The single-node long-title run must fit without a huge empty stage.
+  // The single-node long-title concert must fit without a huge empty stage.
   await page.setViewportSize({ width: 1440, height: 900 });
-  await page.goto("/?runs&run-fixture=long-title");
+  await page.goto("/?concerts&concert-fixture=long-title");
   await page.getByRole("tab", { name: "Concerts", exact: true }).click();
   await page
     .getByRole("button", { name: /^Open concert:/ })
     .first()
     .click();
-  const detail = page.getByTestId("run-detail");
+  const detail = page.getByTestId("concert-detail");
   await detail.getByRole("button", { name: "Graph", exact: true }).click();
   expect(
     await page.evaluate(() => document.documentElement.scrollWidth),
   ).toBeLessThanOrEqual(1440);
   const singleCanvas = await page
-    .getByTestId("run-node-migration")
+    .getByTestId("concert-node-migration")
     .evaluate((element: HTMLElement) => {
       let node: HTMLElement | null = element.parentElement;
       while (node && node.scrollWidth <= node.clientWidth) {

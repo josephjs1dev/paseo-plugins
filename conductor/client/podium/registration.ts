@@ -7,18 +7,18 @@ import type {
   PluginSurfaceProps,
 } from "@getpaseo/plugin/client";
 
-type InboxNavigation = Pick<PluginGlobalCommandContext, "openSurface"> &
+type PodiumNavigation = Pick<PluginGlobalCommandContext, "openSurface"> &
   Partial<Pick<PluginGlobalCommandContext, "openScreen">>;
 
-type InboxRegistration = Pick<
+type PodiumRegistration = Pick<
   PluginClientContext,
   "addSurface" | "addSidebarItem" | "addCommandCenterItem"
 > &
   Partial<Pick<PluginClientContext, "addScreen" | "addSidebarHeaderItem">>;
 
 /** 0.10 clients expose surfaces; 0.11 clients additionally expose screens. */
-export function openInbox(
-  context: InboxNavigation,
+export function openPodium(
+  context: PodiumNavigation,
   params?: PluginScreenParams,
 ): void {
   if (typeof context.openScreen === "function") {
@@ -28,8 +28,8 @@ export function openInbox(
   }
 }
 
-export function registerInboxNavigation(
-  client: InboxRegistration,
+export function registerPodiumNavigation(
+  client: PodiumRegistration,
   Surface: FunctionComponent<PluginSurfaceProps>,
   Sidebar: ComponentType<PluginSidebarItemProps>,
 ) {
@@ -68,7 +68,7 @@ export function registerInboxNavigation(
       icon: "Workflow",
       keywords: ["waiting", "questions", "permissions", "agents"],
       context: "global",
-      onSelect: openInbox,
+      onSelect: openPodium,
     }),
   );
   return removers;

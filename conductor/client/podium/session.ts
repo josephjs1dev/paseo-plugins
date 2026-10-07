@@ -1,34 +1,34 @@
 import type {
   Decision,
-  InboxItem,
+  AgentItem,
   AnswerResult,
 } from "../../shared/agents/models";
-import type { Filter } from "../../shared/agents/inbox";
-import type { RunSelection } from "../concerts/selection";
+import type { Filter } from "../../shared/agents/attention";
+import type { ConcertSelection } from "../concerts/selection";
 
 export interface ViewState {
-  section: "agents" | "runs";
-  runQuery: string;
-  runFilter: "all" | "active" | "blocked" | "completed";
+  section: "agents" | "concerts";
+  concertQuery: string;
+  concertFilter: "all" | "active" | "blocked" | "completed";
   filter: Filter;
   query: string;
   groupBy: "project" | "workspace";
   selectedKey: string | null;
-  runSelection: RunSelection | null;
+  concertSelection: ConcertSelection | null;
   showSnoozed: boolean;
   drafts: Readonly<Record<string, Decision>>;
   notices: Readonly<Record<string, AnswerResult["status"] | "sending">>;
 }
-export class InboxSession {
+export class PodiumSession {
   private state: ViewState = {
     section: "agents",
-    runQuery: "",
-    runFilter: "all",
+    concertQuery: "",
+    concertFilter: "all",
     filter: "attention",
     query: "",
     groupBy: "project",
     selectedKey: null,
-    runSelection: null,
+    concertSelection: null,
     showSnoozed: false,
     drafts: {},
     notices: {},
@@ -47,7 +47,7 @@ export class InboxSession {
       listener();
     }
   }
-  select(item: InboxItem): void {
+  select(item: AgentItem): void {
     let draft = this.state.drafts[item.key];
     if (!draft && item.form?.kind === "questions") {
       draft = {
@@ -73,7 +73,7 @@ export class InboxSession {
       drafts: {},
       notices: {},
       selectedKey: null,
-      runSelection: null,
+      concertSelection: null,
     };
     this.listeners.clear();
   }

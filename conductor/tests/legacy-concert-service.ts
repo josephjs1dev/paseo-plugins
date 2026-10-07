@@ -1,30 +1,30 @@
 import { z } from "zod";
 import { graphIssues } from "../shared/concerts/graph";
 import {
-  RUN_LIMITS,
+  CONCERT_LIMITS,
   contextSchema,
   graphSchema,
-  runIdSchema,
+  uuidSchema,
   sourceSchema,
-  type RunGraph,
+  type ConcertGraph,
 } from "../shared/concerts/models";
-import { RunError } from "../server/concerts/errors";
-import type { RunPlacementRuntime } from "../server/concerts/placement";
-import { contentHash, type RunStore } from "../server/concerts/store";
+import { ConcertError } from "../server/concerts/errors";
+import type { ConcertPlacementRuntime } from "../server/concerts/placement";
+import { contentHash, type ConcertStore } from "../server/concerts/store";
 
 // Test-only builder for snapshots written by the retired manual planner.
-const prepareRunInput = z
+const prepareConcertInput = z
   .object({
-    id: runIdSchema,
+    id: uuidSchema,
     title: z.string().trim().min(1).max(160),
     source: sourceSchema,
     context: contextSchema,
     graph: graphSchema,
   })
   .strict();
-const runCommandInput = z
+const concertCommandInput = z
   .object({
-    id: runIdSchema,
+    id: uuidSchema,
     expectedVersion: z.number().int().nonnegative(),
     command: z.discriminatedUnion("kind", [
       z.object({ kind: z.literal("save-draft"), graph: graphSchema }).strict(),
@@ -38,20 +38,20 @@ const runCommandInput = z
     ]),
   })
   .strict();
-function requireValidGraph(graph: RunGraph): void {
+function requireValidGraph(graph: ConcertGraph): void {
   const issues = graphIssues(graph);
   if (issues.length) {
-    throw new RunError(issues.slice(0, 5).join(" "));
+    throw new ConcertError(issues.slice(0, 5).join(" "));
   }
 }
 
-export function legacyRunService(
-  store: RunStore,
-  runtime: RunPlacementRuntime,
+export function legacyConcertService(
+  store: ConcertStore,
+  runtime: ConcertPlacementRuntime,
 ) {
   return {
-    async prepare(input: z.infer<typeof prepareRunInput>) {
-      const parsed = prepareRunInput.parse(input);
+    async prepare(input: z.infer<typeof prepareConcertInput>) {
+      const parsed = prepareConcertInput.parse(input);
       requireValidGraph(parsed.graph);
       const source = await runtime.capture(parsed.source);
       await runtime.validate(source, parsed.graph);
@@ -75,12 +75,12 @@ export function legacyRunService(
         parsed.context,
       );
     },
-    async change(input: z.infer<typeof runCommandInput>) {
-      const parsed = runCommandInput.parse(input);
+    async change(input: z.infer<typeof concertCommandInput>) {
+      const parsed = concertCommandInput.parse(input);
       return store.update(parsed.id, parsed.expectedVersion, async (run) => {
         if (run.execution) {
-          throw new RunError(
-            "Agent-owned runs are updated through their source commands.",
+          throw new ConcertError(
+            "Agent-owned concerts are updated through their source commands.",
           );
         }
         switch (parsed.command.kind) {
@@ -91,19 +91,21 @@ export function legacyRunService(
           }
           case "discard-draft": {
             if (!run.revisions.length) {
-              throw new RunError("An unaccepted run must keep its draft.");
+              throw new ConcertError(
+                "An unaccepted concert must keep its draft.",
+              );
             }
             return { ...run, draft: null };
           }
           case "accept": {
             if (!run.draft?.tasks.length) {
-              throw new RunError(
+              throw new ConcertError(
                 "Add at least one task before accepting the breakdown.",
               );
             }
-            if (run.revisions.length >= RUN_LIMITS.revisions) {
-              throw new RunError(
-                "This run has reached its accepted revision limit.",
+            if (run.revisions.length >= CONCERT_LIMITS.revisions) {
+              throw new ConcertError(
+                "This concert has reached its accepted revision limit.",
               );
             }
             requireValidGraph(run.draft);

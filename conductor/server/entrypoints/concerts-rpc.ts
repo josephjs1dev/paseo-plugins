@@ -1,11 +1,11 @@
 import type { PluginServerContext } from "@getpaseo/plugin/server";
 import {
-  deleteRun,
-  getRunAccess,
-  listRuns,
-  readRun,
+  deleteConcert,
+  getConcertAccess,
+  listConcerts,
+  readConcert,
 } from "../../shared/concerts/rpc";
-import { RunError } from "../concerts/errors";
+import { ConcertError } from "../concerts/errors";
 import { concertService } from "../concerts/service";
 import { paseoConcertHost } from "../paseo/concerts-host";
 import { paseoConnection } from "../paseo/connection";
@@ -15,11 +15,11 @@ async function guarded<T>(action: () => Promise<T>): Promise<T> {
   try {
     return await action();
   } catch (error) {
-    if (error instanceof RunError) {
+    if (error instanceof ConcertError) {
       throw error;
     }
     throw new Error(
-      "Conductor could not load or save this concert. Refresh and inspect run storage; native requests remain available.",
+      "Conductor could not load or save this concert. Refresh and inspect concert storage; native requests remain available.",
     );
   }
 }
@@ -43,12 +43,12 @@ export function registerConcerts(
     service.interrupt,
     ready,
   );
-  server.handle(getRunAccess, async (_input, { paseo }) => {
+  server.handle(getConcertAccess, async (_input, { paseo }) => {
     connection.remember(paseo);
     await ready;
     return access;
   });
-  server.handle(listRuns, (input, { paseo }) =>
+  server.handle(listConcerts, (input, { paseo }) =>
     guarded(async () => {
       connection.remember(paseo);
       const list = await store.list();
@@ -63,19 +63,19 @@ export function registerConcerts(
       };
     }),
   );
-  server.handle(readRun, ({ id }, { paseo }) => {
+  server.handle(readConcert, ({ id }, { paseo }) => {
     connection.remember(paseo);
     return guarded(async () => {
       const data = await store.read(id);
       if (!data.run.execution) {
-        throw new RunError(
-          "This obsolete plan is no longer part of the Concerts inbox.",
+        throw new ConcertError(
+          "This obsolete plan is no longer part of the Podium's Concerts.",
         );
       }
       return data;
     });
   });
-  server.handle(deleteRun, ({ id, version }, { paseo }) =>
+  server.handle(deleteConcert, ({ id, version }, { paseo }) =>
     guarded(async () => {
       connection.remember(paseo);
       await store.remove(id, version);

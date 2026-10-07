@@ -1,10 +1,10 @@
 import { ScrollView, TextInput } from "react-native";
 import type { PluginTheme } from "@getpaseo/plugin";
-import type { InboxSession, ViewState } from "../podium/session";
+import type { PodiumSession, ViewState } from "../podium/session";
 import { Button } from "../ui/controls";
-import { visibleRuns, type RunInboxData } from "./list";
+import { visibleConcerts, type ConcertsData } from "./list";
 
-export function RunToolbar({
+export function ConcertToolbar({
   theme,
   data,
   state,
@@ -13,9 +13,9 @@ export function RunToolbar({
   workspaceId,
 }: {
   theme: PluginTheme;
-  data: RunInboxData;
+  data: ConcertsData;
   state: ViewState;
-  session: InboxSession;
+  session: PodiumSession;
   compact: boolean;
   workspaceId?: string;
 }) {
@@ -47,18 +47,18 @@ export function RunToolbar({
             label={label}
             variant="tab"
             dense={!compact}
-            selected={state.runFilter === id}
+            selected={state.concertFilter === id}
             {...(reliable
               ? {
-                  count: visibleRuns(
+                  count: visibleConcerts(
                     data.list?.runs ?? [],
-                    { ...state, runFilter: id, runQuery: "" },
+                    { ...state, concertFilter: id, concertQuery: "" },
                     workspaceId,
                   ).length,
                 }
               : {})}
             onPress={() =>
-              session.update({ runFilter: id, runSelection: null })
+              session.update({ concertFilter: id, concertSelection: null })
             }
           />
         ))}
@@ -67,8 +67,8 @@ export function RunToolbar({
         accessibilityLabel="Search concerts"
         placeholder="Search concerts or workspaces…"
         placeholderTextColor={theme.colors.foregroundMuted}
-        value={state.runQuery}
-        onChangeText={(runQuery) => session.update({ runQuery })}
+        value={state.concertQuery}
+        onChangeText={(concertQuery) => session.update({ concertQuery })}
         style={{
           height: compact ? 44 : 34,
           paddingHorizontal: 10,

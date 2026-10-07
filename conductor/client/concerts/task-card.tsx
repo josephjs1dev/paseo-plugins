@@ -3,7 +3,7 @@ import { taskState, type TaskStateKey } from "../../shared/concerts/task-state";
 import type { PluginTheme } from "@getpaseo/plugin";
 import {
   latestAttempt,
-  type StoredRun,
+  type StoredConcert,
   type TaskDefinition,
 } from "../../shared/concerts/models";
 import { Button, Disclosure, Notice } from "../ui/controls";
@@ -15,8 +15,8 @@ import {
 } from "./task-report";
 
 /**
- * Which details a card currently reveals. Owned by RunDetail so state survives
- * ordinary run refreshes and resets when the run identity changes.
+ * Which details a card currently reveals. Owned by ConcertDetail so state survives
+ * ordinary concert refreshes and resets when the concert identity changes.
  */
 export interface TaskDisclosures {
   readonly summary?: boolean;
@@ -88,7 +88,7 @@ function summaryMayClamp(summary: string): boolean {
  * that keeps Evidence and Checks behind one inset panel. Blocker messages and
  * failed checks stay visible without expanding anything.
  */
-export function RunTaskCard({
+export function ConcertTaskCard({
   theme,
   run,
   task,
@@ -98,7 +98,7 @@ export function RunTaskCard({
   openAgent,
 }: {
   theme: PluginTheme;
-  run: StoredRun;
+  run: StoredConcert;
   task: TaskDefinition;
   compact?: boolean;
   disclosures?: TaskDisclosures;
@@ -118,7 +118,7 @@ export function RunTaskCard({
   );
   return (
     <View
-      testID={`run-task-${task.id}`}
+      testID={`concert-task-${task.id}`}
       style={{
         gap: 8,
         padding: compact ? 12 : 16,
@@ -260,7 +260,7 @@ export function RunTaskCard({
 
 /**
  * Report prose clamped to three lines by default. The toggle appears only when
- * the text likely overflows the clamp; its expanded state lives in RunDetail's
+ * the text likely overflows the clamp; its expanded state lives in ConcertDetail's
  * disclosure map so it survives refreshes.
  */
 function Summary({
@@ -354,7 +354,7 @@ function InstructionPreview({
           label={INSTRUCTIONS_LABEL}
           expanded={expanded}
           onToggle={onToggle}
-          testID={`run-task-instructions-${task.id}`}
+          testID={`concert-task-instructions-${task.id}`}
           dense={!compact}
         />
         {expanded && (

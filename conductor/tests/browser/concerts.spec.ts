@@ -1,23 +1,23 @@
 import { expect, test, type Page } from "@playwright/test";
 
-const runName = "Open concert: Pagination investigation";
+const concertName = "Open concert: Pagination investigation";
 
-/** Run-detail controls share names with queue rows, so stay inside one detail surface. */
+/** Concert-detail controls share names with queue rows, so stay inside one detail surface. */
 function detailButton(detail: ReturnType<Page["getByTestId"]>, name: string) {
   return detail.getByRole("button", { name, exact: true }).first();
 }
 
-test("Runs monitors source-agent progress and results without manual authoring", async ({
+test("Concerts monitors source-agent progress and results without manual authoring", async ({
   page,
 }) => {
-  const detail = page.getByTestId("run-detail");
+  const detail = page.getByTestId("concert-detail");
   const instance = (name: string) => detailButton(detail, name);
-  await page.goto("/?runs");
+  await page.goto("/?concerts");
   await expect(
     page.getByRole("button", { name: "New concert", exact: true }),
   ).toHaveCount(0);
   await page.getByRole("tab", { name: "Concerts", exact: true }).click();
-  await page.getByRole("button", { name: runName, exact: true }).click();
+  await page.getByRole("button", { name: concertName, exact: true }).click();
   await expect(detail).toContainText("0 of 3 tasks reported complete");
   await expect(detail.getByRole("textbox")).toHaveCount(0);
   await expect(
@@ -27,11 +27,11 @@ test("Runs monitors source-agent progress and results without manual authoring",
   await page
     .getByRole("button", { name: "Source claims task", exact: true })
     .click();
-  await expect(page.getByTestId("run-task-api")).toContainText("Running");
+  await expect(page.getByTestId("concert-task-api")).toContainText("Running");
   await page
     .getByRole("button", { name: "Source reports blocker", exact: true })
     .click();
-  await expect(page.getByTestId("run-task-api")).toContainText(
+  await expect(page.getByTestId("concert-task-api")).toContainText(
     "Confirm the pagination compatibility requirement",
   );
   await page
@@ -39,9 +39,9 @@ test("Runs monitors source-agent progress and results without manual authoring",
     .click();
   await expect(page.getByTestId("preview-status")).toContainText("agent-1");
   await page
-    .getByRole("button", { name: "Source completes run", exact: true })
+    .getByRole("button", { name: "Source completes concert", exact: true })
     .click();
-  const apiCard = () => page.getByTestId("run-task-api");
+  const apiCard = () => page.getByTestId("concert-task-api");
   await expect(detail).toContainText("3 of 3 tasks reported complete");
   await expect(detail).toContainText("Compared both implementations");
   // The card metadata line merges the textual state with the muted task ID.
@@ -83,16 +83,16 @@ test("Runs monitors source-agent progress and results without manual authoring",
   await expect(firstAttempt).not.toContainText("Compared both implementations");
   await page.getByRole("button", { name: "Complete", exact: true }).click();
   await expect(
-    page.getByRole("button", { name: runName, exact: true }),
+    page.getByRole("button", { name: concertName, exact: true }),
   ).toBeVisible();
 });
 
-test("Agents and Runs retain separate searches, selections and native answer drafts", async ({
+test("Agents and Concerts retain separate searches, selections and native answer drafts", async ({
   page,
 }) => {
-  const detail = page.getByTestId("run-detail");
+  const detail = page.getByTestId("concert-detail");
   const instance = (name: string) => detailButton(detail, name);
-  await page.goto("/?runs");
+  await page.goto("/?concerts");
   await page
     .getByRole("textbox", { name: "Search agents and requests" })
     .fill("pagination");
@@ -121,18 +121,18 @@ test("Agents and Runs retain separate searches, selections and native answer dra
   await page
     .getByRole("textbox", { name: "Search concerts" })
     .fill("investigation");
-  await page.getByRole("button", { name: runName, exact: true }).click();
+  await page.getByRole("button", { name: concertName, exact: true }).click();
   await instance("Graph").click();
-  await expect(page.getByTestId("run-graph")).toBeVisible();
-  await expect(page.getByTestId("run-node-collect")).toHaveAttribute(
+  await expect(page.getByTestId("concert-graph")).toBeVisible();
+  await expect(page.getByTestId("concert-node-collect")).toHaveAttribute(
     "aria-label",
     /Waits for api, ui/,
   );
   await expect(
-    page.getByTestId("run-edge-api-collect-dependency-0"),
+    page.getByTestId("concert-edge-api-collect-dependency-0"),
   ).toBeVisible();
-  const queue = await page.getByTestId("runs-queue").boundingBox();
-  const detailBox = await page.getByTestId("run-detail").boundingBox();
+  const queue = await page.getByTestId("concerts-queue").boundingBox();
+  const detailBox = await page.getByTestId("concert-detail").boundingBox();
   expect(detailBox?.width ?? 0).toBeGreaterThan(queue?.width ?? 0);
   await page.getByRole("tab", { name: "Agents", exact: true }).click();
   await expect(
@@ -146,24 +146,26 @@ test("Agents and Runs retain separate searches, selections and native answer dra
   await expect(
     page.getByRole("textbox", { name: "Search concerts" }),
   ).toHaveValue("investigation");
-  await expect(page.getByTestId("run-graph")).toBeVisible();
-  await expect(page.getByTestId("run-node-collect")).toHaveAttribute(
+  await expect(page.getByTestId("concert-graph")).toBeVisible();
+  await expect(page.getByTestId("concert-node-collect")).toHaveAttribute(
     "aria-label",
     /Waits for api, ui/,
   );
   await expect(
-    page.getByTestId("run-edge-api-collect-dependency-0"),
+    page.getByTestId("concert-edge-api-collect-dependency-0"),
   ).toBeVisible();
 });
 
-test("legacy plans are excluded from Runs and its counts", async ({ page }) => {
-  await page.goto("/?runs&legacy-run");
+test("legacy plans are excluded from Concerts and its counts", async ({
+  page,
+}) => {
+  await page.goto("/?concerts&legacy-concert");
   await page.getByRole("tab", { name: "Concerts", exact: true }).click();
   await expect(
     page.getByRole("button", { name: "Legacy plans", exact: true }),
   ).toHaveCount(0);
   await expect(
-    page.getByRole("button", { name: runName, exact: true }),
+    page.getByRole("button", { name: concertName, exact: true }),
   ).toHaveCount(0);
   await expect(
     page.getByText("No concerts yet", { exact: true }),
@@ -174,10 +176,10 @@ test("legacy plans are excluded from Runs and its counts", async ({ page }) => {
   ).toContainText("0");
 });
 
-test("Runs matches Agents control and row sizing with keyboard selection", async ({
+test("Concerts matches Agents control and row sizing with keyboard selection", async ({
   page,
 }) => {
-  await page.goto("/?runs");
+  await page.goto("/?concerts");
   const agentSearch = await page
     .getByRole("textbox", { name: "Search agents and requests" })
     .boundingBox();
@@ -197,37 +199,40 @@ test("Runs matches Agents control and row sizing with keyboard selection", async
     borderLeft: getComputedStyle(element).borderLeftWidth,
   }));
   await page.getByRole("tab", { name: "Concerts", exact: true }).click();
-  const runSearch = await page
+  const concertSearch = await page
     .getByRole("textbox", { name: "Search concerts" })
     .boundingBox();
-  expect(runSearch?.height).toBe(agentSearch?.height);
-  expect(runSearch?.y).toBe(agentSearch?.y);
-  const runFilter = page.getByRole("button", { name: "All", exact: true });
+  expect(concertSearch?.height).toBe(agentSearch?.height);
+  expect(concertSearch?.y).toBe(agentSearch?.y);
+  const concertFilter = page.getByRole("button", { name: "All", exact: true });
   expect(
-    await runFilter.evaluate((element) => ({
+    await concertFilter.evaluate((element) => ({
       borderBottom: getComputedStyle(element).borderBottomWidth,
       height: element.getBoundingClientRect().height,
     })),
   ).toEqual(agentFilterStyle);
-  const runRow = page.getByRole("button", { name: runName, exact: true });
+  const concertRow = page.getByRole("button", {
+    name: concertName,
+    exact: true,
+  });
   expect(
-    await runRow.evaluate((element) => ({
+    await concertRow.evaluate((element) => ({
       padding: getComputedStyle(element).padding,
       borderLeft: getComputedStyle(element).borderLeftWidth,
     })),
   ).toEqual(rowStyle);
-  await expect(runRow).toContainText("Pagination investigation");
-  await expect(runRow).not.toContainText("Open concert:");
-  await runRow.focus();
+  await expect(concertRow).toContainText("Pagination investigation");
+  await expect(concertRow).not.toContainText("Open concert:");
+  await concertRow.focus();
   await page.keyboard.press("Enter");
-  await expect(page.getByTestId("run-detail")).toBeVisible();
+  await expect(page.getByTestId("concert-detail")).toBeVisible();
   await expect(page.getByTestId("agent-coverage")).toContainText("1 concert");
 });
 
-test("run-store failures stay in Runs and do not disable native answers", async ({
+test("concert-store failures stay in Concerts and do not disable native answers", async ({
   page,
 }) => {
-  await page.goto("/?runs&run-failed");
+  await page.goto("/?concerts&concert-failed");
   await page.getByRole("tab", { name: "Concerts", exact: true }).click();
   await expect(
     page.getByText(/Concert storage could not refresh/),
@@ -248,35 +253,37 @@ test("run-store failures stay in Runs and do not disable native answers", async 
 test("compact monitoring preserves navigation and the accessible refresh icon", async ({
   page,
 }) => {
-  const detail = page.getByTestId("run-detail");
+  const detail = page.getByTestId("concert-detail");
   const instance = (name: string) => detailButton(detail, name);
   await page.setViewportSize({ width: 390, height: 844 });
-  await page.goto("/?runs&global&dark&stale");
+  await page.goto("/?concerts&global&dark&stale");
   const refresh = page.getByRole("button", { name: "Refresh", exact: true });
   await expect(refresh).toHaveText("");
   await expect(refresh.locator("svg")).toBeVisible();
   await refresh.focus();
   await page.keyboard.press("Enter");
   await page.getByRole("tab", { name: "Concerts", exact: true }).click();
-  await page.getByRole("button", { name: runName, exact: true }).click();
+  await page.getByRole("button", { name: concertName, exact: true }).click();
   await instance("Graph").click();
-  await expect(page.getByTestId("run-graph")).toBeVisible();
-  await expect(page.getByTestId("run-node-collect")).toHaveAttribute(
+  await expect(page.getByTestId("concert-graph")).toBeVisible();
+  await expect(page.getByTestId("concert-node-collect")).toHaveAttribute(
     "aria-label",
     /Waits for api, ui/,
   );
   await expect(
-    page.getByTestId("run-edge-api-collect-dependency-0"),
+    page.getByTestId("concert-edge-api-collect-dependency-0"),
   ).toBeVisible();
   await expect(
-    page.getByTestId("run-edge-api-collect-dependency-0"),
+    page.getByTestId("concert-edge-api-collect-dependency-0"),
   ).toBeVisible();
-  await expect(page.getByTestId("run-node-api")).toContainText("Ready");
-  await expect(page.getByTestId("run-node-collect")).toContainText("Waiting");
+  await expect(page.getByTestId("concert-node-api")).toContainText("Ready");
+  await expect(page.getByTestId("concert-node-collect")).toContainText(
+    "Waiting",
+  );
   // Graph nodes exceed a 390px viewport, so the canvas scrolls internally while
   // the page itself never gains horizontal overflow.
   const canvas = await page
-    .getByTestId("run-node-api")
+    .getByTestId("concert-node-api")
     .evaluate((element: HTMLElement) => {
       let node: HTMLElement | null = element.parentElement;
       while (node && node.scrollWidth <= node.clientWidth) {
@@ -303,7 +310,7 @@ test("compact monitoring preserves navigation and the accessible refresh icon", 
     ),
   ).toBe(true);
   const compactWidth = await page
-    .getByTestId("run-node-api")
+    .getByTestId("concert-node-api")
     .evaluate((element) => element.getBoundingClientRect().width);
   expect(compactWidth).toBeLessThanOrEqual(224);
   await page
@@ -318,11 +325,11 @@ test("compact monitoring preserves navigation and the accessible refresh icon", 
 test("task and graph agent links open the actual worker and retain the conductor link", async ({
   page,
 }) => {
-  const detail = page.getByTestId("run-detail");
+  const detail = page.getByTestId("concert-detail");
   const instance = (name: string) => detailButton(detail, name);
-  await page.goto("/?runs");
+  await page.goto("/?concerts");
   await page.getByRole("tab", { name: "Concerts", exact: true }).click();
-  await page.getByRole("button", { name: runName, exact: true }).click();
+  await page.getByRole("button", { name: concertName, exact: true }).click();
   await expect(
     page.getByText("CONDUCTOR WORKSPACE", { exact: true }),
   ).toHaveCount(0);
@@ -336,30 +343,30 @@ test("task and graph agent links open the actual worker and retain the conductor
     .click();
   await expect(page.getByTestId("preview-status")).toContainText("agent-1");
   await instance("Graph").click();
-  const api = page.getByTestId("run-node-api");
+  const api = page.getByTestId("concert-node-api");
   await api.focus();
   await page.keyboard.press("Enter");
   await expect(page.getByTestId("preview-status")).toContainText("worker-api");
-  await expect(page.getByTestId("run-graph-selection")).toContainText(
+  await expect(page.getByTestId("concert-graph-selection")).toContainText(
     "Selected api",
   );
-  const collect = page.getByTestId("run-node-collect");
+  const collect = page.getByTestId("concert-node-collect");
   await collect.focus();
   await page.keyboard.press("Enter");
-  await expect(page.getByTestId("run-graph-selection")).toContainText(
+  await expect(page.getByTestId("concert-graph-selection")).toContainText(
     "Selected collect",
   );
   // Selection detail repeats the full title even though the node can truncate.
-  await expect(page.getByTestId("run-graph-selection")).toContainText(
+  await expect(page.getByTestId("concert-graph-selection")).toContainText(
     "Investigate collect",
   );
   // A task without prerequisites says so in the selection detail.
   await api.focus();
   await page.keyboard.press("Enter");
-  await expect(page.getByTestId("run-graph-selection")).toContainText(
+  await expect(page.getByTestId("concert-graph-selection")).toContainText(
     "No dependencies",
   );
-  const edge = page.getByTestId("run-edge-api-collect-dependency-0");
+  const edge = page.getByTestId("concert-edge-api-collect-dependency-0");
   await expect(edge).toBeVisible();
   const left = await api.boundingBox();
   const right = await collect.boundingBox();

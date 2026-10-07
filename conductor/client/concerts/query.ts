@@ -1,22 +1,22 @@
 import { useRpc } from "@getpaseo/plugin/client";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
-  deleteRun,
-  getRunAccess,
-  listRuns,
-  readRun,
+  deleteConcert,
+  getConcertAccess,
+  listConcerts,
+  readConcert,
 } from "../../shared/concerts/rpc";
-import type { RunSelection } from "./selection";
+import type { ConcertSelection } from "./selection";
 
-export function useRuns(
+export function useConcerts(
   hostId: string,
   workspaceId: string | undefined,
-  selection: RunSelection | null,
+  selection: ConcertSelection | null,
 ) {
-  const list = useRpc(listRuns);
-  const read = useRpc(readRun);
-  const access = useRpc(getRunAccess);
-  const remove = useRpc(deleteRun);
+  const list = useRpc(listConcerts);
+  const read = useRpc(readConcert);
+  const access = useRpc(getConcertAccess);
+  const remove = useRpc(deleteConcert);
   const cache = useQueryClient();
   const key = ["conductor", hostId, "runs"];
   const capabilities = useQuery({
@@ -48,7 +48,7 @@ export function useRuns(
     mutationFn: (input: { id: string; version: number }) => remove(input),
     onSuccess: (_data, variables) => {
       // Drop the cached detail so a stale snapshot cannot reappear, then
-      // refresh the shared runs key (list, detail, access).
+      // refresh the shared concerts key (list, detail, access).
       cache.removeQueries({ queryKey: [...key, "detail", variables.id] });
       void cache.invalidateQueries({ queryKey: key });
     },

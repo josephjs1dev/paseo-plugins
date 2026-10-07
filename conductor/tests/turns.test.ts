@@ -6,7 +6,7 @@ import { turnJournal } from "../server/agents/turns";
 import { snapshot } from "../server/agents/snapshot";
 import { fileStore } from "../server/agents/store";
 import { agentKey } from "../server/agents/identity";
-import { visibleItems } from "../shared/agents/inbox";
+import { visibleItems } from "../shared/agents/attention";
 import { agent, runtime, testDirectory } from "./fixtures";
 
 const idle = () =>

@@ -1,11 +1,18 @@
 import { useState, useSyncExternalStore } from "react";
-import type { InboxSession } from "../../client/podium/session";
-import type { RunInboxData } from "../../client/concerts/list";
-import { summarizeRun, type StoredRun } from "../../shared/concerts/models";
-import { fixtureRuns, planContext, storedRun } from "../run-fixtures";
+import type { PodiumSession } from "../../client/podium/session";
+import type { ConcertsData } from "../../client/concerts/list";
+import {
+  summarizeConcert,
+  type StoredConcert,
+} from "../../shared/concerts/models";
+import {
+  fixtureConcerts,
+  planContext,
+  storedConcert,
+} from "../concert-fixtures";
 
-function managed(): StoredRun {
-  const base = storedRun();
+function managed(): StoredConcert {
+  const base = storedConcert();
   return {
     ...base,
     status: "ready",
@@ -29,19 +36,19 @@ function managed(): StoredRun {
     },
   };
 }
-export function usePreviewRuns(
-  session: InboxSession,
+export function usePreviewConcerts(
+  session: PodiumSession,
   failed: boolean,
   legacy = false,
   fixture: string | undefined = undefined,
 ) {
-  const [run, setRun] = useState<StoredRun | null>(
+  const [run, setConcert] = useState<StoredConcert | null>(
     () =>
-      (fixture ? fixtureRuns[fixture]?.() : undefined) ??
-      (legacy ? storedRun() : managed()),
+      (fixture ? fixtureConcerts[fixture]?.() : undefined) ??
+      (legacy ? storedConcert() : managed()),
   );
   const state = useSyncExternalStore(session.subscribe, session.getSnapshot);
-  const data: RunInboxData = {
+  const data: ConcertsData = {
     access: {
       available: true,
       commandPath: "/fixture/command.mjs",
@@ -49,25 +56,25 @@ export function usePreviewRuns(
       message: null,
     },
     list: {
-      runs: run ? [summarizeRun(run)] : [],
+      runs: run ? [summarizeConcert(run)] : [],
       incomplete: false,
       unavailable: failed ? 1 : 0,
     },
     loading: false,
     stale: failed,
     detail:
-      run && state.runSelection?.id === run.id
+      run && state.concertSelection?.id === run.id
         ? { run, context: planContext }
         : undefined,
     detailStale: failed,
   };
   /** In-memory stand-in for the runs.delete RPC. */
-  const remove = (stored: StoredRun): Promise<void> => {
-    setRun((prior) => (prior && prior.id === stored.id ? null : prior));
+  const remove = (stored: StoredConcert): Promise<void> => {
+    setConcert((prior) => (prior && prior.id === stored.id ? null : prior));
     return Promise.resolve();
   };
   const progress = (kind: "claim" | "block" | "complete") =>
-    setRun((prior) => {
+    setConcert((prior) => {
       if (!prior) {
         return prior;
       }

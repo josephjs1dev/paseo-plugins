@@ -28,8 +28,8 @@ installation, and development.
 - Follow parent and child agents, inspect recorded turn outcomes, and navigate
   back to their workspaces.
 - Review recent response actions and archive eligible inactive agents.
-- Follow agent-managed runs, task progress, blockers, and reported results in a
-  separate Runs tab. Agents create and update runs through commands.
+- Follow agent-managed concerts, task progress, blockers, and reported results
+  in the Concerts section. Agents create and update concerts through commands.
 
 The [Conductor README](conductor/README.md) covers requirements, GUI/CLI
 installation, and development.

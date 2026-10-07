@@ -1,7 +1,7 @@
-import type { InboxItem } from "./models";
+import type { AgentItem } from "./models";
 
 interface TreeEntry {
-  item: InboxItem;
+  item: AgentItem;
   depth: number;
 }
 interface QueueGroup {
@@ -11,10 +11,10 @@ interface QueueGroup {
 
 /** Keep every matching request once; never hide a child just because its parent is filtered out. */
 export function queueGroups(
-  items: readonly InboxItem[],
+  items: readonly AgentItem[],
   groupBy: "project" | "workspace",
 ): QueueGroup[] {
-  const agents = new Map<string, InboxItem[]>();
+  const agents = new Map<string, AgentItem[]>();
   const order = new Map<string, number>();
   for (const item of items) {
     const rows = agents.get(item.agentId) ?? [];

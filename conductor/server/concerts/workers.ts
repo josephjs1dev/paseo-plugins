@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { z } from "zod";
 import type { ConcertHost, HostAgent, LaunchConfig } from "./host";
-import { LaunchRejectedError, RunError } from "./errors";
+import { LaunchRejectedError, ConcertError } from "./errors";
 
 export interface WorkerLaunch {
   agentId: string;
@@ -367,10 +367,10 @@ export function workerRuntime(host: ConcertHost): WorkerRuntime {
     async wake(agentId, prompt, key) {
       const agent = await refresh(agentId);
       if (!agent || agent.archivedAt || agent.status === "closed") {
-        throw new RunError(`Worker is unavailable: ${agentId}`);
+        throw new ConcertError(`Worker is unavailable: ${agentId}`);
       }
       if (isActive(agent)) {
-        throw new RunError(
+        throw new ConcertError(
           "Worker is busy; this Paseo SDK version has no queue option, so the prompt was not sent",
         );
       }
@@ -381,7 +381,7 @@ export function workerRuntime(host: ConcertHost): WorkerRuntime {
     async models(agentId) {
       const agent = await refresh(agentId);
       if (!agent) {
-        throw new RunError(`Agent not found: ${agentId}`);
+        throw new ConcertError(`Agent not found: ${agentId}`);
       }
       return Promise.all(
         (await host.providers())

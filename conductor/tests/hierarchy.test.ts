@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { queueGroups } from "../shared/agents/hierarchy";
-import { visibleItems } from "../shared/agents/inbox";
+import { visibleItems } from "../shared/agents/attention";
 import { snapshot } from "../server/agents/snapshot";
 import { fileStore } from "../server/agents/store";
 import { agent, runtime, testDirectory } from "./fixtures";

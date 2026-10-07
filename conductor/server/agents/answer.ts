@@ -5,12 +5,12 @@ import { questionAnswers, requestForm } from "../../shared/agents/questions";
 import { digest, requestKey } from "./identity";
 import type { AgentPermissionResponse } from "../paseo/types";
 import type { AgentsHost } from "./host";
-import type { InboxStore } from "./store";
+import type { AgentsStore } from "./store";
 
 /** Fresh server inspection + an exclusive on-disk claim fence every permission response. */
 export async function answer(
   runtime: AgentsHost,
-  store: InboxStore,
+  store: AgentsStore,
   input: RpcInput<typeof answerRequest>,
   now = Date.now(),
 ): Promise<AnswerResult> {

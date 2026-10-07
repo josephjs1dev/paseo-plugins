@@ -5,10 +5,14 @@ import type {
   AnswerResult,
   ArchiveResult,
   Decision,
-  InboxItem,
+  AgentItem,
 } from "../../shared/agents/models";
 import { questionAnswers } from "../../shared/agents/questions";
-import { ageLabel, isSnoozed, needsAttention } from "../../shared/agents/inbox";
+import {
+  ageLabel,
+  isSnoozed,
+  needsAttention,
+} from "../../shared/agents/attention";
 import { ArchiveAction } from "./archive-action";
 import { Button, Label, Notice, rowStyle } from "../ui/controls";
 import { QuestionForm } from "./question-form";
@@ -16,14 +20,14 @@ import { QuestionForm } from "./question-form";
 export interface DetailActions {
   openAgent(agentId: string): void;
   canNavigate: boolean;
-  answer(item: InboxItem, decision: Decision): Promise<void>;
-  snooze(item: InboxItem, minutes: 0 | 15 | 60): Promise<void>;
-  mark(item: InboxItem): Promise<void>;
-  archive(this: void, item: InboxItem): Promise<ArchiveResult>;
+  answer(item: AgentItem, decision: Decision): Promise<void>;
+  snooze(item: AgentItem, minutes: 0 | 15 | 60): Promise<void>;
+  mark(item: AgentItem): Promise<void>;
+  archive(this: void, item: AgentItem): Promise<ArchiveResult>;
 }
 interface Props {
   theme: PluginTheme;
-  item: InboxItem;
+  item: AgentItem;
   now: number;
   stale: boolean;
   directoryIncomplete: boolean;
