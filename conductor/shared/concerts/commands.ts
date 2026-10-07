@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { identifier } from "../schema";
 import {
+  CONCERT_LIMITS,
   uuidSchema,
   scopeSchema,
   taskIdSchema,
@@ -101,10 +102,18 @@ const concertCommandUnion = z.discriminatedUnion("kind", [
       kind: z.literal("dispatch"),
       concertId: uuidSchema,
       retryTaskId: taskIdSchema.optional(),
+      note: text(2000).optional(),
+      addWrites: z.array(scopeSchema).min(1).max(32).optional(),
       ...workerChoiceFields,
     })
     .strict()
-    .refine(oneWorkerSource, workerSourceMessage),
+    .refine(oneWorkerSource, workerSourceMessage)
+    .refine(
+      (value) =>
+        value.retryTaskId !== undefined ||
+        (value.note === undefined && value.addWrites === undefined),
+      "note and addWrites require retryTaskId.",
+    ),
   z.object({ kind: z.literal("profiles") }).strict(),
   z.object({ kind: z.literal("models") }).strict(),
 
@@ -165,5 +174,25 @@ export const concertCommandSchema = z.preprocess(
 export const agentCommandRequestSchema = z
   .object({ agentId: identifier, command: concertCommandSchema })
   .strict();
+// The assigned worker can widen its own attempt's write scope. It is kept out
+// of `concertCommandSchema` so existing command consumers keep their narrow
+// union; the execution controller opts in through the widened request schema.
+export const widenCommandSchema = z
+  .object({
+    kind: z.literal("widen"),
+    concertId: uuidSchema,
+    attemptId: uuidSchema,
+    paths: z.array(scopeSchema).min(1).max(CONCERT_LIMITS.widenPathsPerCall),
+    reason: text(2000),
+  })
+  .strict();
+export const widenedAgentCommandRequestSchema = z.union([
+  agentCommandRequestSchema,
+  z.object({ agentId: identifier, command: widenCommandSchema }).strict(),
+]);
 export type ConcertCommand = z.infer<typeof concertCommandSchema>;
+export type WidenCommand = z.infer<typeof widenCommandSchema>;
 export type AgentCommandRequest = z.infer<typeof agentCommandRequestSchema>;
+export type WidenedAgentCommandRequest = z.infer<
+  typeof widenedAgentCommandRequestSchema
+>;

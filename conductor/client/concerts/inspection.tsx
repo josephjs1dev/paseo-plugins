@@ -6,10 +6,12 @@ import type {
   ConcertContext,
   ConcertGraph,
   StoredConcert,
+  TaskDefinition,
 } from "../../shared/concerts/models";
 import { taskState, type TaskStateKey } from "../../shared/concerts/task-state";
 import { Button, Disclosure, Label, Notice, rowStyle } from "../ui/controls";
 import { ConcertGraphView } from "./graph";
+import { DiagnosisPanel, InsetPanel } from "./task-report";
 
 export function ConcertInspection({
   view,
@@ -219,6 +221,11 @@ function AttemptRow({
 }) {
   const stateKey = attemptState(run, attempt);
   const stateColor = theme.colors[HISTORY_STATE_COLORS[stateKey]];
+  const writesLabel = effectiveWritesLabel(run, attempt);
+  const grants = attempt.grantedWrites ?? [];
+  const diagnosis = attempt.report?.diagnosis;
+  const [grantsOpen, setGrantsOpen] = useState(false);
+  const [diagnosisOpen, setDiagnosisOpen] = useState(false);
   return (
     <View
       testID={`history-attempt-${index + 1}`}
@@ -307,6 +314,90 @@ function AttemptRow({
         >
           {attempt.message}
         </Text>
+      )}
+      {writesLabel && (
+        <Text
+          selectable
+          numberOfLines={2}
+          style={{
+            color: theme.colors.foregroundMuted,
+            fontSize: 12,
+            lineHeight: 17,
+            width: "100%",
+          }}
+        >
+          {`Effective writes: ${writesLabel}`}
+        </Text>
+      )}
+      {(grants.length > 0 || diagnosis) && (
+        <View
+          style={{
+            width: "100%",
+            flexDirection: "row",
+            flexWrap: "wrap",
+            alignItems: "center",
+            gap: 16,
+          }}
+        >
+          {grants.length > 0 && (
+            <Disclosure
+              theme={theme}
+              label={`Granted writes ${grants.length}`}
+              expanded={grantsOpen}
+              onToggle={() => setGrantsOpen((open) => !open)}
+              testID={`history-granted-${index + 1}`}
+            >
+              <InsetPanel theme={theme}>
+                {grants.map((grant, grantIndex) => (
+                  <View
+                    key={`${grant.path}-${grantIndex}`}
+                    style={{
+                      paddingVertical: 6,
+                      borderTopWidth: grantIndex > 0 ? 1 : 0,
+                      borderTopColor: theme.colors.border,
+                      gap: 2,
+                    }}
+                  >
+                    <Text
+                      selectable
+                      style={{
+                        color: theme.colors.foreground,
+                        fontSize: 13,
+                        lineHeight: 20,
+                        fontWeight: "600",
+                      }}
+                    >
+                      {grant.path}
+                    </Text>
+                    <Text
+                      selectable
+                      style={{
+                        color: theme.colors.foregroundMuted,
+                        fontSize: 13,
+                        lineHeight: 20,
+                      }}
+                    >
+                      {grant.reason}
+                    </Text>
+                  </View>
+                ))}
+              </InsetPanel>
+            </Disclosure>
+          )}
+          {diagnosis && (
+            <Disclosure
+              theme={theme}
+              label="Diagnosis"
+              expanded={diagnosisOpen}
+              onToggle={() => setDiagnosisOpen((open) => !open)}
+              testID={`history-diagnosis-${index + 1}`}
+            >
+              <InsetPanel theme={theme}>
+                <DiagnosisPanel theme={theme} diagnosis={diagnosis} />
+              </InsetPanel>
+            </Disclosure>
+          )}
+        </View>
       )}
     </View>
   );
@@ -428,6 +519,56 @@ function RevisionRow({
 /** "1 task" for a single task, otherwise "N tasks". */
 function taskCountLabel(count: number): string {
   return count === 1 ? "1 task" : `${count} tasks`;
+}
+
+/**
+ * The task definition in effect when an attempt started: the last revision
+ * accepted at or before its start. Using the latest revision here would project
+ * a later `addWrites` growth onto an attempt that never saw it.
+ */
+function taskForAttempt(
+  run: StoredConcert,
+  attempt: ConcertAttempt,
+): TaskDefinition | undefined {
+  for (let index = run.revisions.length - 1; index >= 0; index -= 1) {
+    const revision = run.revisions[index];
+    if (revision && revision.acceptedAt <= attempt.startedAt) {
+      const task = revision.graph.tasks.find(
+        (entry) => entry.id === attempt.taskId,
+      );
+      if (task) {
+        return task;
+      }
+    }
+  }
+  return run.revisions[0]?.graph.tasks.find(
+    (entry) => entry.id === attempt.taskId,
+  );
+}
+
+/**
+ * Effective write scope behind an attempt: the writes the task declared when
+ * the attempt started plus the paths the server granted during the attempt.
+ * Null when the task wrote nothing and nothing was granted, so silent tasks add
+ * no history noise.
+ */
+function effectiveWritesLabel(
+  run: StoredConcert,
+  attempt: ConcertAttempt,
+): string | null {
+  const defined = taskForAttempt(run, attempt)?.writes ?? [];
+  const granted = (attempt.grantedWrites ?? []).map((grant) => grant.path);
+  if (!defined.length && !granted.length) {
+    return null;
+  }
+  const parts: string[] = [];
+  if (defined.length) {
+    parts.push(defined.join(", "));
+  }
+  if (granted.length) {
+    parts.push(`${granted.join(", ")} (granted)`);
+  }
+  return parts.join(" + ");
 }
 
 /** Short human timestamp like "Oct 6, 09:12". */

@@ -208,3 +208,49 @@ void test("a failed latest attempt reads as failed even while its launch settles
     waitingFor: [],
   });
 });
+
+void test("several attempts sharing one agent derive state from the latest attempt", () => {
+  const api = task("api");
+  const first = attempt("api", {
+    id: "b410f767-1197-469b-8b89-af35338a4e11",
+    agentId: "agent-1",
+    state: "failed",
+    report: {
+      ...completedReport,
+      outcome: "failed",
+      summary: "First attempt failed.",
+    },
+    reportHash: "d".repeat(64),
+    launch: launch(true),
+  });
+  const active = attempt("api", {
+    id: "b410f767-1197-469b-8b89-af35338a4e12",
+    agentId: "agent-1",
+    state: "running",
+    endedAt: null,
+    report: null,
+    reportHash: null,
+    launch: launch(false),
+  });
+  assert.deepEqual(taskState(concertWith([api], [first, active]), api), {
+    key: "running",
+    label: "Running",
+    waitingFor: [],
+  });
+  const failedAgain = attempt("api", {
+    id: "b410f767-1197-469b-8b89-af35338a4e13",
+    agentId: "agent-1",
+    state: "failed",
+    report: {
+      ...completedReport,
+      outcome: "failed",
+      summary: "Second attempt failed.",
+    },
+    reportHash: "e".repeat(64),
+    launch: launch(false),
+  });
+  assert.deepEqual(
+    taskState(concertWith([api], [first, active, failedAgain]), api),
+    { key: "failed", label: "Failed", waitingFor: [] },
+  );
+});

@@ -166,16 +166,18 @@ JSON
 
 ### 8. Handle blocked and failed tasks
 
-- Blocked: read the blocker. Resolve it, or ask the user. Then run \`dispatch\` with \`{"concertId","retryTaskId"}\` to resume the same worker.
-- Failed: read the report and fix the cause. Then run \`dispatch\` with \`{"concertId","retryTaskId"}\`. You can add a replacement \`profile\`, or a replacement \`provider\`/\`model\`/\`thinkingOptionId\`.
-- Do not replace a worker that is still active. The command fails with \`The task agent is still active.\`
+- Act on the per-task notification summary first. Run \`get\` or open a worker conversation only when the summary does not explain the failure. Workers diagnose and fix their own changes for up to 3 rounds; do not fix the cause yourself.
+- Choose the retry action from \`diagnosis.need\`. For \`scope\`, dispatch with \`retryTaskId\` and \`addWrites\` set to \`requestedWrites\`, or ask the user if those paths exceed the goal. For \`input\`, ask the user, then include the answer in \`note\`. For \`model\`, choose a different \`profile\` or \`provider\`/\`model\`/\`thinkingOptionId\`. For \`none\`, include a specific direction in \`note\`.
+- Use a different worker choice only for \`need: "model"\` or a repeated failure. Otherwise dispatch with \`retryTaskId\`; include \`note\` when giving guidance. An unchanged worker choice continues on the same agent when it still exists and is inactive; otherwise Conductor creates a new agent with the failed report and note. A blocked task resumes on its worker. Do not replace an active worker.
+- Workers can request extra write paths with \`widen\`. A refusal leaves scope unchanged; use \`need: "scope"\` and \`requestedWrites\` so you can retry with \`addWrites\` or ask the user.
 
 ### 9. Finish the concert
 
 1. Wait until every task has explicitly reported and stopped. Do not infer completion from idle.
 2. Read every report and its check results.
-3. Verify the integrated result if the plan asks for it.
-4. Run \`finish\` with \`{"concertId","summary"}\`. The summary states what changed, which checks passed or failed, and what remains.
+3. Review every attempt's \`grantedWrites\` and reasons. List granted paths and reasons in the finish summary.
+4. Verify the integrated result if the plan asks for it.
+5. Run \`finish\` with \`{"concertId","summary"}\`. The summary states what changed, which checks passed or failed, what remains, and any granted paths with their reasons.
 
 ## Troubleshooting
 
@@ -190,6 +192,10 @@ JSON
 | \`Worker model is unavailable: <provider>/<model>\` | \`models\` does not list that model. | Run \`models\` and choose a listed ID. |
 | \`Worker profile requests elevated permission mode: <mode>\` | The profile asks for more access than this session has. | Choose another profile, or an inline choice. |
 | \`Task scope leaves the selected checkout.\` | A \`reads\` or \`writes\` path is outside the checkout. | Use checkout-relative paths. |
+| \`Widen refused: this attempt has used its 2 widen calls.\` | The attempt reached its widen-call limit. | Report \`need: "scope"\` and \`requestedWrites\`; retry with \`addWrites\` or ask the user. |
+| \`Widen refused: an attempt may hold at most 10 granted paths.\` | The request exceeds the attempt's total grant limit. | Report \`need: "scope"\` and request the necessary paths through \`addWrites\` or ask the user. |
+| \`Widen refused: ...\` naming another task or reader | The requested paths overlap an unfinished task's writes or a resource-holding attempt. | Do not edit those paths. Report \`need: "scope"\` with \`requestedWrites\`; the Conductor can retry after the conflict clears or use \`addWrites\` when appropriate. |
+| \`Only the assigned task agent can widen its attempt's write scope.\` / \`Only a running attempt can widen its write scope.\` | The caller is not the assigned worker, or the attempt is no longer running. | Use the assigned worker's command while its attempt is running; otherwise report the scope need to the Conductor. |
 
 ## Rules
 

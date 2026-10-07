@@ -1,16 +1,45 @@
 import { createHash } from "node:crypto";
 import {
+  CONCERT_LIMITS,
   latestAttempt,
+  type ConcertAttempt,
+  type GrantedWrite,
   type StoredConcert,
   type TaskDefinition,
   type TaskReport,
 } from "../../shared/concerts/models";
 import { ConcertError } from "./errors";
 
+/**
+ * True while an attempt still owns its task's resources: it has not reported,
+ * or its launch has not settled. Write grants and writer conflicts last only
+ * while this holds, so the same predicate decides when a granted path stops
+ * counting.
+ */
+export function attemptHoldsResources(
+  attempt: ConcertAttempt | undefined,
+): boolean {
+  return Boolean(
+    attempt && (!attempt.report || (attempt.launch && !attempt.launch.settled)),
+  );
+}
+
+/**
+ * Counts `widen` calls from stored grants. Every path granted by one call shares
+ * that call's timestamp, and grants use strictly increasing timestamps, so the
+ * number of distinct values equals the number of calls.
+ */
+export function widenCalls(granted: readonly GrantedWrite[]): number {
+  return new Set(granted.map((grant) => grant.at)).size;
+}
+
 export function requirePassingReport(
   task: TaskDefinition,
   report: TaskReport,
 ): void {
+  if (report.outcome === "completed" && report.diagnosis) {
+    throw new ConcertError("A completed report cannot include a diagnosis.");
+  }
   const names = report.checks.map((check) => check.name);
   if (new Set(names).size !== names.length) {
     throw new ConcertError("Report check names must be unique.");
@@ -123,7 +152,17 @@ export function validateExecution(run: StoredConcert): void {
     ) {
       throw new ConcertError("Concert attempt records are inconsistent.");
     }
+    // Several attempts may share one agent when a failed task continues on the
+    // same worker, so only attempt ids must be unique.
     ids.add(attempt.id);
+    if (attempt.grantedWrites?.length) {
+      if (
+        run.execution.origin !== "orchestrator" ||
+        widenCalls(attempt.grantedWrites) > CONCERT_LIMITS.widenCallsPerAttempt
+      ) {
+        throw new ConcertError("Concert attempt grants are inconsistent.");
+      }
+    }
     if (!terminal && latestAttempt(run, attempt.taskId)?.id !== attempt.id) {
       throw new ConcertError("An unfinished attempt cannot be superseded.");
     }

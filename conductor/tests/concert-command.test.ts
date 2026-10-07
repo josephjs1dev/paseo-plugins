@@ -7,17 +7,23 @@ import { stat } from "node:fs/promises";
 import { z } from "zod";
 import { commandServer } from "../server/concerts/commands/server";
 import { concertExecution } from "../server/concerts/execution";
-import { fileConcertStore } from "../server/concerts/store";
+import { contentHash, fileConcertStore } from "../server/concerts/store";
 import { ConcertError } from "../server/concerts/errors";
-import { placement } from "./concert-fixtures";
+import { placement, planContext } from "./concert-fixtures";
 import { testDirectory } from "./fixtures";
 
-function cli(file: string, socket: string, command: string, input: unknown) {
+function cli(
+  file: string,
+  socket: string,
+  command: string,
+  input: unknown,
+  agentId = "agent-1",
+) {
   return new Promise<{ code: number | null; output: string; error: string }>(
     (resolve, reject) => {
       const child = spawn(
         process.execPath,
-        [file, command, "--agent", "agent-1", "--socket", socket],
+        [file, command, "--agent", agentId, "--socket", socket],
         { stdio: ["pipe", "pipe", "pipe"] },
       );
       let output = "";
@@ -102,6 +108,132 @@ void test("standalone command supports a real start/claim/report/finish over an 
     } finally {
       await resumed.close();
     }
+  } finally {
+    await server.close();
+  }
+});
+
+void test("the CLI routes widen and publishes a runnable stdin example in help", async () => {
+  const directory = await testDirectory();
+  const store = fileConcertStore(directory);
+  const runtime = {
+    source: async (agentId: string) => ({ agentId, workspaceId: "ws-api" }),
+    capture: async (source: {
+      agentId: string | null;
+      workspaceId: string;
+    }) => ({ ...placement, ...source }),
+    validate: async () => {},
+  };
+  const engine = concertExecution(store, () => runtime);
+  const concertId = "12121212-1212-4212-8212-121212121212";
+  const attemptId = "00000000-0000-4000-8000-000000000001";
+  await store.create(
+    {
+      schemaVersion: 1,
+      id: concertId,
+      version: 0,
+      title: "CLI widening",
+      source: placement,
+      contextHash: contentHash(JSON.stringify(planContext)),
+      requestHash: "b".repeat(64),
+      createdAt: 1,
+      updatedAt: 1,
+      status: "running",
+      execution: {
+        origin: "orchestrator",
+        orchestration: {
+          phase: "working",
+          concurrency: 2,
+          requestedBy: "requester",
+          coordinatorLaunch: "started",
+          prompt: "Split the work",
+          notification: null,
+        },
+        attempts: [
+          {
+            id: attemptId,
+            taskId: "writer",
+            agentId: "worker-writer",
+            state: "running",
+            startedAt: 1,
+            endedAt: null,
+            message: null,
+            report: null,
+            reportHash: null,
+            launch: {
+              state: "started",
+              prompt: "Carry out the task",
+              settled: true,
+            },
+          },
+        ],
+        summary: null,
+        finishedAt: null,
+        interruption: null,
+      },
+      draft: null,
+      revisions: [
+        {
+          number: 1,
+          parent: null,
+          reason: "Accepted decomposition",
+          acceptedAt: 1,
+          authority: "agent",
+          graph: {
+            tasks: [
+              {
+                id: "writer",
+                title: "Write",
+                outcome: "Change the writer",
+                prerequisites: [],
+                inputs: ["Concert context"],
+                reads: [],
+                writes: ["src/api"],
+                resources: [],
+                worker: { role: "implementation", profile: "default" },
+                criteria: ["Report evidence"],
+                checks: [],
+                stopWhen: "Report",
+              },
+            ],
+          },
+        },
+      ],
+    },
+    planContext,
+  );
+  const server = await commandServer(directory, engine.execute);
+  const { commandPath, socketPath } = server.access;
+  assert.ok(commandPath && socketPath);
+  try {
+    const widened = await cli(
+      commandPath,
+      socketPath,
+      "widen",
+      {
+        concertId,
+        attemptId,
+        paths: ["shared/schema.ts"],
+        reason: "Typecheck reads the exported schema",
+      },
+      "worker-writer",
+    );
+    assert.equal(widened.code, 0, widened.error);
+    const parsed = JSON.parse(widened.output) as {
+      acknowledged: boolean;
+      grantedWrites: { path: string; reason: string }[];
+    };
+    assert.equal(parsed.acknowledged, true);
+    assert.equal(parsed.grantedWrites[0]?.path, "shared/schema.ts");
+
+    const help = await cli(commandPath, socketPath, "help", {});
+    assert.equal(help.code, 0, help.error);
+    const commands = (
+      JSON.parse(help.output) as {
+        commands: { widen?: { example?: string } };
+      }
+    ).commands;
+    assert.match(commands.widen?.example ?? "", /widen --agent/);
   } finally {
     await server.close();
   }

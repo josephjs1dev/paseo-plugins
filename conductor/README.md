@@ -45,8 +45,18 @@ permissions. Small edits need no concert unless requested.
 
 A report alone does not release an orchestrated worker's resources. Dependencies
 wait for an explicit completed report with all required checks passed **and** an
-observed end to the worker's turn. Idle/stopped without a report becomes a blocker.
-The Conductor agent reviews all results and finishes the concert with a summary.
+observed end to the worker's turn. A worker that stops without reporting is
+nudged once to report or block; a second stop becomes a blocker. An uncertain
+launch is checked again with backoff before it is blocked. The Conductor agent
+acts on bounded per-task failure summaries, reviews all results, and finishes
+the concert with a summary.
+
+Workers diagnose and fix their own changes before reporting failure, with up to
+3 fix rounds and an early stop for repeated errors, refused scope requests, or
+needs for input or another model. They report a structured diagnosis. A worker
+can request up to 5 extra write paths per `widen` call and 2 calls per attempt;
+the server refuses paths owned by unfinished tasks or overlapping resources
+held by another attempt. Each grant records its reason on the attempt.
 
 ### Orchestration command flow
 
@@ -92,14 +102,35 @@ not create another concert or claim the coordinator's task. The scheduler observ
 settlement, starts dependents, and notifies the Conductor agent of blockers or the
 completed graph. Notifications wait until the coordinator can receive them.
 
-`dispatch` with `retryTaskId` resumes a settled blocked agent using the same attempt,
-or creates a new agent for an explicitly failed, settled attempt, optionally with a
-replacement `profile` or inline `provider`/`model`/`thinkingOptionId`. Old attempts stay
-visible. A still-active worker cannot be replaced. Creation intent and agent IDs
-are saved before launch; uncertain launch retries use the same SDK identity and
-never resend the initial prompt to an existing matching child. Reload observes
-existing children rather than replacing them. An uncertain launch stays blocked
-until the Conductor agent explicitly dispatches again.
+`dispatch` with `retryTaskId` resumes a settled blocked task on its worker or
+retries a failed task. Optional `note` adds retry guidance; `addWrites` extends
+that task's write scope as a new definition revision, subject to conflict checks.
+If the worker choice is unchanged and the previous agent still exists and is
+inactive, the failed task continues on that agent with a new attempt. Otherwise
+Conductor creates a new agent seeded with the failed report and note. A replacement
+`profile` or inline `provider`/`model`/`thinkingOptionId` changes the worker choice.
+Old attempts stay visible, and a still-active worker cannot be replaced. Creation
+intent and agent IDs are saved before launch; uncertain launch retries use the same
+SDK identity and never resend the initial prompt to an existing matching child.
+Reload observes existing children rather than replacing them.
+
+For a `need: "scope"` diagnosis, retry with `addWrites` set to the requested paths,
+or ask the user if they exceed the goal. For `input`, ask the user and put the
+answer in `note`; for `model`, choose a different worker; for `none`, give a
+specific direction in `note`. Read `get` or open a worker conversation only when
+the notification summary does not explain the failure. Review granted paths and
+their reasons in the attempts, and include them in the finish summary.
+
+Workers request scope while their attempt is running:
+
+```bash
+node "$CONDUCTOR_COMMAND" widen --agent "$CONDUCTOR_AGENT_ID" --socket "$CONDUCTOR_SOCKET" <<'JSON'
+{"concertId":"<concert UUID>","attemptId":"<attempt UUID>","paths":["shared/schema.ts"],"reason":"My change broke the exported schema used by typecheck"}
+JSON
+```
+
+A refusal leaves the scope unchanged. The worker reports `need: "scope"` and
+`requestedWrites`; the Conductor can retry with `addWrites` when appropriate.
 
 ### Agent commands and compatibility
 

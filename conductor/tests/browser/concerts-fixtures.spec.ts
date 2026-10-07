@@ -204,6 +204,90 @@ test("fixture scenarios render their documented task and graph states", async ({
   await expect(detail).not.toContainText("No tasks were recorded.");
 });
 
+test("failed reports show diagnosis, granted writes, and reused agents", async ({
+  page,
+}) => {
+  const detail = page.getByTestId("concert-detail");
+
+  // The recovery fixture: a failed report with a structured diagnosis and an
+  // attempt that already holds one server-granted write.
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await openConcert(page, "recovery");
+  const repair = page.getByTestId("concert-task-repair");
+  await expect(repair).toContainText("✕ typecheck: TS2345 in server/rpc.ts:41");
+
+  // Diagnosis stays collapsed until opened; then the fix rounds, suspected
+  // cause, need, and requested paths all render in one inset panel.
+  await repair.getByTestId("concert-task-diagnosis-repair").click();
+  await expect(repair).toContainText("Narrowed the input type");
+  await expect(repair).toContainText("2. Regenerated the schema");
+  await expect(repair).toContainText("shared/schema.ts exports the old shape");
+  await expect(repair).toContainText("Needs wider write scope");
+  await expect(repair).toContainText("shared/schema.ts");
+
+  // Granted writes with their reasons stay collapsed until opened.
+  await expect(repair).not.toContainText("Typecheck reads the exported schema");
+  await repair.getByTestId("concert-task-granted-repair").click();
+  await expect(repair).toContainText("Typecheck reads the exported schema");
+  expect(await noPageOverflow(page)).toBe(true);
+
+  // The history lists the effective write scope behind the attempt: nothing
+  // defined, one granted path.
+  await detailButton(detail, "History").click();
+  await expect(page.getByTestId("history-attempt-1")).toContainText(
+    "Effective writes: shared/schema.ts (granted)",
+  );
+
+  // Two failed attempts of one task sharing an agent: the card says so, and
+  // the earlier round shows no write line because nothing was defined or
+  // granted on it.
+  await detailButton(detail, "Tasks").click();
+  await openConcert(page, "agent-reuse");
+  await expect(page.getByTestId("concert-task-repair")).toContainText(
+    "same agent across 2 attempts",
+  );
+  expect(await noPageOverflow(page)).toBe(true);
+  await detailButton(detail, "History").click();
+  await expect(page.getByTestId("history-attempt-1")).not.toContainText(
+    "Effective writes",
+  );
+  await expect(page.getByTestId("history-attempt-2")).toContainText(
+    "Effective writes: shared/schema.ts (granted)",
+  );
+
+  // A widened attempt that failed, then a successful retry on a fresh agent:
+  // the history keeps the old grant reason and diagnosis, and the failed row's
+  // defined scope is the revision in effect then, not a later addWrites.
+  await detailButton(detail, "Tasks").click();
+  await openConcert(page, "recovery-retry");
+  await detailButton(detail, "History").click();
+  const widened = page.getByTestId("history-attempt-1");
+  await expect(widened).toContainText(
+    "Effective writes: shared/schema.ts (granted)",
+  );
+  await expect(widened).not.toContainText("shared/helper.ts");
+  await widened.getByTestId("history-granted-1").click();
+  await expect(widened).toContainText("Typecheck reads the exported schema");
+  await widened.getByTestId("history-diagnosis-1").click();
+  await expect(widened).toContainText("Narrowed the input type");
+  await expect(page.getByTestId("history-attempt-2")).toContainText(
+    "Effective writes: shared/helper.ts",
+  );
+  expect(await noPageOverflow(page)).toBe(true);
+
+  // Compact layout: the opened panels stay inside a 390px viewport.
+  await page.setViewportSize({ width: 390, height: 844 });
+  await openConcert(page, "recovery", "&global");
+  const narrowRepair = page.getByTestId("concert-task-repair");
+  await narrowRepair.getByTestId("concert-task-diagnosis-repair").click();
+  await narrowRepair.getByTestId("concert-task-granted-repair").click();
+  await expect(narrowRepair).toContainText("Needs wider write scope");
+  await expect(narrowRepair).toContainText(
+    "Typecheck reads the exported schema",
+  );
+  expect(await noPageOverflow(page)).toBe(true);
+});
+
 test("captures Tasks and Graph screenshots at the required viewports and themes", async ({
   page,
 }) => {
@@ -251,6 +335,7 @@ test("captures Tasks and Graph screenshots at the required viewports and themes"
     "failed-checks",
     "waiting",
     "finishing",
+    "recovery",
     "empty",
     "planning",
   ]) {

@@ -1,11 +1,17 @@
 import { randomUUID } from "node:crypto";
 import {
-  agentCommandRequestSchema,
   commandTaskSchema,
+  widenedAgentCommandRequestSchema,
   workerChoice,
   type ConcertCommand,
+  type WidenCommand,
 } from "../../shared/concerts/commands";
-import { conflictReason, graphIssues } from "../../shared/concerts/graph";
+import {
+  effectiveTask,
+  graphIssues,
+  overlap,
+  scopeConflictReason,
+} from "../../shared/concerts/graph";
 import {
   latestAttempt,
   CONCERT_LIMITS,
@@ -19,7 +25,12 @@ import { orchestration } from "./orchestration";
 import type { ConcertCommandAccess } from "./commands/server";
 import { agentCommand } from "./prompts";
 import type { WorkerRuntime } from "./workers";
-import { executionStatus, requirePassingReport } from "./results";
+import {
+  executionStatus,
+  requirePassingReport,
+  attemptHoldsResources,
+  widenCalls,
+} from "./results";
 
 export function concertExecution(
   store: ConcertStore,
@@ -149,13 +160,10 @@ export function concertExecution(
           continue;
         }
         const attempt = latestAttempt(other, definition.id);
+        const effective = effectiveTask(definition, attempt);
         if (
-          attempt &&
-          (attempt.state === "running" ||
-            attempt.state === "blocked" ||
-            (attempt.launch && !attempt.launch.settled)) &&
-          ((task.writes.length > 0 && definition.writes.length > 0) ||
-            conflictReason(task, definition))
+          attemptHoldsResources(attempt) &&
+          scopeConflictReason(task, effective)
         ) {
           throw new ConcertError(
             `Task resources are still owned by ${other.title} / ${definition.id}. Resume or report that work before claiming this task.`,
@@ -322,6 +330,11 @@ export function concertExecution(
             }
             attempt.state = "blocked";
             attempt.message = command.message;
+            // Record the classification atomically with the state. Reconcile
+            // only settles the launch later, once the worker stops; without
+            // this marker the first Conductor notification would mislabel a
+            // worker block as a server no-report settlement.
+            attempt.blockedBy = "worker";
           } else {
             const digest = contentHash(JSON.stringify(command.report));
             if (attempt.reportHash) {
@@ -416,10 +429,176 @@ export function concertExecution(
         });
       }
     });
+  /**
+   * A running worker asks to grow its own attempt's write scope. The server
+   * grants it only when no resource-holding attempt on this checkout overlaps
+   * the paths, no unfinished task in the same graph owns them, and the attempt
+   * is within its widen limits. Refusals change nothing and name the task that
+   * holds the path.
+   */
+  const widen = async (agentId: string, command: WidenCommand) => {
+    const runtime = getRuntime();
+    const source = await runtime.source(agentId);
+    const initial = (await store.read(command.concertId)).run;
+    const assigned = initial.execution?.attempts.find(
+      (attempt) => attempt.id === command.attemptId,
+    );
+    if (
+      !initial.execution ||
+      initial.execution.origin !== "orchestrator" ||
+      initial.source.workspaceId !== source.workspaceId ||
+      assigned?.agentId !== agentId
+    ) {
+      throw new ConcertError(
+        "Only the assigned task agent can widen its attempt's write scope.",
+      );
+    }
+    const run = await store.update(
+      initial.id,
+      initial.version,
+      async (current) => {
+        const execution = current.execution;
+        const graph = current.revisions.at(-1)?.graph;
+        if (!execution || !graph) {
+          throw new ConcertError(
+            "This is a legacy plan without an execution record.",
+          );
+        }
+        const attempt = execution.attempts.find(
+          (entry) => entry.id === command.attemptId,
+        );
+        if (!attempt || attempt.agentId !== agentId) {
+          throw new ConcertError(
+            "Only the assigned task agent can widen its attempt's write scope.",
+          );
+        }
+        const task = graph.tasks.find((entry) => entry.id === attempt.taskId);
+        if (!task) {
+          throw new ConcertError("Unknown task.");
+        }
+        // A task the Conductor defined without writes is read-only; widening it
+        // would silently turn an exploration into a writer.
+        if (task.writes.length === 0) {
+          throw new ConcertError(
+            'Widen refused: read-only tasks cannot widen their write scope. Report need "scope" instead.',
+          );
+        }
+        if (attempt.state !== "running") {
+          throw new ConcertError(
+            "Only a running attempt can widen its write scope.",
+          );
+        }
+        const granted = attempt.grantedWrites ?? [];
+        if (widenCalls(granted) >= CONCERT_LIMITS.widenCallsPerAttempt) {
+          throw new ConcertError(
+            `Widen refused: this attempt has used its ${CONCERT_LIMITS.widenCallsPerAttempt} widen calls.`,
+          );
+        }
+        if (
+          granted.length + command.paths.length >
+          CONCERT_LIMITS.widenPathsPerCall * CONCERT_LIMITS.widenCallsPerAttempt
+        ) {
+          throw new ConcertError(
+            `Widen refused: an attempt may hold at most ${CONCERT_LIMITS.widenPathsPerCall * CONCERT_LIMITS.widenCallsPerAttempt} granted paths.`,
+          );
+        }
+        for (const owner of graph.tasks) {
+          if (
+            owner.id === task.id ||
+            latestAttempt(current, owner.id)?.state === "completed"
+          ) {
+            continue;
+          }
+          const owned = owner.writes.find((path) =>
+            command.paths.some((requested) => overlap(path, requested)),
+          );
+          if (owned) {
+            throw new ConcertError(
+              `Widen refused: "${owned}" is owned by unfinished task "${owner.id}". Report need "scope" instead.`,
+            );
+          }
+        }
+        const effective = effectiveTask(task, attempt);
+        const requested: TaskDefinition = {
+          ...effective,
+          writes: [...new Set([...effective.writes, ...command.paths])],
+        };
+        // The grant is stored scope, so re-run the placement and symlink
+        // validation the initial define/launch used before persisting it.
+        await runtime.validate(current.source, {
+          tasks: graph.tasks.map((entry) =>
+            entry.id === task.id ? requested : entry,
+          ),
+        });
+        const list = await store.list();
+        if (list.incomplete || list.unavailable) {
+          throw new ConcertError(
+            "Concert coverage is incomplete; widen conflicts cannot be checked.",
+          );
+        }
+        for (const summary of list.runs) {
+          if (summary.source.checkout !== current.source.checkout) {
+            continue;
+          }
+          const other =
+            summary.id === current.id
+              ? current
+              : (await store.read(summary.id)).run;
+          if (!other.execution) {
+            continue;
+          }
+          for (const definition of other.revisions.at(-1)?.graph.tasks ?? []) {
+            const holding = latestAttempt(other, definition.id);
+            if (
+              !attemptHoldsResources(holding) ||
+              (other.id === current.id && holding?.id === attempt.id)
+            ) {
+              continue;
+            }
+            const reason = scopeConflictReason(
+              requested,
+              effectiveTask(definition, holding),
+            );
+            if (reason) {
+              throw new ConcertError(
+                `Widen refused: ${command.paths.join(", ")} is held by task "${definition.id}" in ${other.title} (${reason}). Report need "scope" instead.`,
+              );
+            }
+          }
+        }
+        const at = Math.max(
+          Date.now(),
+          ...granted.map((grant) => grant.at + 1),
+        );
+        attempt.grantedWrites = [
+          ...granted,
+          ...command.paths.map((path) => ({
+            path,
+            reason: command.reason,
+            at,
+          })),
+        ];
+        return current;
+      },
+    );
+    return {
+      acknowledged: true,
+      concertId: run.id,
+      attemptId: command.attemptId,
+      granted: command.paths,
+      grantedWrites:
+        run.execution?.attempts.find((entry) => entry.id === command.attemptId)
+          ?.grantedWrites ?? [],
+    };
+  };
   return {
     execute: (input: unknown) =>
       serialize(async () => {
-        const { agentId, command } = agentCommandRequestSchema.parse(input);
+        const { agentId, command } =
+          widenedAgentCommandRequestSchema.parse(input);
+        if (command.kind === "widen") {
+          return widen(agentId, command);
+        }
         if (command.kind === "orchestrate") {
           return orchestrator.start(agentId, command);
         }
@@ -432,6 +611,8 @@ export function concertExecution(
             command.concertId,
             command.retryTaskId,
             workerChoice(command),
+            command.note,
+            command.addWrites,
           );
         }
         if (command.kind === "profiles") {

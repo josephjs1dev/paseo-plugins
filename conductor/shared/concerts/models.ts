@@ -8,6 +8,10 @@ export const CONCERT_LIMITS = {
   snapshotBytes: 2_000_000,
   contextBytes: 128_000,
   attempts: 120,
+  /** Paths a worker may add in one `widen` call. */
+  widenPathsPerCall: 5,
+  /** `widen` calls a single attempt may make before it must report. */
+  widenCallsPerAttempt: 2,
 } as const;
 export const uuidSchema = z.string().uuid();
 export const taskIdSchema = z
@@ -91,12 +95,48 @@ export const checkReportSchema = z
     detail: text(2000),
   })
   .strict();
+// The action a failed worker asks the Conductor for: widen the write scope,
+// answer a question, change the model, or retry with a direction.
+export const failureNeedSchema = z.enum(["scope", "input", "model", "none"]);
+export const taskDiagnosisSchema = z
+  .object({
+    tried: z.array(text(1000)).min(1).max(8),
+    suspectedCause: text(2000),
+    need: failureNeedSchema,
+    requestedWrites: z.array(scopeSchema).max(32).optional(),
+  })
+  .strict()
+  .refine(
+    (diagnosis) =>
+      diagnosis.need !== "scope" ||
+      (diagnosis.requestedWrites?.length ?? 0) > 0,
+    {
+      message: "List requestedWrites when need is scope.",
+      path: ["requestedWrites"],
+    },
+  );
 export const taskReportSchema = z
   .object({
     outcome: z.enum(["completed", "failed"]),
     summary: text(8000),
     evidence: z.array(text(2000)).min(1).max(24),
     checks: z.array(checkReportSchema).max(16),
+    diagnosis: taskDiagnosisSchema.optional(),
+  })
+  .strict()
+  .refine(
+    (report) => report.diagnosis === undefined || report.outcome === "failed",
+    {
+      message: "A completed report cannot include a diagnosis.",
+      path: ["diagnosis"],
+    },
+  );
+// A server-checked scope grant recorded on the attempt that received it.
+export const grantedWriteSchema = z
+  .object({
+    path: scopeSchema,
+    reason: text(2000),
+    at: z.number().int().nonnegative(),
   })
   .strict();
 export const attemptSchema = z.object({
@@ -110,6 +150,26 @@ export const attemptSchema = z.object({
   report: taskReportSchema.nullable(),
   reportHash: hash.nullable(),
   reportedBy: z.enum(["worker", "launcher"]).optional(),
+  grantedWrites: z
+    .array(grantedWriteSchema)
+    .max(CONCERT_LIMITS.widenPathsPerCall * CONCERT_LIMITS.widenCallsPerAttempt)
+    .optional(),
+  nudgedAt: z.number().int().nonnegative().optional(),
+  // Who made the attempt blocked: "worker" when the assigned agent called
+  // `block`, "server" when reconciliation settled a stop with no report. The
+  // marker distinguishes a worker's blocker from a server settlement for the
+  // Conductor notification; never infer it from the message text.
+  blockedBy: z.enum(["worker", "server"]).optional(),
+  // An undelivered server wake (a one-time nudge, a same-agent continuation,
+  // or a blocker resume). Persisted before the send and cleared only after the
+  // keyed send succeeds, so a failed send or a reload replays the same message.
+  wake: z
+    .object({
+      key: text(200),
+      prompt: text(128000),
+    })
+    .strict()
+    .optional(),
   launch: z
     .object({
       state: z.enum(["pending", "started", "uncertain", "failed"]),
@@ -119,6 +179,11 @@ export const attemptSchema = z.object({
       thinkingOptionId: text(80).optional(),
       config: text(32000).optional(),
       generation: z.number().int().nonnegative().optional(),
+      // Persisted progress of the bounded re-check for an uncertain launch.
+      // The reconciler performs at most one identity lookup per due tick
+      // instead of sleeping, so it never blocks the shared command queue.
+      checks: z.number().int().nonnegative().optional(),
+      nextCheckAt: z.number().int().nonnegative().optional(),
       prompt: text(128000),
       settled: z.boolean(),
     })
@@ -194,6 +259,10 @@ export type StoredConcert = z.infer<typeof concertSchema>;
 export type ConcertSummary = z.infer<typeof concertSummarySchema>;
 export type ConcertAttempt = z.infer<typeof attemptSchema>;
 export type TaskReport = z.infer<typeof taskReportSchema>;
+export type TaskDiagnosis = z.infer<typeof taskDiagnosisSchema>;
+export type FailureNeed = z.infer<typeof failureNeedSchema>;
+export type GrantedWrite = z.infer<typeof grantedWriteSchema>;
+export type PendingWake = NonNullable<ConcertAttempt["wake"]>;
 
 export function concertStatusLabel(status: StoredConcert["status"]): string {
   const labels = {

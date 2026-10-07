@@ -1,8 +1,10 @@
+import { useState } from "react";
 import { Text, View } from "react-native";
 import { taskState, type TaskStateKey } from "../../shared/concerts/task-state";
 import type { PluginTheme } from "@getpaseo/plugin";
 import {
   latestAttempt,
+  type GrantedWrite,
   type StoredConcert,
   type TaskDefinition,
 } from "../../shared/concerts/models";
@@ -110,6 +112,13 @@ export function ConcertTaskCard({
   const report = attempt?.report ?? null;
   const failedChecks =
     report?.checks.filter((check) => check.status === "failed") ?? [];
+  const agentAttempts = attempt
+    ? (run.execution?.attempts ?? []).filter(
+        (entry) =>
+          entry.taskId === task.id && entry.agentId === attempt.agentId,
+      ).length
+    : 0;
+  const grantedWrites = attempt?.grantedWrites ?? [];
   const canOpenAgent = Boolean(
     openAgent &&
       attempt &&
@@ -204,6 +213,17 @@ export function ConcertTaskCard({
         >
           {`· ${task.id}`}
         </Text>
+        {agentAttempts > 1 && (
+          <Text
+            style={{
+              color: theme.colors.foregroundMuted,
+              fontSize: 12,
+              lineHeight: 17,
+            }}
+          >
+            {`· same agent across ${agentAttempts} attempts`}
+          </Text>
+        )}
       </View>
       {report?.summary && (
         <Summary
@@ -253,6 +273,91 @@ export function ConcertTaskCard({
           checksOpen={disclosures?.checks === true}
           onToggle={(selection) => onToggle?.(selection)}
         />
+      )}
+      {grantedWrites.length > 0 && attempt && (
+        <GrantedWritesRow
+          theme={theme}
+          taskId={task.id}
+          grantedWrites={grantedWrites}
+          compact={compact}
+        />
+      )}
+    </View>
+  );
+}
+
+/**
+ * Server-widened write paths recorded on the attempt, each with the reason the
+ * worker gave when it was granted. Visible with or without a report, because a
+ * running attempt can already hold grants.
+ */
+function GrantedWritesRow({
+  theme,
+  taskId,
+  grantedWrites,
+  compact,
+}: {
+  theme: PluginTheme;
+  taskId: string;
+  grantedWrites: GrantedWrite[];
+  compact: boolean;
+}) {
+  const [expanded, setExpanded] = useState(false);
+  return (
+    <View
+      style={{
+        borderTopWidth: 1,
+        borderTopColor: theme.colors.border,
+        paddingTop: 8,
+        gap: 8,
+      }}
+    >
+      <Disclosure
+        theme={theme}
+        label={`Granted writes ${grantedWrites.length}`}
+        expanded={expanded}
+        onToggle={() => setExpanded((open) => !open)}
+        testID={`concert-task-granted-${taskId}`}
+        dense={!compact}
+      />
+      {expanded && (
+        <InsetPanel theme={theme}>
+          {grantedWrites.map((grant, index) => (
+            <View
+              key={`${grant.path}-${index}`}
+              style={{
+                paddingVertical: 6,
+                borderTopWidth: index > 0 ? 1 : 0,
+                borderTopColor: theme.colors.border,
+                gap: 2,
+              }}
+            >
+              <Text
+                selectable
+                style={{
+                  color: theme.colors.foreground,
+                  fontSize: 13,
+                  lineHeight: 20,
+                  fontWeight: "600",
+                  maxWidth: PROSE_WIDTH,
+                }}
+              >
+                {grant.path}
+              </Text>
+              <Text
+                selectable
+                style={{
+                  color: theme.colors.foregroundMuted,
+                  fontSize: 13,
+                  lineHeight: 20,
+                  maxWidth: PROSE_WIDTH,
+                }}
+              >
+                {grant.reason}
+              </Text>
+            </View>
+          ))}
+        </InsetPanel>
       )}
     </View>
   );

@@ -437,6 +437,56 @@ export function planningConcert(): StoredConcert {
   });
 }
 
+/**
+ * A failed task agent whose report carries a diagnosis and whose attempt already
+ * holds a server-granted write, for recovery-state previews and checks.
+ */
+export function recoveryConcert(): StoredConcert {
+  return fixtureConcert([task("repair")], {
+    id: "f1151538-5302-4fbf-b50b-f6a55f2a5a49",
+    title: "Repair the shared schema",
+    status: "blocked",
+    attempts: [
+      fixtureAttempt(
+        "repair",
+        "failed",
+        "b410f767-1197-469b-8b89-af35338a4e0a",
+        {
+          message: null,
+          report: {
+            outcome: "failed",
+            summary: "Typecheck still fails in the new RPC handler.",
+            evidence: ["npm run typecheck: TS2345 in server/rpc.ts:41"],
+            checks: [
+              {
+                name: "typecheck",
+                status: "failed",
+                detail: "TS2345 in server/rpc.ts:41",
+              },
+            ],
+            diagnosis: {
+              tried: ["Narrowed the input type", "Regenerated the schema"],
+              suspectedCause: "shared/schema.ts exports the old shape",
+              need: "scope",
+              requestedWrites: ["shared/schema.ts"],
+            },
+          },
+          reportHash: "d".repeat(64),
+          grantedWrites: [
+            {
+              path: "shared/schema.ts",
+              reason: "Typecheck reads the exported schema",
+              at: 1791201660000,
+            },
+          ],
+          nudgedAt: 1791201655000,
+          launch: fixtureLaunch(true),
+        },
+      ),
+    ],
+  });
+}
+
 export const fixtureConcerts: Record<string, () => StoredConcert> = {
   "long-title": longTitleConcert,
   multi: multiTaskConcert,
@@ -446,4 +496,5 @@ export const fixtureConcerts: Record<string, () => StoredConcert> = {
   finishing: finishingConcert,
   empty: emptyConcert,
   planning: planningConcert,
+  recovery: recoveryConcert,
 };

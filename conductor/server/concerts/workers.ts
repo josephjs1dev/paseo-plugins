@@ -29,12 +29,44 @@ export interface WorkerProfile {
 export interface WorkerRuntime {
   prepare(input: WorkerLaunch): Promise<string>;
   launch(input: WorkerLaunch): Promise<void>;
-  inspect(agentId: string): Promise<{ exists: boolean; active: boolean }>;
+  inspect(agentId: string): Promise<{
+    exists: boolean;
+    active: boolean;
+    /** False for archived or closed agents, which cannot receive a wake. */
+    deliverable: boolean;
+  }>;
   wake(agentId: string, prompt: string, key?: string): Promise<void>;
   profiles(): Promise<WorkerProfile[]>;
   models(
     agentId: string,
   ): Promise<Array<{ provider: string; models: string[] }>>;
+  /**
+   * Optional schedule for re-checking an uncertain launch, as delays between
+   * checks. Absent means `LAUNCH_CHECK_DELAYS_MS`; tests set [] for an
+   * immediate single check or a short schedule. Reconcile persists the schedule
+   * on the launch and performs one lookup per due tick, so it never sleeps.
+   */
+  launchCheckDelaysMs?: readonly number[];
+}
+
+/** Default launch re-check schedule: three identity checks over about 25s. */
+export const LAUNCH_CHECK_DELAYS_MS = [5_000, 20_000] as const;
+
+/**
+ * The delay in milliseconds before the next identity re-check of an uncertain
+ * launch, given how many checks have completed. Returns null once the bounded
+ * schedule is exhausted, so the caller settles the launch as blocked. The
+ * schedule has one more check than delay; the first check happens immediately.
+ */
+export function nextLaunchCheckDelay(
+  completedChecks: number,
+  delays?: readonly number[],
+): number | null {
+  const schedule = delays ?? LAUNCH_CHECK_DELAYS_MS;
+  if (completedChecks > schedule.length) {
+    return null;
+  }
+  return schedule[completedChecks - 1] ?? 0;
 }
 
 type Agent = HostAgent;
@@ -80,6 +112,10 @@ function isActive(agent: Agent): boolean {
   );
 }
 
+/**
+ * An archived or closed agent exists but can never receive a wake message, so
+ * it is neither an available parent nor a deliverable worker.
+ */
 function isAvailableParent(agent: Agent): boolean {
   return !agent.archivedAt && agent.status !== "closed";
 }
@@ -333,6 +369,7 @@ export function workerRuntime(host: ConcertHost): WorkerRuntime {
       return {
         exists: agent !== null,
         active: agent ? isActive(agent) : false,
+        deliverable: agent ? isAvailableParent(agent) : false,
       };
     },
 

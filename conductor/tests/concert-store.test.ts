@@ -588,3 +588,59 @@ void test("deleting a missing concert reports the documented error", async () =>
     /This concert no longer exists\. Refresh the concert list\./,
   );
 });
+
+void test("attempts and reports stored before the recovery fields remain readable", async () => {
+  const directory = await testDirectory();
+  const store = fileConcertStore(directory);
+  const run = executionConcert(randomUUID(), "failed", [
+    failedUnsettledAttempt("work"),
+  ]);
+  await createConcert(store, run);
+  const attempt = (await store.read(run.id)).run.execution?.attempts[0];
+  assert.equal(attempt?.report?.diagnosis, undefined);
+  assert.equal(attempt?.grantedWrites, undefined);
+  assert.equal(attempt?.nudgedAt, undefined);
+  assert.equal(attempt?.blockedBy, undefined);
+  assert.equal(attempt?.launch?.checks, undefined);
+  assert.equal(attempt?.launch?.nextCheckAt, undefined);
+  // Reading does not rewrite the record with the new optional fields.
+  const raw = JSON.parse(
+    await readFile(join(directory, "runs", `${run.id}.json`), "utf8"),
+  ) as {
+    execution: {
+      attempts: {
+        report: Record<string, unknown>;
+        grantedWrites?: unknown;
+        blockedBy?: unknown;
+        launch?: { checks?: unknown; nextCheckAt?: unknown };
+      }[];
+    };
+  };
+  assert.equal(raw.execution.attempts[0]?.report.diagnosis, undefined);
+  assert.equal(raw.execution.attempts[0]?.grantedWrites, undefined);
+  assert.equal(raw.execution.attempts[0]?.blockedBy, undefined);
+  assert.equal(raw.execution.attempts[0]?.launch?.checks, undefined);
+  assert.equal(raw.execution.attempts[0]?.launch?.nextCheckAt, undefined);
+});
+
+void test("attempts with the recovery fields load and keep their values", async () => {
+  const directory = await testDirectory();
+  const store = fileConcertStore(directory);
+  const attempt: ConcertAttempt = {
+    ...blockedAttempt("work"),
+    blockedBy: "worker",
+    launch: {
+      state: "started",
+      prompt: "Carry out the task",
+      settled: true,
+      checks: 1,
+      nextCheckAt: executionStart + 5_000,
+    },
+  };
+  const run = executionConcert(randomUUID(), "blocked", [attempt]);
+  await createConcert(store, run);
+  const stored = (await store.read(run.id)).run.execution?.attempts[0];
+  assert.equal(stored?.blockedBy, "worker");
+  assert.equal(stored?.launch?.checks, 1);
+  assert.equal(stored?.launch?.nextCheckAt, executionStart + 5_000);
+});

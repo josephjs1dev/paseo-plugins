@@ -1,4 +1,9 @@
-import { graphSchema, type ConcertGraph, type TaskDefinition } from "./models";
+import {
+  graphSchema,
+  type ConcertAttempt,
+  type ConcertGraph,
+  type TaskDefinition,
+} from "./models";
 
 export function graphIssues(graph: ConcertGraph): string[] {
   const parsed = graphSchema.safeParse(graph);
@@ -50,7 +55,13 @@ export function graphIssues(graph: ConcertGraph): string[] {
   return issues;
 }
 
-const overlap = (a: string, b: string) =>
+/**
+ * Whether two repository scopes share any path. "." is the repository root and
+ * therefore overlaps every scope; otherwise a scope overlaps itself, its
+ * descendants, and its ancestors. Shared with widen so the growth check uses
+ * the same path rule as conflict detection.
+ */
+export const overlap = (a: string, b: string) =>
   a === "." ||
   b === "." ||
   a === b ||
@@ -73,6 +84,41 @@ export function conflictReason(
     return "overlapping read/write scope";
   }
   return null;
+}
+
+/**
+ * A task's effective definition for conflict checks: its declared writes plus
+ * every path granted to the given attempt. Pure; returns the task unchanged
+ * when the attempt has no grants. Callers pass the resource-holding attempt
+ * (for example the latest attempt that still owns resources) so a grant blocks
+ * readers and other writers exactly like a declared write.
+ */
+export function effectiveTask(
+  task: TaskDefinition,
+  attempt?: ConcertAttempt,
+): TaskDefinition {
+  const granted = attempt?.grantedWrites?.map((grant) => grant.path) ?? [];
+  if (granted.length === 0) {
+    return task;
+  }
+  return { ...task, writes: [...new Set([...task.writes, ...granted])] };
+}
+
+/**
+ * The conflict reason for two effective tasks that may start or grow: the
+ * shared writer fence (two writers never overlap in time on one checkout) plus
+ * `conflictReason`. `reserve`, claims, `widen`, and `addWrites` all use this so
+ * the scheduling and growth checks cannot drift apart. Callers pass effective
+ * tasks, so a granted path counts exactly like a declared write.
+ */
+export function scopeConflictReason(
+  a: TaskDefinition,
+  b: TaskDefinition,
+): string | null {
+  if (a.writes.length > 0 && b.writes.length > 0) {
+    return "another writer holds resources";
+  }
+  return conflictReason(a, b);
 }
 
 /** A planning projection only: prerequisites and resource conflicts are distinct. */

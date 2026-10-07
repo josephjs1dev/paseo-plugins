@@ -4,6 +4,10 @@ import type { PaseoApi } from "../server/paseo/types";
 import { LaunchRejectedError, ConcertError } from "../server/concerts/errors";
 import { paseoWorkers } from "../server/paseo/concerts-host";
 import type { WorkerLaunch } from "../server/concerts/workers";
+import {
+  nextLaunchCheckDelay,
+  LAUNCH_CHECK_DELAYS_MS,
+} from "../server/concerts/workers";
 import { agent } from "./fixtures";
 
 type CreateInput = Parameters<
@@ -560,11 +564,13 @@ void test("inspect distinguishes active, permission-wait, settled, closed, and m
       id: "running",
       agent: agent({ id: "running", status: "running" }),
       active: true,
+      deliverable: true,
     },
     {
       id: "initializing",
       agent: agent({ id: "initializing", status: "initializing" }),
       active: true,
+      deliverable: true,
     },
     {
       id: "permission",
@@ -574,6 +580,7 @@ void test("inspect distinguishes active, permission-wait, settled, closed, and m
         attentionReason: "permission",
       }),
       active: true,
+      deliverable: true,
     },
     {
       id: "idle",
@@ -584,6 +591,7 @@ void test("inspect distinguishes active, permission-wait, settled, closed, and m
         attentionReason: null,
       }),
       active: false,
+      deliverable: true,
     },
     {
       id: "closed",
@@ -593,6 +601,7 @@ void test("inspect distinguishes active, permission-wait, settled, closed, and m
         attentionReason: "permission",
       }),
       active: false,
+      deliverable: false,
     },
     {
       id: "archived-running",
@@ -602,6 +611,7 @@ void test("inspect distinguishes active, permission-wait, settled, closed, and m
         archivedAt: "2026-10-05T00:00:00.000Z",
       }),
       active: false,
+      deliverable: false,
     },
   ];
   const fake = fakePaseo({ agents: cases.map((item) => item.agent) });
@@ -611,11 +621,13 @@ void test("inspect distinguishes active, permission-wait, settled, closed, and m
     assert.deepEqual(await workers.inspect(item.id), {
       exists: true,
       active: item.active,
+      deliverable: item.deliverable,
     });
   }
   assert.deepEqual(await workers.inspect("missing"), {
     exists: false,
     active: false,
+    deliverable: false,
   });
 });
 
@@ -707,4 +719,16 @@ void test("models lists available providers with their model IDs for the agent's
     { provider: "pi", models: ["gpt-test", "pi-test"] },
   ]);
   await assert.rejects(workers.models("missing"), /Agent not found: missing/);
+});
+
+void test("the launch re-check schedule yields one more check than delay, then stops", () => {
+  assert.deepEqual(LAUNCH_CHECK_DELAYS_MS, [5_000, 20_000]);
+  assert.equal(nextLaunchCheckDelay(1, [5, 10]), 5);
+  assert.equal(nextLaunchCheckDelay(2, [5, 10]), 10);
+  assert.equal(nextLaunchCheckDelay(3, [5, 10]), null);
+  // An empty schedule performs exactly the immediate first check.
+  assert.equal(nextLaunchCheckDelay(1, []), null);
+  assert.equal(nextLaunchCheckDelay(1), 5_000);
+  assert.equal(nextLaunchCheckDelay(2), 20_000);
+  assert.equal(nextLaunchCheckDelay(3), null);
 });

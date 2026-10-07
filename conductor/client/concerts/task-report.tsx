@@ -1,7 +1,11 @@
 import { useState } from "react";
 import { Pressable, Text, View } from "react-native";
 import type { PluginTheme } from "@getpaseo/plugin";
-import type { TaskReport } from "../../shared/concerts/models";
+import type {
+  FailureNeed,
+  TaskDiagnosis,
+  TaskReport,
+} from "../../shared/concerts/models";
 
 /** Readable line length for task prose in cards and report panels. */
 export const PROSE_WIDTH = 760;
@@ -43,6 +47,7 @@ export function ReportFooter({
   const checksLabel = `Checks ${passedChecks}/${report.checks.length} passed${
     failedChecks ? ` · ${failedChecks} failed` : ""
   }`;
+  const [diagnosisOpen, setDiagnosisOpen] = useState(false);
   return (
     <View
       style={{
@@ -82,6 +87,17 @@ export function ReportFooter({
             dense={!compact}
           />
         )}
+        {report.diagnosis && (
+          <FooterToggle
+            theme={theme}
+            label="Diagnosis"
+            danger
+            expanded={diagnosisOpen}
+            onToggle={() => setDiagnosisOpen((open) => !open)}
+            testID={`concert-task-diagnosis-${taskId}`}
+            dense={!compact}
+          />
+        )}
       </View>
       {evidenceOpen && (
         <InsetPanel theme={theme}>
@@ -93,6 +109,106 @@ export function ReportFooter({
           <ChecksPanel theme={theme} checks={report.checks} />
         </InsetPanel>
       )}
+      {diagnosisOpen && report.diagnosis && (
+        <InsetPanel theme={theme}>
+          <DiagnosisPanel theme={theme} diagnosis={report.diagnosis} />
+        </InsetPanel>
+      )}
+    </View>
+  );
+}
+
+/** What each structured failure `need` value asks the Conductor to do. */
+const NEED_ACTIONS: Record<FailureNeed, string> = {
+  scope: "Needs wider write scope",
+  input: "Needs user input",
+  model: "Needs a different profile or model",
+  none: "Needs a direction to continue",
+};
+
+/**
+ * A failed report's worker self-diagnosis: fix rounds tried, the suspected
+ * cause, what the worker needs next, and the write paths it requested when it
+ * ran out of scope. Sections with nothing to say are skipped.
+ */
+export function DiagnosisPanel({
+  theme,
+  diagnosis,
+}: {
+  theme: PluginTheme;
+  diagnosis: TaskDiagnosis;
+}) {
+  const labelStyle = {
+    fontSize: 12,
+    lineHeight: 17,
+    fontWeight: "600",
+  } as const;
+  return (
+    <View style={{ gap: 8 }}>
+      <View style={{ gap: 4 }}>
+        <Text style={{ color: theme.colors.foregroundMuted, ...labelStyle }}>
+          Tried
+        </Text>
+        {diagnosis.tried.map((entry, index) => (
+          <Text
+            key={index}
+            selectable
+            style={{
+              color: theme.colors.foreground,
+              fontSize: 13,
+              lineHeight: 20,
+              maxWidth: PROSE_WIDTH,
+            }}
+          >
+            {`${index + 1}. ${entry}`}
+          </Text>
+        ))}
+      </View>
+      <View style={{ gap: 4 }}>
+        <Text style={{ color: theme.colors.foregroundMuted, ...labelStyle }}>
+          Suspected cause
+        </Text>
+        <Text
+          selectable
+          style={{
+            color: theme.colors.foreground,
+            fontSize: 13,
+            lineHeight: 20,
+            maxWidth: PROSE_WIDTH,
+          }}
+        >
+          {diagnosis.suspectedCause}
+        </Text>
+      </View>
+      <View style={{ gap: 4 }}>
+        <Text style={{ color: theme.colors.foregroundMuted, ...labelStyle }}>
+          Need
+        </Text>
+        <Text
+          selectable
+          style={{
+            color: theme.colors.statusDanger,
+            fontSize: 13,
+            lineHeight: 20,
+          }}
+        >
+          {NEED_ACTIONS[diagnosis.need]}
+        </Text>
+        {diagnosis.requestedWrites?.map((path) => (
+          <Text
+            key={path}
+            selectable
+            style={{
+              color: theme.colors.foreground,
+              fontSize: 13,
+              lineHeight: 20,
+              maxWidth: PROSE_WIDTH,
+            }}
+          >
+            {path}
+          </Text>
+        ))}
+      </View>
     </View>
   );
 }

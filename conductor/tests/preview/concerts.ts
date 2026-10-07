@@ -8,8 +8,97 @@ import {
 import {
   fixtureConcerts,
   planContext,
+  recoveryConcert,
   storedConcert,
 } from "../concert-fixtures";
+
+/**
+ * Preview-only fixture extensions kept out of the shared fixture record:
+ * states the production fixtures do not carry a scenario for, so the browser
+ * checks and screenshots can reach them through `?concert-fixture=`.
+ */
+const extendedFixtureConcerts: Record<string, () => StoredConcert> = {
+  "agent-reuse": () => {
+    const run = recoveryConcert();
+    const attempt = run.execution?.attempts[0];
+    if (!run.execution || !attempt) {
+      return run;
+    }
+    // Same task and same agent as the latest attempt: an earlier failed fix
+    // round that reused the agent after a retry dispatch.
+    const prior = structuredClone(attempt);
+    prior.id = "b410f767-1197-469b-8b89-af35338a4e0b";
+    prior.state = "failed";
+    prior.startedAt = attempt.startedAt - 10 * 60_000;
+    prior.endedAt = attempt.startedAt - 5 * 60_000;
+    delete prior.grantedWrites;
+    delete prior.nudgedAt;
+    prior.launch = {
+      state: "started",
+      prompt: "Carry out the task and report evidence",
+      settled: true,
+    };
+    run.execution.attempts.unshift(prior);
+    return run;
+  },
+  "recovery-retry": () => {
+    const run = recoveryConcert();
+    const failed = run.execution?.attempts[0];
+    if (!run.execution || !failed) {
+      return run;
+    }
+    failed.endedAt = failed.startedAt + 5 * 60_000;
+    // A later Conductor `addWrites` revision grows the task after the failed
+    // attempt, so the history must not project it onto that attempt.
+    const grown = structuredClone(run.revisions[0]);
+    if (grown) {
+      grown.number = 2;
+      grown.parent = 1;
+      grown.reason = "Conductor added write scope: shared/helper.ts";
+      grown.acceptedAt = failed.endedAt + 60_000;
+      grown.graph = {
+        tasks: grown.graph.tasks.map((task) =>
+          task.id === "repair"
+            ? { ...task, writes: ["shared/helper.ts"] }
+            : task,
+        ),
+      };
+      run.revisions.push(grown);
+    }
+    // The fresh successful retry on another agent: the task card carries no
+    // grant, so the history is the only place the earlier reason survives.
+    const retry = structuredClone(failed);
+    retry.id = "b410f767-1197-469b-8b89-af35338a4e0c";
+    retry.agentId = "worker-repair-2";
+    retry.state = "completed";
+    retry.startedAt = failed.endedAt + 5 * 60_000;
+    retry.endedAt = retry.startedAt + 5 * 60_000;
+    retry.message = null;
+    delete retry.grantedWrites;
+    delete retry.nudgedAt;
+    retry.report = {
+      outcome: "completed",
+      summary: "Typecheck passes after the shared helper change.",
+      evidence: ["npm run typecheck: clean"],
+      checks: [{ name: "typecheck", status: "passed", detail: "clean" }],
+    };
+    retry.reportHash = "e".repeat(64);
+    retry.launch = {
+      state: "started",
+      prompt: "Carry out the task and report evidence",
+      settled: true,
+    };
+    run.execution.attempts.push(retry);
+    run.status = "completed";
+    return run;
+  },
+};
+
+function fixtureConcertByName(
+  fixture: string,
+): (() => StoredConcert) | undefined {
+  return extendedFixtureConcerts[fixture] ?? fixtureConcerts[fixture];
+}
 
 function managed(): StoredConcert {
   const base = storedConcert();
@@ -44,7 +133,7 @@ export function usePreviewConcerts(
 ) {
   const [run, setConcert] = useState<StoredConcert | null>(
     () =>
-      (fixture ? fixtureConcerts[fixture]?.() : undefined) ??
+      (fixture ? fixtureConcertByName(fixture)?.() : undefined) ??
       (legacy ? storedConcert() : managed()),
   );
   const state = useSyncExternalStore(session.subscribe, session.getSnapshot);

@@ -35,6 +35,15 @@ void test("the skill lists worker options before splitting and teaches the task 
   assert.match(ORCHESTRATE_SKILL, /Objective:/);
 });
 
+void test("the skill directs recovery from diagnosis and reviews granted writes", () => {
+  assert.match(ORCHESTRATE_SKILL, /per-task notification summary first/);
+  assert.match(ORCHESTRATE_SKILL, /diagnosis\.need/);
+  assert.match(ORCHESTRATE_SKILL, /addWrites/);
+  assert.match(ORCHESTRATE_SKILL, /different worker choice only for/);
+  assert.match(ORCHESTRATE_SKILL, /grantedWrites/);
+  assert.match(ORCHESTRATE_SKILL, /Widen refused/);
+});
+
 void test("install writes both copies, refreshes them, and remove deletes only Conductor copies", async () => {
   const home = await testDirectory();
   const paths = skillPaths(home);
