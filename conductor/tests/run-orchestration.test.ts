@@ -20,7 +20,12 @@ async function fixture() {
   const workers: WorkerRuntime = {
     prepare: async () => JSON.stringify({ provider: "fake/model" }),
     profiles: async () => [
-      { name: "Small", notes: "Bounded read-only assignments" },
+      {
+        id: "small",
+        name: "Small",
+        notes: "Bounded read-only assignments",
+        provider: "fake",
+      },
     ],
     models: async () => [{ provider: "fake", models: ["model", "other"] }],
     inspect: async (id) => ({

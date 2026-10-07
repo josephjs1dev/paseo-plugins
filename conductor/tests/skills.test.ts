@@ -28,6 +28,13 @@ void test("the skill names itself and documents concertId", () => {
   assert.equal(ORCHESTRATE_SKILL.includes("\\`"), false);
 });
 
+void test("the skill lists worker options before splitting and teaches the task contract", () => {
+  const options = ORCHESTRATE_SKILL.indexOf("List the worker options");
+  const split = ORCHESTRATE_SKILL.indexOf("Split the goal into tasks");
+  assert.ok(options >= 0 && options < split);
+  assert.match(ORCHESTRATE_SKILL, /Objective:/);
+});
+
 void test("install writes both copies, refreshes them, and remove deletes only Conductor copies", async () => {
   const home = await testDirectory();
   const paths = skillPaths(home);

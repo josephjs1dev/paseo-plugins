@@ -68,8 +68,9 @@ coordinator wait until its turn ends.
 Set `"coordinator":"agent"` to create a dedicated Conductor agent instead. Optional
 `coordinatorProfile` selects its configured profile by name and implies
 `"coordinator":"agent"`; otherwise it inherits the requesting agent's settings.
-`profiles` lists worker profile names and notes; `models` lists available providers
-and model IDs. Only the Conductor agent can define or dispatch its concert:
+`profiles` lists each worker profile's id, name, notes, provider, model, mode and
+thinking option; `models` lists available providers and model IDs. Only the
+Conductor agent can define or dispatch its concert:
 
 ```bash
 node "$CONDUCTOR_COMMAND" define <<'JSON'
@@ -80,8 +81,8 @@ node "$CONDUCTOR_COMMAND" dispatch <<'JSON'
 JSON
 ```
 
-Each task may select `profile` by configured name, or `provider`, `model`, and an
-optional `thinkingOptionId` from `models`; never both. Without either, the worker
+Each task may select `profile` by configured id or name, or `provider`, `model`,
+and an optional `thinkingOptionId` from `models`; never both. Without either, the worker
 inherits the Conductor's provider, model, thinking option, and mode. The permission
 mode is never selected inline: a worker on the same provider copies the Conductor's
 mode, and another provider starts in its default mode. Assignments carry the goal,

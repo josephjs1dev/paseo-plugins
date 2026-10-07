@@ -54,6 +54,8 @@ function fakePaseo(
       modeId?: string;
       thinkingOptionId?: string;
       featureValues?: Record<string, unknown>;
+      icon?: string;
+      color?: string;
       notes?: string;
     }>;
     createError?: Error;
@@ -617,22 +619,36 @@ void test("inspect distinguishes active, permission-wait, settled, closed, and m
   });
 });
 
-void test("profiles exposes only configured names and notes", async () => {
+void test("profiles exposes routing fields only", async () => {
   const fake = fakePaseo({
     profiles: [
       {
         id: "review",
         name: "Reviewer",
         provider: "codex",
+        model: "gpt-review",
+        modeId: "review-mode",
+        thinkingOptionId: "high",
         notes: "Review only",
+        icon: "magnifying-glass",
+        color: "blue",
+        featureValues: { web: true },
       },
       { id: "pi", name: "Pi", provider: "pi" },
     ],
   });
 
   assert.deepEqual(await paseoWorkers(fake.paseo).profiles(), [
-    { name: "Reviewer", notes: "Review only" },
-    { name: "Pi", notes: "" },
+    {
+      id: "review",
+      name: "Reviewer",
+      notes: "Review only",
+      provider: "codex",
+      model: "gpt-review",
+      modeId: "review-mode",
+      thinkingOptionId: "high",
+    },
+    { id: "pi", name: "Pi", notes: "", provider: "pi" },
   ]);
 });
 

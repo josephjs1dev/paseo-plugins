@@ -16,12 +16,22 @@ export interface WorkerLaunch {
   config?: string;
 }
 
+export interface WorkerProfile {
+  id: string;
+  name: string;
+  notes: string;
+  provider: string;
+  model?: string;
+  modeId?: string;
+  thinkingOptionId?: string;
+}
+
 export interface WorkerRuntime {
   prepare(input: WorkerLaunch): Promise<string>;
   launch(input: WorkerLaunch): Promise<void>;
   inspect(agentId: string): Promise<{ exists: boolean; active: boolean }>;
   wake(agentId: string, prompt: string, key?: string): Promise<void>;
-  profiles(): Promise<Array<{ name: string; notes: string }>>;
+  profiles(): Promise<WorkerProfile[]>;
   models(
     agentId: string,
   ): Promise<Array<{ provider: string; models: string[] }>>;
@@ -384,9 +394,17 @@ export function workerRuntime(host: ConcertHost): WorkerRuntime {
     },
 
     async profiles() {
+      // Routing fields only: profiles are loose objects and may carry more.
       return (await host.profiles()).map((profile) => ({
+        id: profile.id,
         name: profile.name,
         notes: profile.notes ?? "",
+        provider: profile.provider,
+        ...(profile.model ? { model: profile.model } : {}),
+        ...(profile.modeId ? { modeId: profile.modeId } : {}),
+        ...(profile.thinkingOptionId
+          ? { thinkingOptionId: profile.thinkingOptionId }
+          : {}),
       }));
     },
   };

@@ -6,7 +6,7 @@ const help = {
   usage: 'node "$CONDUCTOR_COMMAND" <command> [--agent ID] [--socket PATH] < input.json',
   commands: {
     orchestrate: { key: "stable-request-key", title: "Deliver a feature", goal: "Authorized work to split among agents", concurrency: 3, coordinator: "self (default; follow the returned instructions) or agent (create a dedicated Conductor agent)", coordinatorProfile: "optional configured profile name; implies coordinator agent" },
-    profiles: "List configured worker profile names and notes",
+    profiles: "List configured worker profiles: id, name, notes, provider, model, modeId, thinkingOptionId",
     models: "List available providers and model IDs for per-task worker choice",
     define: { concertId: "UUID", tasks: "[{id,title,description,dependsOn:[],reads:[\".\"],writes:[],checks:[],profile:optional configured name, or provider/model/thinkingOptionId:optional inline choice; never both}]" },
     dispatch: { concertId: "UUID", retryTaskId: "optional settled blocked/failed task ID", profile: "optional replacement profile for a failed task retry", provider: "or inline replacement provider", model: "or inline replacement model", thinkingOptionId: "optional inline replacement thinking option" },
