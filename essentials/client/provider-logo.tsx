@@ -4,6 +4,7 @@ import { Image, View } from "react-native";
 
 import { providerDefinitions, type Provider } from "../shared/providers";
 import { claudeLogoUri } from "./assets/claude-logo";
+import { codexLogoUri } from "./assets/codex-logo";
 
 interface LogoProps {
   size: number;
@@ -15,6 +16,17 @@ function ClaudeLogo({ size, color }: LogoProps) {
   return (
     <Image
       source={{ uri: claudeLogoUri }}
+      accessible={false}
+      resizeMode="contain"
+      style={{ width: size, height: size, tintColor: color }}
+    />
+  );
+}
+
+function CodexLogo({ size, color }: LogoProps) {
+  return (
+    <Image
+      source={{ uri: codexLogoUri }}
       accessible={false}
       resizeMode="contain"
       style={{ width: size, height: size, tintColor: color }}
@@ -52,6 +64,7 @@ function OpenCodeLogo({ size, color, backgroundColor }: LogoProps) {
 }
 
 const providerLogos: Partial<Record<Provider, ComponentType<LogoProps>>> = {
+  chatgpt: CodexLogo,
   claude: ClaudeLogo,
   "opencode-go": OpenCodeLogo,
 };
