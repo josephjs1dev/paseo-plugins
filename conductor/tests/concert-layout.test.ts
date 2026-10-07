@@ -89,7 +89,7 @@ void test("conflict lanes and every edge stay inside vertical bounds", () => {
   const busy = {
     tasks: [
       task("w1", { ...shared, prerequisites: [] }),
-      task("w2", { ...shared, prerequisites: ["w1"] }),
+      task("w2", { ...shared, prerequisites: [] }),
     ],
   };
   const layout = layoutGraph(busy, false);
@@ -106,11 +106,52 @@ void test("conflict lanes and every edge stay inside vertical bounds", () => {
   );
 });
 
-void test("long one-line titles are stored fully for the client to truncate", () => {
-  const layout = layoutGraph({ tasks: [longTask()] }, false);
-  const node = layout.nodes[0];
-  assert.equal(node?.width, 240);
-  assert.equal(node?.height, 112);
+void test("only the transitive reduction of prerequisites is drawn", () => {
+  const layout = layoutGraph(
+    {
+      tasks: [
+        task("t1"),
+        task("t2", { prerequisites: ["t1"] }),
+        task("t3", { prerequisites: ["t1", "t2"] }),
+        task("t4", { prerequisites: ["t1", "t2", "t3"] }),
+      ],
+    },
+    false,
+  );
+  assert.deepEqual(
+    layout.edges.map((edge) => `${edge.from}->${edge.to}`),
+    ["t1->t2", "t2->t3", "t3->t4"],
+  );
+  assert.deepEqual(
+    layout.nodes.map((node) => node.layer),
+    [0, 1, 2, 3],
+  );
+});
+
+void test("conflicts between prerequisite-ordered tasks are not drawn", () => {
+  const shared = {
+    reads: [],
+    writes: ["src/api"],
+    worker: { role: "implementation" as const, profile: "default" },
+  };
+  const layout = layoutGraph(
+    {
+      tasks: [
+        task("a", { ...shared }),
+        task("b", { ...shared, prerequisites: ["a"] }),
+        task("c", { ...shared, prerequisites: ["b"] }),
+        task("d", { ...shared }),
+      ],
+    },
+    false,
+  );
+  assert.deepEqual(
+    layout.edges
+      .filter((edge) => edge.kind === "conflict")
+      .map((edge) => [edge.from, edge.to].sort().join("~"))
+      .sort(),
+    ["a~d", "b~d", "c~d"],
+  );
 });
 
 void test("long one-line titles are stored fully for the client to truncate", () => {

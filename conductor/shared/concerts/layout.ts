@@ -110,6 +110,40 @@ function taskLayers(graph: ConcertGraph): Map<string, number> {
   return layers;
 }
 
+/** Every task reachable through prerequisites, excluding the task itself. */
+function taskAncestors(graph: ConcertGraph): Map<string, Set<string>> {
+  const byId = new Map(graph.tasks.map((task) => [task.id, task]));
+  const ancestors = new Map<string, Set<string>>();
+  const resolve = (id: string, active: Set<string>): Set<string> => {
+    const known = ancestors.get(id);
+    if (known) {
+      return known;
+    }
+    const found = new Set<string>();
+    if (active.has(id)) {
+      return found;
+    }
+    active.add(id);
+    for (const prerequisite of byId.get(id)?.prerequisites ?? []) {
+      if (!byId.has(prerequisite)) {
+        continue;
+      }
+      found.add(prerequisite);
+      for (const ancestor of resolve(prerequisite, active)) {
+        found.add(ancestor);
+      }
+    }
+    active.delete(id);
+    found.delete(id);
+    ancestors.set(id, found);
+    return found;
+  };
+  for (const task of graph.tasks) {
+    resolve(task.id, new Set());
+  }
+  return ancestors;
+}
+
 /**
  * Vertical center of an edge endpoint inside the node body.
  */
@@ -161,14 +195,28 @@ export function layoutGraph(graph: ConcertGraph, compact = false): GraphLayout {
     };
   });
   const nodeOf = new Map(nodes.map((node) => [node.taskId, node]));
+  const ancestors = taskAncestors(graph);
+  const ordered = (a: string, b: string) =>
+    Boolean(ancestors.get(a)?.has(b) || ancestors.get(b)?.has(a));
 
   // Dependencies: prerequisite right edge → dependent left edge, with an
-  // elbow so multiple edges into one task stay readable.
-  const dependencyEdges = graph.tasks.flatMap((task) =>
-    task.prerequisites
-      .filter((id, index, all) => all.indexOf(id) === index)
-      .map((prerequisite) => ({ from: prerequisite, to: task.id })),
-  );
+  // elbow so multiple edges into one task stay readable. Only the transitive
+  // reduction is drawn: a prerequisite already reached through another
+  // prerequisite adds no ordering, so its direct arrow is omitted.
+  const dependencyEdges = graph.tasks.flatMap((task) => {
+    const direct = task.prerequisites.filter(
+      (id, index, all) => all.indexOf(id) === index,
+    );
+    return direct
+      .filter(
+        (prerequisite) =>
+          !direct.some(
+            (other) =>
+              other !== prerequisite && ancestors.get(other)?.has(prerequisite),
+          ),
+      )
+      .map((prerequisite) => ({ from: prerequisite, to: task.id }));
+  });
   const outgoing = new Map<string, number>();
   const incoming = new Map<string, number>();
   for (const edge of dependencyEdges) {
@@ -218,7 +266,8 @@ export function layoutGraph(graph: ConcertGraph, compact = false): GraphLayout {
   });
 
   // Resource conflicts: dashed, routed below their row when both tasks share
-  // a layer, otherwise as a dashed elbow between the layers.
+  // a layer, otherwise as a dashed elbow between the layers. Pairs already
+  // ordered by prerequisites never run together, so they are not drawn.
   const conflictRows = new Map<number, number>();
   for (let i = 0; i < graph.tasks.length; i++) {
     for (let j = i + 1; j < graph.tasks.length; j++) {
@@ -227,7 +276,7 @@ export function layoutGraph(graph: ConcertGraph, compact = false): GraphLayout {
       if (!a || !b) {
         continue;
       }
-      const reason = conflictReason(a, b);
+      const reason = ordered(a.id, b.id) ? null : conflictReason(a, b);
       if (!reason) {
         continue;
       }
