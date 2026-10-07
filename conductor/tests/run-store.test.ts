@@ -5,18 +5,22 @@ import { once } from "node:events";
 import { mkdir, readFile, symlink, unlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import test from "node:test";
-import { contentHash, fileRunStore, type RunStore } from "../server/run-store";
+import {
+  contentHash,
+  fileRunStore,
+  type RunStore,
+} from "../server/concerts/store";
 import { legacyRunService } from "./legacy-run-service";
 import {
   validateRunScopes,
   type RunPlacementRuntime,
-} from "../server/run-placement";
-import { RunError } from "../server/run-files";
+} from "../server/concerts/placement";
+import { RunError } from "../server/concerts/errors";
 import {
   RUN_LIMITS,
   type RunAttempt,
   type StoredRun,
-} from "../shared/run-models";
+} from "../shared/concerts/models";
 import { graph, placement, planContext, runId, task } from "./run-fixtures";
 import { testDirectory } from "./fixtures";
 
@@ -283,7 +287,7 @@ void test(
         "--input-type=module",
         "-e",
         `
-    import { fileRunStore } from './server/run-store.ts';
+    import { fileRunStore } from './server/concerts/store.ts';
     await fileRunStore(process.argv[1]).update(process.argv[2], 0, async (run) => {
       process.stdout.write('locked');
       await new Promise((resolve) => process.stdin.once('data', resolve));
@@ -564,6 +568,6 @@ void test("deleting a missing run reports the documented error", async () => {
   const store = fileRunStore(directory);
   await assert.rejects(
     store.remove(randomUUID(), 0),
-    /This performance no longer exists\. Refresh the performance list\./,
+    /This concert no longer exists\. Refresh the concert list\./,
   );
 });

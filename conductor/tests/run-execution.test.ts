@@ -1,10 +1,13 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { runExecution } from "../server/run-execution";
-import { commandRunId, type ExecutionRuntime } from "../server/run-identity";
-import { contentHash, fileRunStore } from "../server/run-store";
+import { runExecution } from "../server/concerts/execution";
+import {
+  commandRunId,
+  type ExecutionRuntime,
+} from "../server/concerts/identity";
+import { contentHash, fileRunStore } from "../server/concerts/store";
 import { storedRun, planContext } from "./run-fixtures";
-import { latestAttempt, type TaskReport } from "../shared/run-models";
+import { latestAttempt, type TaskReport } from "../shared/concerts/models";
 import { testDirectory } from "./fixtures";
 
 void test("legacy cleanup checks source, workspace and version and cannot remove execution runs", async () => {
@@ -16,7 +19,7 @@ void test("legacy cleanup checks source, workspace and version and cannot remove
   await f.store.create(legacy, planContext);
   const removal = {
     kind: "remove-legacy",
-    runId: legacy.id,
+    concertId: legacy.id,
     expectedVersion: legacy.version,
   };
   await assert.rejects(f.send(removal, "another-agent"), /original source/);
@@ -33,21 +36,25 @@ void test("legacy cleanup checks source, workspace and version and cannot remove
   );
   const managedId = await f.start("cleanup-protected");
   await assert.rejects(
-    f.send({ ...removal, runId: managedId }),
+    f.send({ ...removal, concertId: managedId }),
     /Execution runs cannot/,
   );
   const attempt = await f.claim(managedId);
   await f.send({
     kind: "report",
-    runId: managedId,
+    concertId: managedId,
     attemptId: attempt.id,
     report,
   });
-  await f.send({ kind: "finish", runId: managedId, summary: "Finished" });
+  await f.send({
+    kind: "finish",
+    concertId: managedId,
+    summary: "Finished",
+  });
   await assert.rejects(
     f.send({
       ...removal,
-      runId: managedId,
+      concertId: managedId,
       expectedVersion: (await f.read(managedId)).version,
     }),
     /Execution runs cannot/,
@@ -97,7 +104,7 @@ async function fixture() {
   };
   const read = async (runId: string) => (await store.read(runId)).run;
   const claim = async (runId: string, taskId = "work", retry = false) => {
-    await send({ kind: "claim", runId, taskId, retry });
+    await send({ kind: "claim", concertId: runId, taskId, retry });
     const attempt = latestAttempt(await read(runId), taskId);
     assert.ok(attempt);
     return attempt;
@@ -122,12 +129,22 @@ void test("agent commands create, execute and report without a draft or manual a
   assert.equal((await f.claim(id)).id, attempt.id);
   assert.equal((await f.read(id)).version, 1);
   await assert.rejects(
-    f.send({ kind: "finish", runId: id, summary: "Premature" }),
+    f.send({ kind: "finish", concertId: id, summary: "Premature" }),
     /every task/,
   );
-  await f.send({ kind: "report", runId: id, attemptId: attempt.id, report });
+  await f.send({
+    kind: "report",
+    concertId: id,
+    attemptId: attempt.id,
+    report,
+  });
   const version = (await f.read(id)).version;
-  await f.send({ kind: "report", runId: id, attemptId: attempt.id, report });
+  await f.send({
+    kind: "report",
+    concertId: id,
+    attemptId: attempt.id,
+    report,
+  });
   assert.equal((await f.read(id)).version, version);
   assert.equal(
     (await f.read(id)).status,
@@ -136,7 +153,7 @@ void test("agent commands create, execute and report without a draft or manual a
   );
   await f.send({
     kind: "finish",
-    runId: id,
+    concertId: id,
     summary: "Completed with check evidence",
   });
   const done = await f.read(id);
@@ -144,12 +161,12 @@ void test("agent commands create, execute and report without a draft or manual a
   assert.deepEqual((await fileRunStore(f.directory).read(id)).run, done);
   await f.send({
     kind: "finish",
-    runId: id,
+    concertId: id,
     summary: "Completed with check evidence",
   });
   assert.equal((await f.read(id)).version, done.version);
   await assert.rejects(
-    f.send({ kind: "finish", runId: id, summary: "Changed report" }),
+    f.send({ kind: "finish", concertId: id, summary: "Changed report" }),
     /different final/,
   );
 });
@@ -176,12 +193,12 @@ void test("joins and required checks must have actual explicit reports", async (
   const a = await f.claim(id, "a");
   const b = await f.claim(id, "b");
   await assert.rejects(
-    f.send({ kind: "report", runId: id, attemptId: a.id, report }),
+    f.send({ kind: "report", concertId: id, attemptId: a.id, report }),
     /declared check/,
   );
   await f.send({
     kind: "report",
-    runId: id,
+    concertId: id,
     attemptId: a.id,
     report: {
       ...report,
@@ -191,7 +208,7 @@ void test("joins and required checks must have actual explicit reports", async (
     },
   });
   await assert.rejects(f.claim(id, "join"), /prerequisites/);
-  await f.send({ kind: "report", runId: id, attemptId: b.id, report });
+  await f.send({ kind: "report", concertId: id, attemptId: b.id, report });
   assert.equal((await f.claim(id, "join")).state, "running");
 });
 
@@ -202,7 +219,7 @@ void test("same-checkout claims remain reserved through blockers and reload", as
   const attempt = await f.claim(first);
   await f.send({
     kind: "block",
-    runId: first,
+    concertId: first,
     attemptId: attempt.id,
     message: "Need the user's decision",
   });
@@ -212,7 +229,12 @@ void test("same-checkout claims remain reserved through blockers and reload", as
   await fresh.interrupt(null, "Reloaded");
   await assert.rejects(f.claim(second), /still owned/);
   assert.equal((await f.claim(first)).id, attempt.id);
-  await f.send({ kind: "report", runId: first, attemptId: attempt.id, report });
+  await f.send({
+    kind: "report",
+    concertId: first,
+    attemptId: attempt.id,
+    report,
+  });
   assert.equal((await f.claim(second)).state, "running");
 });
 
@@ -225,7 +247,12 @@ void test("turn endings preserve ownership and never fabricate completed tasks",
   assert.equal(paused.status, "blocked");
   assert.equal(latestAttempt(paused, "work")?.report, null);
   assert.equal((await f.claim(id)).id, attempt.id);
-  await f.send({ kind: "report", runId: id, attemptId: attempt.id, report });
+  await f.send({
+    kind: "report",
+    concertId: id,
+    attemptId: attempt.id,
+    report,
+  });
   await f.engine.interrupt("agent-1", "Another turn ended");
   assert.equal((await f.read(id)).status, "ready");
 });
@@ -236,13 +263,13 @@ void test("source and workspace mismatches cannot take over an assignment", asyn
   const attempt = await f.claim(id);
   await assert.rejects(
     f.send(
-      { kind: "report", runId: id, attemptId: attempt.id, report },
+      { kind: "report", concertId: id, attemptId: attempt.id, report },
       "agent-2",
     ),
     /original source/,
   );
   await assert.rejects(
-    f.send({ kind: "get", runId: id }, "agent-2"),
+    f.send({ kind: "get", concertId: id }, "agent-2"),
     /another source/,
   );
   const moved = runExecution(f.store, () => ({
@@ -252,7 +279,7 @@ void test("source and workspace mismatches cannot take over an assignment", asyn
   await assert.rejects(
     moved.execute({
       agentId: "agent-1",
-      command: { kind: "claim", runId: id, taskId: "work" },
+      command: { kind: "claim", concertId: id, taskId: "work" },
     }),
     /original source/,
   );
@@ -264,7 +291,7 @@ void test("explicit retries preserve prior reports and reject superseded or chan
   const first = await f.claim(id);
   await f.send({
     kind: "report",
-    runId: id,
+    concertId: id,
     attemptId: first.id,
     report: { ...report, outcome: "failed", summary: "Check failed" },
   });
@@ -272,14 +299,19 @@ void test("explicit retries preserve prior reports and reject superseded or chan
   const next = await f.claim(id, "work", true);
   assert.notEqual(next.id, first.id);
   await assert.rejects(
-    f.send({ kind: "report", runId: id, attemptId: first.id, report }),
+    f.send({ kind: "report", concertId: id, attemptId: first.id, report }),
     /superseded/,
   );
-  await f.send({ kind: "report", runId: id, attemptId: next.id, report });
+  await f.send({
+    kind: "report",
+    concertId: id,
+    attemptId: next.id,
+    report,
+  });
   await assert.rejects(
     f.send({
       kind: "report",
-      runId: id,
+      concertId: id,
       attemptId: next.id,
       report: { ...report, summary: "Changed" },
     }),

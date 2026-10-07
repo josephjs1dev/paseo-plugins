@@ -1,7 +1,11 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { conflictReason, graphIssues, projectGraph } from "../shared/run-graph";
-import { graphSchema, scopeSchema } from "../shared/run-models";
+import {
+  conflictReason,
+  graphIssues,
+  projectGraph,
+} from "../shared/concerts/graph";
+import { graphSchema, scopeSchema } from "../shared/concerts/models";
 import { graph, task } from "./run-fixtures";
 
 void test("admission rejects duplicate identities, missing prerequisites, cycles, and explorer writes", () => {

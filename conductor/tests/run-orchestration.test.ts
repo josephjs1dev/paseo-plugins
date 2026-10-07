@@ -1,14 +1,11 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { runExecution } from "../server/run-execution";
-import { fileRunStore } from "../server/run-store";
-import {
-  LaunchRejectedError,
-  type WorkerLaunch,
-  type WorkerRuntime,
-} from "../server/run-workers";
-import type { ExecutionRuntime } from "../server/run-identity";
-import { latestAttempt, type StoredRun } from "../shared/run-models";
+import { runExecution } from "../server/concerts/execution";
+import { fileRunStore } from "../server/concerts/store";
+import { LaunchRejectedError } from "../server/concerts/errors";
+import type { WorkerLaunch, WorkerRuntime } from "../server/concerts/workers";
+import type { ExecutionRuntime } from "../server/concerts/identity";
+import { latestAttempt, type StoredRun } from "../shared/concerts/models";
 import { placement } from "./run-fixtures";
 import { testDirectory } from "./fixtures";
 
@@ -25,6 +22,7 @@ async function fixture() {
     profiles: async () => [
       { name: "Small", notes: "Bounded read-only assignments" },
     ],
+    models: async () => [{ provider: "fake", models: ["model", "other"] }],
     inspect: async (id) => ({
       exists: launches.has(id),
       active: active.get(id) ?? false,
@@ -85,8 +83,12 @@ async function fixture() {
   };
   const define = async (run: StoredRun, tasks: unknown[]) => {
     assert.ok(run.source.agentId);
-    await send(run.source.agentId, { kind: "define", runId: run.id, tasks });
-    await send(run.source.agentId, { kind: "dispatch", runId: run.id });
+    await send(run.source.agentId, {
+      kind: "define",
+      concertId: run.id,
+      tasks,
+    });
+    await send(run.source.agentId, { kind: "dispatch", concertId: run.id });
     return read(run.id);
   };
   const report = async (id: string, taskId: string, outcome = "completed") => {
@@ -94,7 +96,7 @@ async function fixture() {
     assert.ok(attempt);
     await send(attempt.agentId, {
       kind: "report",
-      runId: id,
+      concertId: id,
       attemptId: attempt.id,
       report: {
         outcome,
@@ -114,13 +116,6 @@ async function fixture() {
     read,
     orchestrate,
     start,
-    startWorkspace: (workspaceId = placement.workspaceId) =>
-      engine.startWorkspace(workspaceId, {
-        kind: "orchestrate",
-        key: "workspace-goal",
-        title: "New workspace goal",
-        goal: "Split and delegate this request",
-      }),
     define,
     report,
     reconcile: () => engine.reconcile(),
@@ -164,7 +159,7 @@ void test("orchestrator creates distinct children and joins explicit reports onl
   await assert.rejects(
     f.send("requester", {
       kind: "define",
-      runId: planning.id,
+      concertId: planning.id,
       tasks: [task("a")],
     }),
     /Conductor agent/,
@@ -175,7 +170,7 @@ void test("orchestrator creates distinct children and joins explicit reports onl
   assert.equal(running.execution?.attempts.length, 2);
   await f.send(planning.source.agentId, {
     kind: "define",
-    runId: planning.id,
+    concertId: planning.id,
     tasks,
   });
   const a = latestAttempt(running, "a");
@@ -190,7 +185,7 @@ void test("orchestrator creates distinct children and joins explicit reports onl
   await assert.rejects(
     f.send(b.agentId, {
       kind: "block",
-      runId: planning.id,
+      concertId: planning.id,
       attemptId: a.id,
       message: "Forged",
     }),
@@ -199,7 +194,7 @@ void test("orchestrator creates distinct children and joins explicit reports onl
   await assert.rejects(
     f.send(planning.source.agentId, {
       kind: "claim",
-      runId: planning.id,
+      concertId: planning.id,
       taskId: "a",
     }),
     /dispatched/,
@@ -218,7 +213,7 @@ void test("orchestrator creates distinct children and joins explicit reports onl
   await assert.rejects(
     f.send(planning.source.agentId, {
       kind: "finish",
-      runId: planning.id,
+      concertId: planning.id,
       summary: "Too soon",
     }),
     /settled/,
@@ -231,14 +226,14 @@ void test("orchestrator creates distinct children and joins explicit reports onl
   await assert.rejects(
     f.send(a.agentId, {
       kind: "finish",
-      runId: planning.id,
+      concertId: planning.id,
       summary: "Not coordinator",
     }),
     /original source/,
   );
   await f.send(planning.source.agentId, {
     kind: "finish",
-    runId: planning.id,
+    concertId: planning.id,
     summary: "Reviewed worker reports",
   });
   assert.equal((await f.read(planning.id)).status, "completed");
@@ -276,7 +271,10 @@ void test("uncertain launch retries reuse durable worker and attempt identities"
   await f.reconcile();
   assert.equal(f.launches.size, 2);
   assert.ok(plan.source.agentId);
-  await f.send(plan.source.agentId, { kind: "dispatch", runId: plan.id });
+  await f.send(plan.source.agentId, {
+    kind: "dispatch",
+    concertId: plan.id,
+  });
   const current = latestAttempt(await f.read(plan.id), "a");
   assert.equal(current?.id, first.id);
   assert.equal(current?.agentId, first.agentId);
@@ -295,7 +293,7 @@ void test("unreported stopped workers block; resume keeps identity and failure r
   assert.equal((await f.read(plan.id)).status, "blocked");
   await f.send(plan.source.agentId, {
     kind: "dispatch",
-    runId: plan.id,
+    concertId: plan.id,
     retryTaskId: "a",
   });
   assert.equal(latestAttempt(await f.read(plan.id), "a")?.id, a.id);
@@ -304,7 +302,7 @@ void test("unreported stopped workers block; resume keeps identity and failure r
   await assert.rejects(
     f.send(plan.source.agentId, {
       kind: "dispatch",
-      runId: plan.id,
+      concertId: plan.id,
       retryTaskId: "a",
     }),
     /settled/,
@@ -313,7 +311,7 @@ void test("unreported stopped workers block; resume keeps identity and failure r
   await f.reconcile();
   await f.send(plan.source.agentId, {
     kind: "dispatch",
-    runId: plan.id,
+    concertId: plan.id,
     retryTaskId: "a",
   });
   const retry = latestAttempt(await f.read(plan.id), "a");
@@ -368,7 +366,7 @@ void test("definitively rejected creation releases reservation and supports a co
   assert.equal(f.launches.size, 1);
   await f.send(plan.source.agentId, {
     kind: "dispatch",
-    runId: plan.id,
+    concertId: plan.id,
     retryTaskId: "a",
     profile: "Small",
   });
@@ -439,7 +437,7 @@ void test("the same blocker after resume wakes the conductor once in each genera
   );
   await f.send(plan.source.agentId, {
     kind: "dispatch",
-    runId: plan.id,
+    concertId: plan.id,
     retryTaskId: "a",
   });
   f.active.set(a.agentId, false);
@@ -449,22 +447,6 @@ void test("the same blocker after resume wakes the conductor once in each genera
     f.wakes.filter((w) => w.startsWith(`${plan.source.agentId}:`)).length,
     2,
   );
-});
-
-void test("an empty workspace starts a coordinator without a bootstrap agent and preserves workspace retry identity", async () => {
-  const f = await fixture();
-  const first = await f.startWorkspace();
-  assert.equal(first.run.status, "planning");
-  assert.equal(first.run.execution?.orchestration?.requestedBy, null);
-  assert.ok(first.run.source.agentId);
-  assert.equal(f.launches.size, 1);
-  assert.equal(f.launches.get(first.run.source.agentId)?.parentAgentId, null);
-  const replay = await f.startWorkspace();
-  assert.equal(replay.run.id, first.run.id);
-  assert.equal(f.launches.size, 1);
-  const other = await f.startWorkspace("another-workspace");
-  assert.notEqual(other.run.id, first.run.id);
-  assert.equal(f.launches.size, 2);
 });
 
 void test("a requesting agent coordinates its own run without creating a Conductor agent", async () => {
@@ -493,7 +475,7 @@ void test("a requesting agent coordinates its own run without creating a Conduct
   assert.deepEqual(f.wakes, [`requester:${run.id}:all-reported`]);
   await f.send("requester", {
     kind: "finish",
-    runId: run.id,
+    concertId: run.id,
     summary: "Reviewed worker reports",
   });
   assert.equal((await f.read(run.id)).status, "completed");
@@ -521,4 +503,71 @@ void test("a dedicated coordinator remains available and profiles require one", 
     f.orchestrate("profile", { coordinator: "agent" }),
     /belongs to another plan/,
   );
+});
+
+const inlineTask = (id: string) => ({
+  id,
+  title: id,
+  description: `Inspect ${id}`,
+  dependsOn: [],
+  reads: [],
+  writes: ["src"],
+  checks: [],
+  provider: "pi",
+  model: "pi-test",
+  thinkingOptionId: "high",
+});
+
+void test("inline worker choices persist on tasks and reach the worker launch", async () => {
+  const f = await fixture();
+  const plan = await f.start();
+  const run = await f.define(plan, [inlineTask("a")]);
+  assert.deepEqual(run.revisions.at(-1)?.graph.tasks[0]?.worker, {
+    role: "implementation",
+    provider: "pi",
+    model: "pi-test",
+    thinkingOptionId: "high",
+    profile: "inherit",
+  });
+  const a = latestAttempt(run, "a");
+  assert.ok(a);
+  const launch = f.launches.get(a.agentId);
+  assert.equal(launch?.profile, undefined);
+  assert.equal(launch?.provider, "pi");
+  assert.equal(launch?.model, "pi-test");
+  assert.equal(launch?.thinkingOptionId, "high");
+});
+
+void test("a failed retry can replace a profile with an inline worker choice", async () => {
+  const f = await fixture();
+  const plan = await f.start();
+  assert.ok(plan.source.agentId);
+  f.rejectNext();
+  const failed = latestAttempt(
+    await f.define(plan, [task("a", [], ["src"])]),
+    "a",
+  );
+  assert.equal(failed?.state, "failed");
+  await assert.rejects(
+    f.send(plan.source.agentId, {
+      kind: "dispatch",
+      concertId: plan.id,
+      retryTaskId: "a",
+      profile: "Small",
+      provider: "pi",
+    }),
+  );
+  await f.send(plan.source.agentId, {
+    kind: "dispatch",
+    concertId: plan.id,
+    retryTaskId: "a",
+    provider: "pi",
+  });
+  const retry = latestAttempt(await f.read(plan.id), "a");
+  assert.ok(retry && retry.id !== failed?.id);
+  assert.equal(retry.launch?.profile, "inherit");
+  assert.equal(retry.launch?.provider, "pi");
+  const launch = f.launches.get(retry.agentId);
+  assert.equal(launch?.profile, undefined);
+  assert.equal(launch?.provider, "pi");
 });

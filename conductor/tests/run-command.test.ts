@@ -5,10 +5,10 @@ import { promisify } from "node:util";
 import { request } from "node:http";
 import { stat } from "node:fs/promises";
 import { z } from "zod";
-import { commandServer } from "../server/run-command-server";
-import { runExecution } from "../server/run-execution";
-import { fileRunStore } from "../server/run-store";
-import { RunError } from "../server/run-files";
+import { commandServer } from "../server/concerts/commands/server";
+import { runExecution } from "../server/concerts/execution";
+import { fileRunStore } from "../server/concerts/store";
+import { RunError } from "../server/concerts/errors";
 import { placement } from "./run-fixtures";
 import { testDirectory } from "./fixtures";
 
@@ -65,7 +65,7 @@ void test("standalone command supports a real start/claim/report/finish over an 
     const runId = responseSchema.parse(JSON.parse(started.output) as unknown)
       .run.id;
     const claimed = await cli(commandPath, socketPath, "claim", {
-      runId,
+      concertId: runId,
       taskId: "work",
     });
     assert.equal(claimed.code, 0, claimed.error);
@@ -77,7 +77,7 @@ void test("standalone command supports a real start/claim/report/finish over an 
     const resumed = await commandServer(directory, engine.execute);
     try {
       const result = await cli(commandPath, socketPath, "report", {
-        runId,
+        concertId: runId,
         attemptId,
         report: {
           outcome: "completed",
@@ -90,7 +90,7 @@ void test("standalone command supports a real start/claim/report/finish over an 
       assert.equal(
         (
           await cli(commandPath, socketPath, "finish", {
-            runId,
+            concertId: runId,
             summary: "All command operations passed",
           })
         ).code,
@@ -196,7 +196,7 @@ void test("socket rejects malformed JSON, unsupported routes, and browser origin
 });
 
 void test("session hooks preserve configuration and inject command context without launching work", async () => {
-  const { commandHooks } = await import("../server/run-command-hooks");
+  const { commandHooks } = await import("../server/entrypoints/concerts-hooks");
   const { createPaseoClient } = await import("@getpaseo/client");
   const paseo = createPaseoClient({
     url: "ws://127.0.0.1:1/ws",

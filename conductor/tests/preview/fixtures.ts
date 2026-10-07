@@ -1,6 +1,6 @@
-import type { InboxItem, InboxSnapshot } from "../../shared/models";
+import type { InboxItem, InboxSnapshot } from "../../shared/agents/models";
 import type { PluginTheme } from "@getpaseo/plugin";
-import { requestForm } from "../../shared/questions";
+import { requestForm } from "../../shared/agents/questions";
 
 export const light: PluginTheme = {
   colors: {

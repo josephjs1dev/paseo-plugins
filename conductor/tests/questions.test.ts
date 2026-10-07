@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { questionAnswers, requestForm } from "../shared/questions";
+import { questionAnswers, requestForm } from "../shared/agents/questions";
 import { question } from "./fixtures";
 
 await test("free text, single selection, and multiple selections use native header-keyed answers", () => {

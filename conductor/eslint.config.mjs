@@ -43,6 +43,39 @@ export default tseslint.config(
       ],
     },
   },
+  // Feature code reaches Paseo only through its host.ts interface.
+  {
+    files: ["server/agents/**", "server/concerts/**", "server/skills/**"],
+    rules: {
+      "no-restricted-imports": [
+        "error",
+        {
+          patterns: [
+            {
+              group: [
+                "@getpaseo/client",
+                "@getpaseo/client/*",
+                "@getpaseo/protocol",
+                "@getpaseo/protocol/*",
+              ],
+              message:
+                "Use the host-provided plugin SDK and derive types from its contracts; direct SDK peer imports require local packages during installation.",
+            },
+            {
+              group: [
+                "@getpaseo/plugin/server",
+                "**/paseo/*",
+                "!**/paseo/types",
+                "**/entrypoints/*",
+              ],
+              message:
+                "Feature code calls Paseo through its host.ts interface; only server/paseo and server/entrypoints use the SDK.",
+            },
+          ],
+        },
+      ],
+    },
+  },
   // Fake asynchronous adapters preserve the production interface without artificial waits.
   {
     files: ["tests/**/*.ts", "tests/**/*.tsx"],

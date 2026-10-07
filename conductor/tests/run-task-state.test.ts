@@ -5,8 +5,8 @@ import type {
   StoredRun,
   TaskDefinition,
   TaskReport,
-} from "../shared/run-models";
-import { taskState } from "../shared/run-task-state";
+} from "../shared/concerts/models";
+import { taskState } from "../shared/concerts/task-state";
 import { runId, storedRun, task } from "./run-fixtures";
 
 const completedReport: TaskReport = {

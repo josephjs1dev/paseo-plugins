@@ -1,12 +1,9 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import type { PaseoApi } from "../server/runtime";
-import { RunError } from "../server/run-files";
-import {
-  LaunchRejectedError,
-  paseoWorkers,
-  type WorkerLaunch,
-} from "../server/run-workers";
+import type { PaseoApi } from "../server/paseo/types";
+import { LaunchRejectedError, RunError } from "../server/concerts/errors";
+import { paseoWorkers } from "../server/paseo/concerts-host";
+import type { WorkerLaunch } from "../server/concerts/workers";
 import { agent } from "./fixtures";
 
 type CreateInput = Parameters<
@@ -60,7 +57,6 @@ function fakePaseo(
       notes?: string;
     }>;
     createError?: Error;
-    workspaceUnavailable?: boolean;
     refreshErrors?: Map<string, Error>;
   } = {},
 ) {
@@ -120,11 +116,6 @@ function fakePaseo(
     workspaces: {
       ref(_workspaceId: string) {
         return {
-          async refresh() {
-            return options.workspaceUnavailable
-              ? null
-              : { workspaceDirectory: "/test/repo", archivingAt: null };
-          },
           agents: {
             async create(input: CreateInput) {
               if (options.createError) {
@@ -645,71 +636,59 @@ void test("profiles exposes only configured names and notes", async () => {
   ]);
 });
 
-void test("workspace launch creates the coordinator directly with the Plan profile and no parent", async () => {
-  const f = fakePaseo({
-    profiles: [
-      {
-        id: "plan",
-        name: "Plan",
-        provider: "codex",
-        model: "gpt-test",
-        modeId: "auto-review",
-        thinkingOptionId: "high",
-      },
-    ],
-  });
-  const runtime = paseoWorkers(f.paseo);
-  const input = { ...launchInput, parentAgentId: null };
-  const config = await runtime.prepare(input);
-  await runtime.launch({ ...input, config });
-  assert.equal(f.created.length, 1);
-  assert.equal(f.created[0]?.parent, undefined);
-  assert.equal(f.created[0]?.config.provider, "codex/gpt-test");
-  assert.equal(f.created[0]?.config.modeId, "auto-review");
-  f.setAgent(
-    agent({
-      id: input.agentId,
-      workspaceId: input.workspaceId,
-      labels: {},
-      status: "idle",
-    }),
+const prepared = async (input: WorkerLaunch) =>
+  JSON.parse(
+    await paseoWorkers(fakePaseo({ agents: [parent()] }).paseo).prepare(input),
+  ) as unknown;
+
+void test("an inline provider and model start without the parent's mode, features, or thinking", async () => {
+  assert.deepEqual(
+    await prepared({ ...launchInput, provider: "pi", model: "pi-test" }),
+    { provider: "pi/pi-test" },
   );
-  await runtime.launch({ ...input, config });
-  assert.deepEqual(f.created[1], f.created[0]);
-  assert.equal(f.actualWorkers.size, 1);
+  assert.deepEqual(await prepared({ ...launchInput, provider: "pi" }), {
+    provider: "pi",
+  });
 });
 
-void test("workspace entry refuses missing profiles, unavailable workspaces and permission elevation", async () => {
-  const input = { ...launchInput, parentAgentId: null };
-  const missing = fakePaseo();
-  await assert.rejects(
-    paseoWorkers(missing.paseo).prepare(input),
-    /Unknown worker profile: Plan/,
-  );
-  const unavailable = fakePaseo({ workspaceUnavailable: true });
-  await assert.rejects(
-    paseoWorkers(unavailable.paseo).prepare(input),
-    /workspace is unavailable/,
-  );
-  const elevated = fakePaseo({
-    profiles: [
-      {
-        id: "plan",
-        name: "Plan",
-        provider: "codex",
-        model: "gpt-test",
-        modeId: "full-access",
-      },
-    ],
+void test("an inline model alone keeps the parent's provider, mode, thinking, and features", async () => {
+  assert.deepEqual(await prepared({ ...launchInput, model: "pi-test" }), {
+    provider: "codex/pi-test",
+    modeId: "auto-review",
+    thinkingOptionId: "high",
+    featureValues: { web: true },
   });
+});
+
+void test("an inline thinking option overrides the parent's", async () => {
+  assert.deepEqual(
+    await prepared({ ...launchInput, thinkingOptionId: "low" }),
+    {
+      provider: "codex/gpt-test",
+      modeId: "auto-review",
+      thinkingOptionId: "low",
+      featureValues: { web: true },
+    },
+  );
+});
+
+void test("an unavailable inline model is rejected before create", async () => {
+  const fake = fakePaseo({ agents: [parent({ status: "idle" })] });
   await assert.rejects(
-    paseoWorkers(elevated.paseo).prepare(input),
-    /elevated permission/,
+    paseoWorkers(fake.paseo).launch({ ...launchInput, model: "missing" }),
+    (error: unknown) =>
+      error instanceof LaunchRejectedError &&
+      error.message === "Worker model is unavailable: codex/missing",
   );
-  assert.equal(
-    missing.created.length +
-      unavailable.created.length +
-      elevated.created.length,
-    0,
-  );
+  assert.equal(fake.created.length, 0);
+});
+
+void test("models lists available providers with their model IDs for the agent's checkout", async () => {
+  const fake = fakePaseo({ agents: [parent()] });
+  const workers = paseoWorkers(fake.paseo);
+  assert.deepEqual(await workers.models(launchInput.parentAgentId), [
+    { provider: "codex", models: ["gpt-test", "pi-test"] },
+    { provider: "pi", models: ["gpt-test", "pi-test"] },
+  ]);
+  await assert.rejects(workers.models("missing"), /Agent not found: missing/);
 });

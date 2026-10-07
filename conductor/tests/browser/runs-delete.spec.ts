@@ -1,21 +1,19 @@
 import { expect, test } from "@playwright/test";
 
-const runName = "Open performance: Pagination investigation";
+const runName = "Open concert: Pagination investigation";
 
 test("Delete run: cancel keeps the run and its detail selection", async ({
   page,
 }) => {
   const detail = page.getByTestId("run-detail");
   await page.goto("/?runs");
-  await page.getByRole("tab", { name: "Performances", exact: true }).click();
+  await page.getByRole("tab", { name: "Concerts", exact: true }).click();
   await page.getByRole("button", { name: runName, exact: true }).click();
   await expect(detail).toContainText("0 of 3 tasks reported complete");
   // The unfinished run cannot be deleted yet; the muted helper explains why.
   const trigger = detail.getByTestId("run-delete");
   await expect(trigger).toBeDisabled();
-  await expect(detail).toContainText(
-    "Only finished performances can be deleted.",
-  );
+  await expect(detail).toContainText("Only finished concerts can be deleted.");
   await page
     .getByRole("button", { name: "Source completes run", exact: true })
     .click();
@@ -23,7 +21,7 @@ test("Delete run: cancel keeps the run and its detail selection", async ({
   await expect(trigger).toBeEnabled();
   await trigger.click();
   await expect(detail.getByTestId("run-delete-confirm")).toBeVisible();
-  await expect(detail).toContainText("Delete this performance?");
+  await expect(detail).toContainText("Delete this concert?");
   await detail.getByTestId("run-delete-cancel").click();
   await expect(detail.getByTestId("run-delete-confirm")).toHaveCount(0);
   await expect(
@@ -37,7 +35,7 @@ test("Delete run: confirming removes it from the list and clears the detail", as
 }) => {
   const detail = page.getByTestId("run-detail");
   await page.goto("/?runs&delete-slow");
-  await page.getByRole("tab", { name: "Performances", exact: true }).click();
+  await page.getByRole("tab", { name: "Concerts", exact: true }).click();
   await page.getByRole("button", { name: runName, exact: true }).click();
   await page
     .getByRole("button", { name: "Source completes run", exact: true })
@@ -54,12 +52,12 @@ test("Delete run: confirming removes it from the list and clears the detail", as
     page.getByRole("button", { name: runName, exact: true }),
   ).toHaveCount(0);
   await expect(
-    page.getByText("No performances yet", { exact: true }),
+    page.getByText("No concerts yet", { exact: true }),
   ).toBeVisible();
   // The selection is cleared, so the browser shows its empty state again.
   await expect(detail).toHaveCount(0);
   await expect(
-    page.getByText("Choose a performance to follow.", { exact: true }),
+    page.getByText("Choose a concert to follow.", { exact: true }),
   ).toBeVisible();
 });
 
@@ -68,7 +66,7 @@ test("Delete run: the action stays disabled while a task is running", async ({
 }) => {
   const detail = page.getByTestId("run-detail");
   await page.goto("/?runs");
-  await page.getByRole("tab", { name: "Performances", exact: true }).click();
+  await page.getByRole("tab", { name: "Concerts", exact: true }).click();
   await page.getByRole("button", { name: runName, exact: true }).click();
   await page
     .getByRole("button", { name: "Source claims task", exact: true })
@@ -76,9 +74,7 @@ test("Delete run: the action stays disabled while a task is running", async ({
   await expect(page.getByTestId("run-task-api")).toContainText("Running");
   const trigger = detail.getByTestId("run-delete");
   await expect(trigger).toBeDisabled();
-  await expect(detail).toContainText(
-    "Only finished performances can be deleted.",
-  );
+  await expect(detail).toContainText("Only finished concerts can be deleted.");
   // The confirmation never opens for a disabled action.
   await expect(detail.getByTestId("run-delete-confirm")).toHaveCount(0);
 });
@@ -88,7 +84,7 @@ test("Delete run: a server refusal surfaces as an alert and keeps the run", asyn
 }) => {
   const detail = page.getByTestId("run-detail");
   await page.goto("/?runs&delete-error");
-  await page.getByRole("tab", { name: "Performances", exact: true }).click();
+  await page.getByRole("tab", { name: "Concerts", exact: true }).click();
   await page.getByRole("button", { name: runName, exact: true }).click();
   await page
     .getByRole("button", { name: "Source completes run", exact: true })
@@ -97,7 +93,7 @@ test("Delete run: a server refusal surfaces as an alert and keeps the run", asyn
   await detail.getByTestId("run-delete").click();
   await detail.getByTestId("run-delete-confirm").click();
   await expect(detail.getByRole("alert")).toContainText(
-    "This performance changed. Refresh before deleting.",
+    "This concert changed. Refresh before deleting.",
   );
   await expect(
     page.getByRole("button", { name: runName, exact: true }),
@@ -112,7 +108,7 @@ test("Delete run: the compact confirmation wraps inside the viewport", async ({
   await page.setViewportSize({ width, height: 844 });
   const detail = page.getByTestId("run-detail");
   await page.goto("/?runs");
-  await page.getByRole("tab", { name: "Performances", exact: true }).click();
+  await page.getByRole("tab", { name: "Concerts", exact: true }).click();
   await page.getByRole("button", { name: runName, exact: true }).click();
   await page
     .getByRole("button", { name: "Source completes run", exact: true })
@@ -120,7 +116,7 @@ test("Delete run: the compact confirmation wraps inside the viewport", async ({
   await expect(detail).toContainText("3 of 3 tasks reported complete");
   await detail.getByTestId("run-delete").click();
   const action = detail.getByTestId("run-delete-action");
-  await expect(action).toContainText("Delete this performance?");
+  await expect(action).toContainText("Delete this concert?");
   for (const target of [
     action,
     detail.getByTestId("run-delete-confirm"),

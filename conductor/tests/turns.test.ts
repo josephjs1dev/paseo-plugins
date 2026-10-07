@@ -2,11 +2,11 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { turnJournal } from "../server/turns";
-import { snapshot } from "../server/snapshot";
-import { fileStore } from "../server/store";
-import { agentKey } from "../server/identity";
-import { visibleItems } from "../shared/inbox";
+import { turnJournal } from "../server/agents/turns";
+import { snapshot } from "../server/agents/snapshot";
+import { fileStore } from "../server/agents/store";
+import { agentKey } from "../server/agents/identity";
+import { visibleItems } from "../shared/agents/inbox";
 import { agent, runtime, testDirectory } from "./fixtures";
 
 const idle = () =>

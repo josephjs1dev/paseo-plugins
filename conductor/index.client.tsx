@@ -3,14 +3,14 @@ import type {
   PluginSurfaceProps,
   PluginWorkspacePanelProps,
 } from "@getpaseo/plugin/client";
-import { InboxSurface, InboxSidebar, Sessions } from "./client/surfaces";
-import { registerOrchestrate } from "./client/orchestrate";
-import { registerInboxNavigation } from "./client/registration";
+import { InboxSurface, InboxSidebar, Sessions } from "./client/podium/surfaces";
+import { registerSkillCommands } from "./client/skills";
+import { registerInboxNavigation } from "./client/podium/registration";
 
 export default function contribute(client: PluginClientContext) {
   const sessions = new Sessions();
   const removers = [
-    registerOrchestrate(client),
+    ...registerSkillCommands(client),
     ...registerInboxNavigation(
       client,
       (props: PluginSurfaceProps) => (

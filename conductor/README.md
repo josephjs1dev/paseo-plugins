@@ -3,32 +3,37 @@
 Conductor adds a Paseo podium for finding blockers, responding to agents, and
 following work across projects and workspaces on the selected daemon.
 
-Start with `/conductor-orchestrate <what you want done>` in a workspace's agent
-composer, including a new-agent draft. The composer command creates its Conductor
-agent directly using the configured **Plan** profile; no initial agent is required.
-Paseo's standalone **New workspace** screen does not expose plugin commands yet;
-open a workspace and use its **New tab → Agent** composer.
-Conductor creates a separate coordinator agent in that workspace, which inspects
-the request, splits it into small tasks, and dispatches real child agents. When
-you instead ask an existing agent to orchestrate, that agent becomes the
-coordinator and keeps its conversation context. The Performances tab shows planning,
-task agents, dependencies, blockers, and reported results.
+Install the Conductor skills once: open the Command Center (**⌘K** on macOS,
+**Ctrl+K** elsewhere) and select **Install conductor skills**. It writes each skill,
+currently `conductor-orchestrate/SKILL.md`, to `~/.claude/skills` and
+`~/.agents/skills` on the daemon host. Run it again after a plugin update;
+**Remove conductor skills** deletes only copies that Conductor installed and never overwrites a skill of the
+same name that you created.
+
+Then invoke `conductor-orchestrate` in any agent, or ask the agent to orchestrate.
+That agent becomes the Conductor and keeps its conversation context: it splits the
+work into tasks, chooses a worker per task, and dispatches real child agents. The
+Concerts tab shows planning, task agents, dependencies, blockers, and reported
+results.
 
 ## Features
 
-### Orchestrated performances
+### Orchestrated concerts
 
-The UI calls each orchestrated run a _performance_; agent commands, RPCs, and
-storage keep the `run` name (`runId`, `runs/`).
+Each orchestration is a _concert_: a Conductor agent and its task agents. Agent
+commands take `concertId` and acknowledge with `concertId`/`concert` (`concerts`
+for `list`); `runId` and `performanceId` are still accepted from prompts recorded
+before the renames. UI RPCs and storage keep the `run` name (`runs/`).
 
 The user supplies the goal, not a task form. The Conductor agent defines the task
-graph and chooses configured worker profiles using their notes. Each ready task
+graph and chooses a worker per task: a configured profile, an inline
+provider/model, or the Conductor's own settings. Each ready task
 gets its own child agent, with a link from its task, graph node, and attempt history.
-**Conductor agent** opens the coordinating conversation. Agents and Performances remain
+**Conductor agent** opens the coordinating conversation. Agents and Concerts remain
 separate sections of the same Podium and retain independent searches and selections.
 
 The graph draws directed dependencies and supports keyboard selection, agent
-navigation, and scrolling on small screens. Performances uses the same underlined filters,
+navigation, and scrolling on small screens. Concerts uses the same underlined filters,
 compact search, and list rows as Agents, without redundant workspace group headings.
 Legacy manual plans and creation/edit/accept endpoints are removed from the podium.
 
@@ -45,9 +50,6 @@ The Conductor agent reviews all results and finishes the run with a summary.
 
 ### Orchestration command flow
 
-The slash command creates a durable planning run and launches its Conductor agent.
-On 0.10 clients it opens the Podium using the legacy surface API; select **Performances**
-to inspect the new performance. Newer clients open it directly.
 Agents start orchestration with:
 
 ```bash
@@ -56,9 +58,9 @@ node "$CONDUCTOR_COMMAND" orchestrate <<'JSON'
 JSON
 ```
 
-By default the requesting agent becomes the run's Conductor agent. The
+By default the requesting agent becomes the concert's Conductor agent. The
 acknowledgement includes `instructions` for defining, dispatching, and finishing
-the run from the same conversation; no coordinator agent is created. While task
+the concert from the same conversation; no coordinator agent is created. While task
 agents work, the coordinating agent should not edit the checkout itself, because
 Conductor only serializes writes between task agents. Notifications to a busy
 coordinator wait until its turn ends.
@@ -66,27 +68,32 @@ coordinator wait until its turn ends.
 Set `"coordinator":"agent"` to create a dedicated Conductor agent instead. Optional
 `coordinatorProfile` selects its configured profile by name and implies
 `"coordinator":"agent"`; otherwise it inherits the requesting agent's settings.
-The slash command always creates a dedicated Conductor agent. `profiles` lists worker
-profile names and notes. Only the Conductor agent can define or dispatch its run:
+`profiles` lists worker profile names and notes; `models` lists available providers
+and model IDs. Only the Conductor agent can define or dispatch its concert:
 
 ```bash
 node "$CONDUCTOR_COMMAND" define <<'JSON'
-{"runId":"<run UUID>","tasks":[{"id":"api","title":"Inspect API","description":"Report API constraints with evidence","reads":["src/api"],"writes":[],"checks":[]},{"id":"ui","title":"Inspect UI","description":"Report UI constraints with evidence","reads":["src/ui"],"writes":[],"checks":[]},{"id":"combine","title":"Combine findings","description":"Compare API and UI reports","dependsOn":["api","ui"],"reads":[],"writes":[],"checks":[]}]}
+{"concertId":"<concert UUID>","tasks":[{"id":"api","title":"Inspect API","description":"Report API constraints with evidence","reads":["src/api"],"writes":[],"checks":[]},{"id":"ui","title":"Inspect UI","description":"Report UI constraints with evidence","reads":["src/ui"],"writes":[],"checks":[]},{"id":"combine","title":"Combine findings","description":"Compare API and UI reports","dependsOn":["api","ui"],"reads":[],"writes":[],"checks":[]}]}
 JSON
 node "$CONDUCTOR_COMMAND" dispatch <<'JSON'
-{"runId":"<run UUID>"}
+{"concertId":"<concert UUID>"}
 JSON
 ```
 
-Each task may select `profile` by configured name. Assignments carry the goal,
-prerequisite reports, declared scopes/checks, and exact run/attempt identity.
+Each task may select `profile` by configured name, or `provider`, `model`, and an
+optional `thinkingOptionId` from `models`; never both. Without either, the worker
+inherits the Conductor's provider, model, thinking option, and mode. The permission
+mode is never selected inline: a worker on the same provider copies the Conductor's
+mode, and another provider starts in its default mode. Assignments carry the goal,
+prerequisite reports, declared scopes/checks, and exact concert/attempt identity.
 Workers call `report` or `block` for their existing assignment, then stop. They do
 not create another run or claim the coordinator's task. The scheduler observes
 settlement, starts dependents, and notifies the Conductor agent of blockers or the
 completed graph. Notifications wait until the coordinator can receive them.
 
 `dispatch` with `retryTaskId` resumes a settled blocked agent using the same attempt,
-or creates a new agent for an explicitly failed, settled attempt. Old attempts stay
+or creates a new agent for an explicitly failed, settled attempt, optionally with a
+replacement `profile` or inline `provider`/`model`/`thinkingOptionId`. Old attempts stay
 visible. A still-active worker cannot be replaced. Creation intent and agent IDs
 are saved before launch; uncertain launch retries use the same SDK identity and
 never resend the initial prompt to an existing matching child. Reload observes
@@ -134,7 +141,7 @@ is rejected. Distinct work needs a distinct key.
 
 ```bash
 node "$CONDUCTOR_COMMAND" claim <<'JSON'
-{"runId":"<returned UUID>","taskId":"work"}
+{"concertId":"<returned UUID>","taskId":"work"}
 JSON
 ```
 
@@ -146,10 +153,10 @@ external processes or file sandbox permissions.
 
 ```bash
 node "$CONDUCTOR_COMMAND" report <<'JSON'
-{"runId":"<run UUID>","attemptId":"<attempt UUID>","report":{"outcome":"completed","summary":"Applied the fix","evidence":["Describe actual changed behavior and verification"],"checks":[]}}
+{"concertId":"<concert UUID>","attemptId":"<attempt UUID>","report":{"outcome":"completed","summary":"Applied the fix","evidence":["Describe actual changed behavior and verification"],"checks":[]}}
 JSON
 node "$CONDUCTOR_COMMAND" finish <<'JSON'
-{"runId":"<run UUID>","summary":"Describe the result and remaining limitations"}
+{"concertId":"<concert UUID>","summary":"Describe the result and remaining limitations"}
 JSON
 ```
 
@@ -161,13 +168,13 @@ Every declared check must appear by its exact name in the report with
 or block the task; never invent a pass. Retrying failure requires `claim` with
 `retry: true`, creates a new attempt, and preserves the old report.
 
-`block` takes `runId`, `attemptId`, and `message`; ask any question in the source
-conversation. Reclaim resumes a blocked attempt. `get` takes `runId`; `list` needs
-no input and returns that source's runs. Exact report/finish retries are idempotent;
+`block` takes `concertId`, `attemptId`, and `message`; ask any question in the
+source conversation. Reclaim resumes a blocked attempt. `get` takes `concertId`;
+`list` needs no input and returns that source's concerts. Exact report/finish retries are idempotent;
 changed terminal reports and superseded attempt IDs are rejected. Finish requires
 completed reports for every task. Run help for complete examples.
 
-For user-requested cleanup, `remove-legacy` takes `runId` and `expectedVersion`
+For user-requested cleanup, `remove-legacy` takes `concertId` and `expectedVersion`
 from `get`. It removes only the original source agent's non-executed legacy plan
 in the same workspace. A stale version or any execution record refuses removal.
 Immutable context artifacts are retained because other records may reference them.

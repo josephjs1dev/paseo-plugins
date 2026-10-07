@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { graphIssues } from "../shared/run-graph";
+import { graphIssues } from "../shared/concerts/graph";
 import {
   RUN_LIMITS,
   contextSchema,
@@ -7,10 +7,10 @@ import {
   runIdSchema,
   sourceSchema,
   type RunGraph,
-} from "../shared/run-models";
-import { RunError } from "../server/run-files";
-import type { RunPlacementRuntime } from "../server/run-placement";
-import { contentHash, type RunStore } from "../server/run-store";
+} from "../shared/concerts/models";
+import { RunError } from "../server/concerts/errors";
+import type { RunPlacementRuntime } from "../server/concerts/placement";
+import { contentHash, type RunStore } from "../server/concerts/store";
 
 // Test-only builder for snapshots written by the retired manual planner.
 const prepareRunInput = z

@@ -2,12 +2,12 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { spawn } from "node:child_process";
 import { join } from "node:path";
-import { commandServer } from "../server/run-command-server";
+import { commandServer } from "../server/concerts/commands/server";
 import {
   agentCommand,
   jsonCommand,
   reportInstructions,
-} from "../server/run-prompts";
+} from "../server/concerts/prompts";
 import { testDirectory } from "./fixtures";
 import { runId } from "./run-fixtures";
 
@@ -20,7 +20,7 @@ void test("assigned command works without Conductor environment variables and sa
   try {
     const command = jsonCommand(
       agentCommand(server.access, "worker-1", "get"),
-      { runId },
+      { concertId: runId },
     );
     const result = await new Promise<{
       code: number | null;
@@ -39,7 +39,10 @@ void test("assigned command works without Conductor environment variables and sa
     });
     assert.equal(result.code, 0, result.stderr);
     assert.deepEqual(JSON.parse(result.stdout) as unknown, {
-      acknowledged: { agentId: "worker-1", command: { kind: "get", runId } },
+      acknowledged: {
+        agentId: "worker-1",
+        command: { kind: "get", concertId: runId },
+      },
     });
     const prompt = reportInstructions(
       (agent, verb) => agentCommand(server.access, agent, verb),

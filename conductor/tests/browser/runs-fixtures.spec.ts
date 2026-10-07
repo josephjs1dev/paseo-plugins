@@ -23,9 +23,9 @@ const SHOTS = fileURLToPath(
 
 async function openRun(page: Page, fixture: string, extra = "") {
   await page.goto(`/?runs&run-fixture=${fixture}${extra}`);
-  await page.getByRole("tab", { name: "Performances", exact: true }).click();
+  await page.getByRole("tab", { name: "Concerts", exact: true }).click();
   await page
-    .getByRole("button", { name: /^Open performance:/ })
+    .getByRole("button", { name: /^Open concert:/ })
     .first()
     .click();
   await expect(page.getByTestId("run-detail")).toBeVisible();
@@ -175,13 +175,13 @@ test("fixture scenarios render their documented task and graph states", async ({
   await expect(detail).toContainText("No task attempts yet.");
   await detailButton(detail, "Graph").click();
   await expect(detail).toContainText(
-    "No tasks were recorded for this performance yet.",
+    "No tasks were recorded for this concert yet.",
   );
 
   // Planning: the coordinator notice replaces task work.
   await openRun(page, "planning");
   await expect(detail).toContainText(
-    "The Conductor agent is planning this performance.",
+    "The Conductor agent is planning this concert.",
   );
   await expect(detail).not.toContainText("No tasks were recorded.");
 });
@@ -351,7 +351,7 @@ test("enlarged zoom keeps content unclipped and tabs reachable", async ({
 });
 
 test("fixture runs serialize under the production run schema", async () => {
-  const { runSchema } = await import("../../shared/run-models");
+  const { runSchema } = await import("../../shared/concerts/models");
   const { fixtureRuns } = await import("../run-fixtures");
   expect(longSummary.split("\n").length).toBeGreaterThan(3);
   expect(longTaskTitle.length).toBeLessThanOrEqual(160);

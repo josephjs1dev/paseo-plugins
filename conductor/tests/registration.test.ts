@@ -1,6 +1,9 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { openInbox, registerInboxNavigation } from "../client/registration";
+import {
+  openInbox,
+  registerInboxNavigation,
+} from "../client/podium/registration";
 
 function fixture() {
   const calls: string[] = [];

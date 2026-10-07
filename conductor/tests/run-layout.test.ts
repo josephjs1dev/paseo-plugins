@@ -1,8 +1,8 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { conflictReason } from "../shared/run-graph";
-import { graphGeometry, layoutGraph } from "../shared/run-layout";
-import type { TaskDefinition } from "../shared/run-models";
+import { conflictReason } from "../shared/concerts/graph";
+import { graphGeometry, layoutGraph } from "../shared/concerts/layout";
+import type { TaskDefinition } from "../shared/concerts/models";
 import { graph, task } from "./run-fixtures";
 
 /** Sixteen-word title that must truncate inside the graph node. */

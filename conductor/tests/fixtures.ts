@@ -2,11 +2,8 @@ import { after } from "node:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type {
-  AgentPermissionRequest,
-  PaseoAgent,
-  Runtime,
-} from "../server/runtime";
+import type { AgentsHost } from "../server/agents/host";
+import type { AgentPermissionRequest, PaseoAgent } from "../server/paseo/types";
 
 export function question(
   overrides: Partial<AgentPermissionRequest> = {},
@@ -66,8 +63,8 @@ export function agent(overrides: Partial<PaseoAgent> = {}): PaseoAgent {
 }
 export function runtime(
   current: () => PaseoAgent | null,
-  overrides: Partial<Runtime> = {},
-): Runtime {
+  overrides: Partial<AgentsHost> = {},
+): AgentsHost {
   return {
     agents: async () => {
       const value = current();

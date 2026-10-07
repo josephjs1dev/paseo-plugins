@@ -1,9 +1,9 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { queueGroups } from "../shared/hierarchy";
-import { visibleItems } from "../shared/inbox";
-import { snapshot } from "../server/snapshot";
-import { fileStore } from "../server/store";
+import { queueGroups } from "../shared/agents/hierarchy";
+import { visibleItems } from "../shared/agents/inbox";
+import { snapshot } from "../server/agents/snapshot";
+import { fileStore } from "../server/agents/store";
 import { agent, runtime, testDirectory } from "./fixtures";
 
 async function family() {

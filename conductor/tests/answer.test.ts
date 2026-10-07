@@ -2,12 +2,12 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { readFile, mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { answer } from "../server/answer";
-import { fileStore } from "../server/store";
-import { requestKey } from "../server/identity";
-import type { Decision } from "../shared/models";
+import { answer } from "../server/agents/answer";
+import { fileStore } from "../server/agents/store";
+import { requestKey } from "../server/agents/identity";
+import type { Decision } from "../shared/agents/models";
 import { agent, question, runtime, testDirectory } from "./fixtures";
-import type { AgentPermissionResponse } from "../server/runtime";
+import type { AgentPermissionResponse } from "../server/paseo/types";
 
 const decision: Decision = {
   kind: "answers",

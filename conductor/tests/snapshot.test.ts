@@ -1,12 +1,12 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { fileStore } from "../server/store";
-import { snapshot } from "../server/snapshot";
-import { agentKey } from "../server/identity";
-import { visibleItems, ageLabel } from "../shared/inbox";
-import { snapshotSchema } from "../shared/models";
+import { fileStore } from "../server/agents/store";
+import { snapshot } from "../server/agents/snapshot";
+import { agentKey } from "../server/agents/identity";
+import { visibleItems, ageLabel } from "../shared/agents/inbox";
+import { snapshotSchema } from "../shared/agents/models";
 import { agent, question, runtime, testDirectory } from "./fixtures";
-import { InboxSession } from "../client/session";
+import { InboxSession } from "../client/podium/session";
 
 async function store() {
   return fileStore(await testDirectory());

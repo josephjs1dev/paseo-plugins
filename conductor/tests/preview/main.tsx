@@ -1,11 +1,11 @@
 import { useState } from "react";
 import { createRoot } from "react-dom/client";
-import { InboxView } from "../../client/inbox-view";
-import { InboxSession } from "../../client/session";
+import { InboxView } from "../../client/podium/view";
+import { InboxSession } from "../../client/podium/session";
 import { initial, light, dark } from "./fixtures";
-import type { InboxSnapshot } from "../../shared/models";
-import { requestForm } from "../../shared/questions";
-import type { StoredRun } from "../../shared/run-models";
+import type { InboxSnapshot } from "../../shared/agents/models";
+import { requestForm } from "../../shared/agents/questions";
+import type { StoredRun } from "../../shared/concerts/models";
 import { usePreviewRuns } from "./runs";
 
 const session = new InboxSession();
@@ -106,9 +106,7 @@ function Preview() {
         compact={false}
         deleteRun={async (run: StoredRun) => {
           if (params.has("delete-error")) {
-            throw new Error(
-              "This performance changed. Refresh before deleting.",
-            );
+            throw new Error("This concert changed. Refresh before deleting.");
           }
           if (params.has("delete-slow")) {
             await new Promise((resolve) => setTimeout(resolve, 400));

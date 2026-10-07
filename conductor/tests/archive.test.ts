@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { archiveInactive, archiveKey } from "../server/archive";
+import { archiveInactive, archiveKey } from "../server/agents/archive";
 import { agent, runtime } from "./fixtures";
 
 const inactive = () =>

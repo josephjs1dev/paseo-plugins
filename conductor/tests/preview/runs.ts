@@ -1,7 +1,7 @@
 import { useState, useSyncExternalStore } from "react";
-import type { InboxSession } from "../../client/session";
-import type { RunInboxData } from "../../client/run-inbox";
-import { summarizeRun, type StoredRun } from "../../shared/run-models";
+import type { InboxSession } from "../../client/podium/session";
+import type { RunInboxData } from "../../client/concerts/list";
+import { summarizeRun, type StoredRun } from "../../shared/concerts/models";
 import { fixtureRuns, planContext, storedRun } from "../run-fixtures";
 
 function managed(): StoredRun {

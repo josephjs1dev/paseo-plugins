@@ -5,8 +5,8 @@ import { join, resolve } from "node:path";
 // Integration harness only: plugin production code uses the public PaseoApi.
 import { DaemonClient } from "@getpaseo/client/internal/daemon-client";
 import { createPaseoApi } from "@getpaseo/client";
-import { snapshotSchema, answerResultSchema } from "../../shared/models";
-import { observeDirectory } from "../../client/observation";
+import { snapshotSchema, answerResultSchema } from "../../shared/agents/models";
+import { observeDirectory } from "../../client/paseo/observation";
 
 const endpoint = process.env.CONDUCTOR_TEST_URL;
 if (!endpoint || !/^ws:\/\/127\.0\.0\.1:\d+\/ws$/.test(endpoint)) {
