@@ -203,16 +203,18 @@ export function fileRunStore(directory: string): RunStore {
         } catch (error) {
           if (missing(error)) {
             throw new RunError(
-              "This run no longer exists. Refresh the run list.",
+              "This performance no longer exists. Refresh the performance list.",
             );
           }
           throw error;
         }
         if (!run.execution) {
-          throw new RunError("Only finished execution runs can be deleted.");
+          throw new RunError(
+            "Only finished execution performances can be deleted.",
+          );
         }
         if (run.status !== "completed" && run.status !== "failed") {
-          throw new RunError("Only finished runs can be deleted.");
+          throw new RunError("Only finished performances can be deleted.");
         }
         if (
           run.execution.attempts.some(
@@ -223,17 +225,19 @@ export function fileRunStore(directory: string): RunStore {
           )
         ) {
           throw new RunError(
-            "This run still has work in progress. Wait for every attempt to settle.",
+            "This performance still has work in progress. Wait for every attempt to settle.",
           );
         }
         if (
           run.execution.orchestration?.phase === "planning" &&
           run.execution.orchestration.coordinatorLaunch === "pending"
         ) {
-          throw new RunError("This run is still planning.");
+          throw new RunError("This performance is still planning.");
         }
         if (run.version !== version) {
-          throw new RunError("This run changed. Refresh before deleting.");
+          throw new RunError(
+            "This performance changed. Refresh before deleting.",
+          );
         }
         await unlink(path(id));
         await syncRunDirectory(runs);

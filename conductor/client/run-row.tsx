@@ -22,7 +22,7 @@ export function RunRow({
     <Pressable
       testID={`run-row-${run.id}`}
       accessibilityRole="button"
-      accessibilityLabel={`Open run: ${run.title}`}
+      accessibilityLabel={`Open performance: ${run.title}`}
       accessibilityState={{ selected }}
       onFocus={() => setFocused(true)}
       onBlur={() => setFocused(false)}

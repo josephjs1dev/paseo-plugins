@@ -32,8 +32,8 @@ await test("0.10 registers a host-wide surface and native sidebar entry, with cl
     () => null,
   );
   assert.deepEqual(calls, [
-    "surface:inbox",
-    "sidebar:inbox",
+    "surface:podium",
+    "sidebar:podium",
     "command:open-inbox",
   ]);
   for (const remove of removers.reverse()) {
@@ -41,8 +41,8 @@ await test("0.10 registers a host-wide surface and native sidebar entry, with cl
   }
   assert.deepEqual(calls.slice(3), [
     "remove:command:open-inbox",
-    "remove:sidebar:inbox",
-    "remove:surface:inbox",
+    "remove:sidebar:podium",
+    "remove:surface:podium",
   ]);
 });
 
@@ -67,7 +67,7 @@ await test("an incomplete modern capability set keeps the working legacy entry p
     () => null,
     () => null,
   );
-  assert.deepEqual(calls.slice(0, 2), ["surface:inbox", "sidebar:inbox"]);
+  assert.deepEqual(calls.slice(0, 2), ["surface:podium", "sidebar:podium"]);
 });
 
 await test("Command Center opens the selected host through its available navigation API", () => {
@@ -80,5 +80,5 @@ await test("Command Center opens the selected host through its available navigat
       calls.push(`screen:${screenId}`);
     },
   });
-  assert.deepEqual(calls, ["surface:inbox", "screen:inbox"]);
+  assert.deepEqual(calls, ["surface:podium", "screen:inbox"]);
 });

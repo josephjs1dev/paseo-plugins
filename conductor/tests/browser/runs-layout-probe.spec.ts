@@ -35,9 +35,9 @@ type Probe = {
 
 async function openMulti(page: Page, theme: string) {
   await page.goto(`/?runs&run-fixture=multi${theme}`);
-  await page.getByRole("tab", { name: "Runs", exact: true }).click();
+  await page.getByRole("tab", { name: "Performances", exact: true }).click();
   await page
-    .getByRole("button", { name: /^Open run:/ })
+    .getByRole("button", { name: /^Open performance:/ })
     .first()
     .click();
   await expect(page.getByTestId("run-detail")).toBeVisible();
@@ -247,9 +247,9 @@ test("layout probe collects geometry at the required viewports and themes", asyn
   // The single-node long-title run must fit without a huge empty stage.
   await page.setViewportSize({ width: 1440, height: 900 });
   await page.goto("/?runs&run-fixture=long-title");
-  await page.getByRole("tab", { name: "Runs", exact: true }).click();
+  await page.getByRole("tab", { name: "Performances", exact: true }).click();
   await page
-    .getByRole("button", { name: /^Open run:/ })
+    .getByRole("button", { name: /^Open performance:/ })
     .first()
     .click();
   const detail = page.getByTestId("run-detail");

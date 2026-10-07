@@ -107,7 +107,7 @@ export function RunDetail({
       </Text>
       {stale && (
         <Notice theme={theme} warning>
-          Run refresh failed. Showing the last saved state.
+          Performance refresh failed. Showing the last saved state.
         </Notice>
       )}
       {run.execution?.interruption && (
@@ -117,9 +117,9 @@ export function RunDetail({
       )}
       {planning && (
         <Notice theme={theme}>
-          The Conductor agent is planning this run. It will define tasks with
-          dependencies, then dispatch worker agents; tasks and reports appear
-          here as agents are launched.
+          The Conductor agent is planning this performance. It will define tasks
+          with dependencies, then dispatch worker agents; tasks and reports
+          appear here as agents are launched.
           {orchestration?.coordinatorLaunch === "pending"
             ? " The Conductor agent is still being created."
             : ""}

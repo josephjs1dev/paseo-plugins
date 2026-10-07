@@ -67,17 +67,18 @@ export function RunRows({
             "Agent commands are unavailable on this host."}
         </Notice>
       )}
-      {data.loading && <Notice theme={theme}>Loading runs…</Notice>}
+      {data.loading && <Notice theme={theme}>Loading performances…</Notice>}
       {data.stale && (
         <Notice theme={theme} warning>
-          Run storage could not refresh. Showing last known runs; native
-          requests are independent.
+          Performance storage could not refresh. Showing last known
+          performances; native requests are independent.
         </Notice>
       )}
       {Boolean(data.list?.unavailable || data.list?.incomplete) && (
         <Notice theme={theme} warning>
-          Run coverage is incomplete. {data.list?.unavailable ?? 0} records
-          could not be read. Other runs and native requests remain accessible.
+          Performance coverage is incomplete. {data.list?.unavailable ?? 0}{" "}
+          records could not be read. Other performances and native requests
+          remain accessible.
         </Notice>
       )}
       {!data.loading && !data.stale && !runs.length && (
@@ -89,7 +90,7 @@ export function RunRows({
               fontWeight: "500",
             }}
           >
-            {filtered ? "No matching runs" : "No runs yet"}
+            {filtered ? "No matching performances" : "No performances yet"}
           </Text>
           <Text
             style={{
@@ -99,8 +100,8 @@ export function RunRows({
             }}
           >
             {filtered
-              ? "Clear your search or choose All runs."
-              : "Ask your agent to track the work in Conductor. It will create the run and report progress."}
+              ? "Clear your search or choose All."
+              : "Ask your agent to track the work in Conductor. It will create the performance and report progress."}
           </Text>
         </View>
       )}
@@ -154,8 +155,8 @@ export function RunSelectionDetail({
       <View style={{ padding: 24 }}>
         <Notice theme={theme} warning={data.detailStale}>
           {data.detailStale
-            ? "This run could not be read. Refresh or choose another item; native requests remain available."
-            : "Loading run history…"}
+            ? "This performance could not be read. Refresh or choose another item; native requests remain available."
+            : "Loading performance history…"}
         </Notice>
       </View>
     );

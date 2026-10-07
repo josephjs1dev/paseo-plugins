@@ -564,6 +564,6 @@ void test("deleting a missing run reports the documented error", async () => {
   const store = fileRunStore(directory);
   await assert.rejects(
     store.remove(randomUUID(), 0),
-    /This run no longer exists\. Refresh the run list\./,
+    /This performance no longer exists\. Refresh the performance list\./,
   );
 });

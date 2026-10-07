@@ -24,7 +24,7 @@ export function openInbox(
   if (typeof context.openScreen === "function") {
     context.openScreen({ screenId: "inbox", ...(params ? { params } : {}) });
   } else {
-    context.openSurface("inbox");
+    context.openSurface("podium");
   }
 }
 
@@ -41,7 +41,7 @@ export function registerInboxNavigation(
     removers.push(
       client.addScreen({
         id: "inbox",
-        title: "Conductor · Inbox",
+        title: "Conductor · Podium",
         Component: Surface,
       }),
       client.addSidebarHeaderItem({
@@ -52,19 +52,19 @@ export function registerInboxNavigation(
     );
   } else {
     removers.push(
-      client.addSurface("inbox", Surface),
+      client.addSurface("podium", Surface),
       client.addSidebarItem({
         id: "inbox",
         title: "Conductor",
         icon: "Workflow",
-        surface: "inbox",
+        surface: "podium",
       }),
     );
   }
   removers.push(
     client.addCommandCenterItem({
       id: "open-inbox",
-      title: "Open Conductor inbox",
+      title: "Open podium: all workspaces",
       icon: "Workflow",
       keywords: ["waiting", "questions", "permissions", "agents"],
       context: "global",

@@ -50,7 +50,7 @@ export function RunDeleteAction({ theme, run, deleteRun }: Props) {
       setError(
         cause instanceof Error && cause.message
           ? cause.message
-          : "The run could not be deleted. Refresh the run list and try again.",
+          : "The performance could not be deleted. Refresh the performance list and try again.",
       );
     } finally {
       setBusy(false);
@@ -70,14 +70,14 @@ export function RunDeleteAction({ theme, run, deleteRun }: Props) {
               lineHeight: 20,
             }}
           >
-            Delete this run? Its tasks, reports, and history are removed from
-            Conductor. Agents and workspace files are not affected.
+            Delete this performance? Its tasks, reports, and history are removed
+            from Conductor. Agents and workspace files are not affected.
           </Text>
           <View style={rowStyle}>
             <Button
               theme={theme}
               testID="run-delete-confirm"
-              label={busy ? "Deleting…" : "Delete run"}
+              label={busy ? "Deleting…" : "Delete performance"}
               danger
               disabled={busy}
               onPress={() => {
@@ -104,7 +104,7 @@ export function RunDeleteAction({ theme, run, deleteRun }: Props) {
             testID="run-delete"
             variant="quiet"
             danger
-            label="Delete run"
+            label="Delete performance"
             disabled={!canDelete}
             onPress={() => {
               setError(null);
@@ -119,7 +119,7 @@ export function RunDeleteAction({ theme, run, deleteRun }: Props) {
                 lineHeight: 18,
               }}
             >
-              Only finished runs can be deleted.
+              Only finished performances can be deleted.
             </Text>
           )}
         </View>

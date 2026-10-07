@@ -106,7 +106,9 @@ function Preview() {
         compact={false}
         deleteRun={async (run: StoredRun) => {
           if (params.has("delete-error")) {
-            throw new Error("This run changed. Refresh before deleting.");
+            throw new Error(
+              "This performance changed. Refresh before deleting.",
+            );
           }
           if (params.has("delete-slow")) {
             await new Promise((resolve) => setTimeout(resolve, 400));

@@ -1,6 +1,6 @@
 # Conductor
 
-Conductor adds a Paseo inbox for finding blockers, responding to agents, and
+Conductor adds a Paseo podium for finding blockers, responding to agents, and
 following work across projects and workspaces on the selected daemon.
 
 Start with `/conductor-orchestrate <what you want done>` in a workspace's agent
@@ -25,12 +25,12 @@ The user supplies the goal, not a task form. The Conductor agent defines the tas
 graph and chooses configured worker profiles using their notes. Each ready task
 gets its own child agent, with a link from its task, graph node, and attempt history.
 **Conductor agent** opens the coordinating conversation. Agents and Performances remain
-separate sections of the same Inbox and retain independent searches and selections.
+separate sections of the same Podium and retain independent searches and selections.
 
 The graph draws directed dependencies and supports keyboard selection, agent
 navigation, and scrolling on small screens. Performances uses the same underlined filters,
 compact search, and list rows as Agents, without redundant workspace group headings.
-Legacy manual plans and creation/edit/accept endpoints are removed from the inbox.
+Legacy manual plans and creation/edit/accept endpoints are removed from the podium.
 
 Up to four read-only workers can run concurrently (three by default). Workers share
 the current checkout; writers are serialized, including against existing recorded
@@ -46,7 +46,7 @@ The Conductor agent reviews all results and finishes the run with a summary.
 ### Orchestration command flow
 
 The slash command creates a durable planning run and launches its Conductor agent.
-On 0.10 clients it opens the Inbox using the legacy surface API; select **Performances**
+On 0.10 clients it opens the Podium using the legacy surface API; select **Performances**
 to inspect the new performance. Newer clients open it directly.
 Agents start orchestration with:
 
@@ -194,7 +194,7 @@ The default **Needs attention** view combines questions, permissions, failures,
 and reminders. Use **Next item** to move through the queue, or switch to
 **Running**, **Inactive**, or **All** for other activity.
 
-Search by title, project, workspace, or provider. The global inbox covers the
+Search by title, project, workspace, or provider. The global podium covers the
 selected host; the workspace panel covers the current workspace. Parent/child
 relationships and **Open parent** help you follow delegated work.
 
@@ -233,7 +233,7 @@ Paseo supplies runtime libraries; Git installation needs no manual `npm install`
 
 ## Installation from Git
 
-Install on each daemon you want to monitor; the inbox stays scoped to the selected
+Install on each daemon you want to monitor; the podium stays scoped to the selected
 host. Plugins run as trusted code with the daemon user's access to its machine.
 
 Paseo clones this repository and installs the `conductor/` subdirectory selected
@@ -250,8 +250,8 @@ https://github.com/josephjs1dev/paseo-plugins.git:conductor
 ```
 
 4. Select **Install plugin** and confirm that `conductor` reports `running`.
-5. Open **Conductor** from the sidebar, or **Open Conductor inbox** / **Open
-   workspace inbox** in the Command Center (**⌘K** on macOS, **Ctrl+K** elsewhere).
+5. Open **Conductor** from the sidebar, or **Open podium: all workspaces** /
+   **Open podium: this workspace** in the Command Center (**⌘K** on macOS, **Ctrl+K** elsewhere).
 
 ### CLI (Git source)
 
@@ -286,7 +286,7 @@ paseo plugin logs conductor
 ```
 
 **Settings → Plugins** also provides reload, logs, removal, and an enable switch.
-For a missing inbox, check the selected host, plugin status, app/daemon versions,
+For a missing podium, check the selected host, plugin status, app/daemon versions,
 and **Settings → Sidebar** visibility. Failed refreshes keep previous items;
 reconnect and refresh before responding, or inspect the agent directly.
 
@@ -350,7 +350,7 @@ paseo plugin reload conductor
 paseo plugin ls
 ```
 
-Check both inbox surfaces, supported responses, native fallbacks, and stale states.
+Check both podium surfaces, supported responses, native fallbacks, and stale states.
 For UI changes, verify wide/compact layouts and light/dark themes.
 
 Optional `npm run test:host` and `npm run test:client` need `CONDUCTOR_TEST_URL`

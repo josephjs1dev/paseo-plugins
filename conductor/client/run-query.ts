@@ -31,7 +31,7 @@ export function useRuns(
     queryKey: [...key, "detail", id],
     queryFn: () => {
       if (!id) {
-        throw new Error("Select a run first.");
+        throw new Error("Select a performance first.");
       }
       return read({ id });
     },

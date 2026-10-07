@@ -79,7 +79,7 @@ export function RunBrowser({
                     lineHeight: 29,
                   }}
                 >
-                  Choose a run to follow.
+                  Choose a performance to follow.
                 </Text>
                 <Text
                   style={{

@@ -33,7 +33,7 @@ try {
     timeout: 30000,
   });
   const inbox = page.getByTestId("conductor-inbox");
-  await inbox.getByRole("heading", { name: "Inbox", exact: true }).waitFor();
+  await inbox.getByRole("heading", { name: "Podium", exact: true }).waitFor();
   await inbox.getByText("No agents in this scope", { exact: true }).waitFor();
   assert.equal(
     await inbox
@@ -45,7 +45,7 @@ try {
   // Paseo switches navigation shells at this breakpoint; reopen from its menu.
   await page.getByRole("button", { name: "Open menu", exact: true }).click();
   await page.getByRole("button", { name: "Conductor", exact: true }).click();
-  await inbox.getByRole("heading", { name: "Inbox", exact: true }).waitFor();
+  await inbox.getByRole("heading", { name: "Podium", exact: true }).waitFor();
   const bounds = await inbox.boundingBox();
   assert.ok(bounds && bounds.width <= 390);
   console.log(

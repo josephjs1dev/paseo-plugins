@@ -337,7 +337,7 @@ export function RunGraphView({
   if (!graph.tasks.length) {
     return (
       <Text style={{ color: theme.colors.foregroundMuted, lineHeight: 21 }}>
-        No tasks were recorded for this run yet.
+        No tasks were recorded for this performance yet.
       </Text>
     );
   }

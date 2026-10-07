@@ -1,6 +1,6 @@
 import { expect, test, type Page } from "@playwright/test";
 
-const runName = "Open run: Pagination investigation";
+const runName = "Open performance: Pagination investigation";
 
 /** Run-detail controls share names with queue rows, so stay inside one detail surface. */
 function detailButton(detail: ReturnType<Page["getByTestId"]>, name: string) {
@@ -14,9 +14,9 @@ test("Runs monitors source-agent progress and results without manual authoring",
   const instance = (name: string) => detailButton(detail, name);
   await page.goto("/?runs");
   await expect(
-    page.getByRole("button", { name: "New run", exact: true }),
+    page.getByRole("button", { name: "New performance", exact: true }),
   ).toHaveCount(0);
-  await page.getByRole("tab", { name: "Runs", exact: true }).click();
+  await page.getByRole("tab", { name: "Performances", exact: true }).click();
   await page.getByRole("button", { name: runName, exact: true }).click();
   await expect(detail).toContainText("0 of 3 tasks reported complete");
   await expect(detail.getByRole("textbox")).toHaveCount(0);
@@ -107,7 +107,7 @@ test("Agents and Runs retain separate searches, selections and native answer dra
     exact: true,
   });
   const count = await badge.textContent();
-  const tab = page.getByRole("tab", { name: "Runs", exact: true });
+  const tab = page.getByRole("tab", { name: "Performances", exact: true });
   await tab.focus();
   await page.keyboard.press("Enter");
   await expect(tab).toHaveAttribute("aria-selected", "true");
@@ -119,7 +119,7 @@ test("Agents and Runs retain separate searches, selections and native answer dra
   ).toHaveCount(0);
   await page.getByRole("button", { name: "Active", exact: true }).click();
   await page
-    .getByRole("textbox", { name: "Search runs" })
+    .getByRole("textbox", { name: "Search performances" })
     .fill("investigation");
   await page.getByRole("button", { name: runName, exact: true }).click();
   await instance("Graph").click();
@@ -143,9 +143,9 @@ test("Agents and Runs retain separate searches, selections and native answer dra
   ).toHaveValue("Keep this native answer");
   await expect(badge).toHaveText(count ?? "");
   await tab.click();
-  await expect(page.getByRole("textbox", { name: "Search runs" })).toHaveValue(
-    "investigation",
-  );
+  await expect(
+    page.getByRole("textbox", { name: "Search performances" }),
+  ).toHaveValue("investigation");
   await expect(page.getByTestId("run-graph")).toBeVisible();
   await expect(page.getByTestId("run-node-collect")).toHaveAttribute(
     "aria-label",
@@ -158,17 +158,21 @@ test("Agents and Runs retain separate searches, selections and native answer dra
 
 test("legacy plans are excluded from Runs and its counts", async ({ page }) => {
   await page.goto("/?runs&legacy-run");
-  await page.getByRole("tab", { name: "Runs", exact: true }).click();
+  await page.getByRole("tab", { name: "Performances", exact: true }).click();
   await expect(
     page.getByRole("button", { name: "Legacy plans", exact: true }),
   ).toHaveCount(0);
   await expect(
     page.getByRole("button", { name: runName, exact: true }),
   ).toHaveCount(0);
-  await expect(page.getByText("No runs yet", { exact: true })).toBeVisible();
-  await expect(page.getByTestId("agent-coverage")).toContainText("0 runs");
   await expect(
-    page.getByRole("button", { name: "All runs", exact: true }),
+    page.getByText("No performances yet", { exact: true }),
+  ).toBeVisible();
+  await expect(page.getByTestId("agent-coverage")).toContainText(
+    "0 performances",
+  );
+  await expect(
+    page.getByRole("button", { name: "All", exact: true }),
   ).toContainText("0");
 });
 
@@ -194,13 +198,13 @@ test("Runs matches Agents control and row sizing with keyboard selection", async
     padding: getComputedStyle(element).padding,
     borderLeft: getComputedStyle(element).borderLeftWidth,
   }));
-  await page.getByRole("tab", { name: "Runs", exact: true }).click();
+  await page.getByRole("tab", { name: "Performances", exact: true }).click();
   const runSearch = await page
-    .getByRole("textbox", { name: "Search runs" })
+    .getByRole("textbox", { name: "Search performances" })
     .boundingBox();
   expect(runSearch?.height).toBe(agentSearch?.height);
   expect(runSearch?.y).toBe(agentSearch?.y);
-  const runFilter = page.getByRole("button", { name: "All runs", exact: true });
+  const runFilter = page.getByRole("button", { name: "All", exact: true });
   expect(
     await runFilter.evaluate((element) => ({
       borderBottom: getComputedStyle(element).borderBottomWidth,
@@ -215,22 +219,26 @@ test("Runs matches Agents control and row sizing with keyboard selection", async
     })),
   ).toEqual(rowStyle);
   await expect(runRow).toContainText("Pagination investigation");
-  await expect(runRow).not.toContainText("Open run:");
+  await expect(runRow).not.toContainText("Open performance:");
   await runRow.focus();
   await page.keyboard.press("Enter");
   await expect(page.getByTestId("run-detail")).toBeVisible();
-  await expect(page.getByTestId("agent-coverage")).toContainText("1 run");
+  await expect(page.getByTestId("agent-coverage")).toContainText(
+    "1 performance",
+  );
 });
 
 test("run-store failures stay in Runs and do not disable native answers", async ({
   page,
 }) => {
   await page.goto("/?runs&run-failed");
-  await page.getByRole("tab", { name: "Runs", exact: true }).click();
-  await expect(page.getByText(/Run storage could not refresh/)).toBeVisible();
+  await page.getByRole("tab", { name: "Performances", exact: true }).click();
+  await expect(
+    page.getByText(/Performance storage could not refresh/),
+  ).toBeVisible();
   await page.getByRole("tab", { name: "Agents", exact: true }).click();
   await expect(
-    page.getByText(/Run storage could not refresh/),
+    page.getByText(/Performance storage could not refresh/),
   ).not.toBeVisible();
   await page
     .getByRole("button", { name: /Open Choose a pagination strategy/ })
@@ -253,7 +261,7 @@ test("compact monitoring preserves navigation and the accessible refresh icon", 
   await expect(refresh.locator("svg")).toBeVisible();
   await refresh.focus();
   await page.keyboard.press("Enter");
-  await page.getByRole("tab", { name: "Runs", exact: true }).click();
+  await page.getByRole("tab", { name: "Performances", exact: true }).click();
   await page.getByRole("button", { name: runName, exact: true }).click();
   await instance("Graph").click();
   await expect(page.getByTestId("run-graph")).toBeVisible();
@@ -303,7 +311,7 @@ test("compact monitoring preserves navigation and the accessible refresh icon", 
     .evaluate((element) => element.getBoundingClientRect().width);
   expect(compactWidth).toBeLessThanOrEqual(224);
   await page
-    .getByRole("button", { name: "← Back to runs", exact: true })
+    .getByRole("button", { name: "← Back to performances", exact: true })
     .click();
   await page.getByRole("tab", { name: "Agents", exact: true }).click();
   await expect(
@@ -317,7 +325,7 @@ test("task and graph agent links open the actual worker and retain the conductor
   const detail = page.getByTestId("run-detail");
   const instance = (name: string) => detailButton(detail, name);
   await page.goto("/?runs");
-  await page.getByRole("tab", { name: "Runs", exact: true }).click();
+  await page.getByRole("tab", { name: "Performances", exact: true }).click();
   await page.getByRole("button", { name: runName, exact: true }).click();
   await expect(
     page.getByText("CONDUCTOR WORKSPACE", { exact: true }),

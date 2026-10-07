@@ -115,7 +115,7 @@ for (const legacy of [false, true]) {
     await command.onSubmit(context);
     assert.notEqual(requests[2]?.key, requests[1]?.key);
     if (legacy) {
-      assert.deepEqual(surfaces, Array<string>(5).fill("inbox"));
+      assert.deepEqual(surfaces, Array<string>(5).fill("podium"));
       assert.equal(screens.length, 0);
     } else {
       assert.deepEqual(screens.at(-1), {

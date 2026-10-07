@@ -38,7 +38,7 @@ export function RunToolbar({
             { id: "blocked", label: "Needs attention" },
             { id: "active", label: "Active" },
             { id: "completed", label: "Complete" },
-            { id: "all", label: "All runs" },
+            { id: "all", label: "All" },
           ] as const
         ).map(({ id, label }) => (
           <Button
@@ -64,8 +64,8 @@ export function RunToolbar({
         ))}
       </ScrollView>
       <TextInput
-        accessibilityLabel="Search runs"
-        placeholder="Search runs or workspaces…"
+        accessibilityLabel="Search performances"
+        placeholder="Search performances or workspaces…"
         placeholderTextColor={theme.colors.foregroundMuted}
         value={state.runQuery}
         onChangeText={(runQuery) => session.update({ runQuery })}

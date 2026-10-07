@@ -30,7 +30,7 @@ export default function contribute(client: PluginClientContext) {
     }),
     client.addCommandCenterItem({
       id: "open-workspace-inbox",
-      title: "Open workspace inbox",
+      title: "Open podium: this workspace",
       icon: "Workflow",
       context: "workspace",
       onSelect: (context) => context.openPanel("inbox"),

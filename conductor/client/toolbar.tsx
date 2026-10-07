@@ -83,7 +83,7 @@ export function InboxToolbar(props: Props) {
               fontWeight: "600",
             }}
           >
-            Inbox
+            Podium
           </Text>
           <Text
             testID="agent-coverage"
@@ -99,7 +99,7 @@ export function InboxToolbar(props: Props) {
               ? ` · ${agentCount}${data.incomplete ? "+" : ""} agents${props.stale ? " · last known" : ""}`
               : ""}
             {isRuns && props.runs?.list
-              ? ` · ${runCount} ${runCount === 1 ? "run" : "runs"}${props.runs.stale ? " · last known" : ""}`
+              ? ` · ${runCount} ${runCount === 1 ? "performance" : "performances"}${props.runs.stale ? " · last known" : ""}`
               : ""}
           </Text>
         </View>
@@ -107,7 +107,7 @@ export function InboxToolbar(props: Props) {
           {compact && hasSelection && (
             <Button
               {...controls}
-              label={isRuns ? "← Back to runs" : "← Back to queue"}
+              label={isRuns ? "← Back to performances" : "← Back to queue"}
               variant="quiet"
               onPress={() =>
                 session.update(
@@ -134,7 +134,7 @@ export function InboxToolbar(props: Props) {
       {props.runs && (
         <View
           accessibilityRole="tablist"
-          accessibilityLabel="Inbox sections"
+          accessibilityLabel="Podium sections"
           style={{
             ...rowStyle,
             borderBottomWidth: 1,
@@ -147,7 +147,7 @@ export function InboxToolbar(props: Props) {
               {...controls}
               role="tab"
               variant="tab"
-              label={section === "agents" ? "Agents" : "Runs"}
+              label={section === "agents" ? "Agents" : "Performances"}
               selected={state.section === section}
               onPress={() => session.update({ section })}
             />
