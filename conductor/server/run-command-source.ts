@@ -5,7 +5,7 @@ export const RUN_COMMAND_SOURCE = String.raw`import http from "node:http";
 const help = {
   usage: 'node "$CONDUCTOR_COMMAND" <command> [--agent ID] [--socket PATH] < input.json',
   commands: {
-    orchestrate: { key: "stable-request-key", title: "Deliver a feature", goal: "Authorized work to split among agents", concurrency: 3, coordinatorProfile: "optional configured profile name" },
+    orchestrate: { key: "stable-request-key", title: "Deliver a feature", goal: "Authorized work to split among agents", concurrency: 3, coordinator: "self (default; follow the returned instructions) or agent (create a dedicated Conductor agent)", coordinatorProfile: "optional configured profile name; implies coordinator agent" },
     profiles: "List configured worker profile names and notes",
     define: { runId: "UUID", tasks: "[{id,title,description,dependsOn:[],reads:[\".\"],writes:[],checks:[],profile:optional configured name}]" },
     dispatch: { runId: "UUID", retryTaskId: "optional settled blocked/failed task ID", profile: "optional replacement profile for a failed task retry" },
@@ -18,7 +18,7 @@ const help = {
     report: { runId: "UUID", attemptId: "UUID from claim", report: { outcome: "completed or failed", summary: "What happened", evidence: ["Concrete change or check evidence"], checks: [{ name: "exact declared check name", status: "passed, failed or not-run", detail: "Observed result" }] } },
     finish: { runId: "UUID", summary: "Overall outcome and remaining limitations" }
   },
-  policy: "Start only for authorized work. Claim before working; keep the returned attempt ID. Work with your normal tools. Report explicit evidence; never infer completion from idle. Finish only after all tasks have completed reports. The local socket trusts the daemon OS user; source IDs are checked against Paseo. Orchestrate creates a Conductor agent; define records its decomposition; dispatch creates real task agents. Source-only start/claim is retained for compatibility. No command grants new permissions. Reuse the same start key after an uncertain response. Resume unfinished work by claiming the same task; retry:true is only for an explicitly failed attempt."
+  policy: "Start only for authorized work. Claim before working; keep the returned attempt ID. Work with your normal tools. Report explicit evidence; never infer completion from idle. Finish only after all tasks have completed reports. The local socket trusts the daemon OS user; source IDs are checked against Paseo. Orchestrate makes the caller its Conductor agent by default, or creates a dedicated one with coordinator agent; define records its decomposition; dispatch creates real task agents. Source-only start/claim is retained for compatibility. No command grants new permissions. Reuse the same start key after an uncertain response. Resume unfinished work by claiming the same task; retry:true is only for an explicitly failed attempt."
 };
 
 async function main() {

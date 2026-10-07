@@ -126,6 +126,8 @@ export const executionSchema = z.object({
       concurrency: z.number().int().min(1).max(4),
       requestedBy: identifier.nullable(),
       coordinatorLaunch: z.enum(["pending", "started", "uncertain"]),
+      // Absent on runs recorded before self-coordination existed.
+      coordinator: z.enum(["self", "agent"]).optional(),
       coordinatorProfile: text(160).optional(),
       coordinatorConfig: text(32000).optional(),
       prompt: text(128000),

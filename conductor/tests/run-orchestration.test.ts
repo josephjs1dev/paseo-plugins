@@ -69,14 +69,17 @@ async function fixture() {
   const send = (agentId: string, command: unknown) =>
     engine.execute({ agentId, command });
   const read = async (id: string) => (await store.read(id)).run;
-  const start = async (key = "team") => {
-    const result = await send("requester", {
+  const orchestrate = (key: string, fields: Record<string, unknown> = {}) =>
+    send("requester", {
       kind: "orchestrate",
       key,
       title: "Delegated work",
       goal: "Inspect API and UI independently and combine findings",
       concurrency: 2,
+      ...fields,
     });
+  const start = async (key = "team") => {
+    const result = await orchestrate(key, { coordinator: "agent" });
     assert.ok("run" in result);
     return result.run;
   };
@@ -109,6 +112,7 @@ async function fixture() {
     wakes,
     send,
     read,
+    orchestrate,
     start,
     startWorkspace: (workspaceId = placement.workspaceId) =>
       engine.startWorkspace(workspaceId, {
@@ -461,4 +465,60 @@ void test("an empty workspace starts a coordinator without a bootstrap agent and
   const other = await f.startWorkspace("another-workspace");
   assert.notEqual(other.run.id, first.run.id);
   assert.equal(f.launches.size, 2);
+});
+
+void test("a requesting agent coordinates its own run without creating a Conductor agent", async () => {
+  const f = await fixture();
+  const first = await f.orchestrate("self");
+  assert.ok("run" in first && "instructions" in first);
+  const { run } = first;
+  assert.equal(run.source.agentId, "requester");
+  assert.equal(run.status, "planning");
+  assert.equal(run.execution?.orchestration?.coordinator, "self");
+  assert.equal(run.execution?.orchestration?.coordinatorLaunch, "started");
+  assert.equal(f.launches.size, 0);
+  assert.match(String(first.instructions), /--agent 'requester'/);
+  assert.match(String(first.instructions), /do not edit this checkout/);
+  const replay = await f.orchestrate("self");
+  assert.ok("run" in replay);
+  assert.equal(replay.run.id, run.id);
+  assert.equal(f.launches.size, 0);
+  const running = await f.define(run, [task("a")]);
+  const a = latestAttempt(running, "a");
+  assert.ok(a);
+  assert.equal(f.launches.get(a.agentId)?.parentAgentId, "requester");
+  await f.report(run.id, "a");
+  f.active.set(a.agentId, false);
+  await f.reconcile();
+  assert.deepEqual(f.wakes, [`requester:${run.id}:all-reported`]);
+  await f.send("requester", {
+    kind: "finish",
+    runId: run.id,
+    summary: "Reviewed worker reports",
+  });
+  assert.equal((await f.read(run.id)).status, "completed");
+});
+
+void test("a dedicated coordinator remains available and profiles require one", async () => {
+  const f = await fixture();
+  await assert.rejects(
+    f.orchestrate("profile", {
+      coordinatorProfile: "Small",
+      coordinator: "self",
+    }),
+    /coordinatorProfile requires/,
+  );
+  const result = await f.orchestrate("profile", {
+    coordinatorProfile: "Small",
+  });
+  assert.ok("run" in result);
+  assert.equal("instructions" in result, false);
+  assert.equal(result.run.execution?.orchestration?.coordinator, "agent");
+  assert.notEqual(result.run.source.agentId, "requester");
+  assert.equal(f.launches.size, 1);
+  // Changing how an existing key is coordinated is a different request.
+  await assert.rejects(
+    f.orchestrate("profile", { coordinator: "agent" }),
+    /belongs to another plan/,
+  );
 });

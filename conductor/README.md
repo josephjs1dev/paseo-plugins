@@ -9,21 +9,26 @@ agent directly using the configured **Plan** profile; no initial agent is requir
 Paseo's standalone **New workspace** screen does not expose plugin commands yet;
 open a workspace and use its **New tab → Agent** composer.
 Conductor creates a separate coordinator agent in that workspace, which inspects
-the request, splits it into small tasks, and dispatches real child agents. The
-Runs tab shows planning, task agents, dependencies, blockers, and reported results.
+the request, splits it into small tasks, and dispatches real child agents. When
+you instead ask an existing agent to orchestrate, that agent becomes the
+coordinator and keeps its conversation context. The Performances tab shows planning,
+task agents, dependencies, blockers, and reported results.
 
 ## Features
 
-### Orchestrated runs
+### Orchestrated performances
+
+The UI calls each orchestrated run a _performance_; agent commands, RPCs, and
+storage keep the `run` name (`runId`, `runs/`).
 
 The user supplies the goal, not a task form. The Conductor agent defines the task
 graph and chooses configured worker profiles using their notes. Each ready task
 gets its own child agent, with a link from its task, graph node, and attempt history.
-**Conductor agent** opens the coordinating conversation. Agents and Runs remain
+**Conductor agent** opens the coordinating conversation. Agents and Performances remain
 separate sections of the same Inbox and retain independent searches and selections.
 
 The graph draws directed dependencies and supports keyboard selection, agent
-navigation, and scrolling on small screens. Runs uses the same underlined filters,
+navigation, and scrolling on small screens. Performances uses the same underlined filters,
 compact search, and list rows as Agents, without redundant workspace group headings.
 Legacy manual plans and creation/edit/accept endpoints are removed from the inbox.
 
@@ -41,9 +46,9 @@ The Conductor agent reviews all results and finishes the run with a summary.
 ### Orchestration command flow
 
 The slash command creates a durable planning run and launches its Conductor agent.
-On 0.10 clients it opens the Inbox using the legacy surface API; select **Runs**
-to inspect the new run. Newer clients open the run directly.
-The equivalent agent command is:
+On 0.10 clients it opens the Inbox using the legacy surface API; select **Performances**
+to inspect the new performance. Newer clients open it directly.
+Agents start orchestration with:
 
 ```bash
 node "$CONDUCTOR_COMMAND" orchestrate <<'JSON'
@@ -51,8 +56,17 @@ node "$CONDUCTOR_COMMAND" orchestrate <<'JSON'
 JSON
 ```
 
-Optional `coordinatorProfile` selects a configured profile by name. Otherwise the
-coordinator inherits the requesting agent's settings. `profiles` lists worker
+By default the requesting agent becomes the run's Conductor agent. The
+acknowledgement includes `instructions` for defining, dispatching, and finishing
+the run from the same conversation; no coordinator agent is created. While task
+agents work, the coordinating agent should not edit the checkout itself, because
+Conductor only serializes writes between task agents. Notifications to a busy
+coordinator wait until its turn ends.
+
+Set `"coordinator":"agent"` to create a dedicated Conductor agent instead. Optional
+`coordinatorProfile` selects its configured profile by name and implies
+`"coordinator":"agent"`; otherwise it inherits the requesting agent's settings.
+The slash command always creates a dedicated Conductor agent. `profiles` lists worker
 profile names and notes. Only the Conductor agent can define or dispatch its run:
 
 ```bash

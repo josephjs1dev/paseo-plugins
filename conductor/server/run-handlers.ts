@@ -122,6 +122,8 @@ export function registerRuns(server: PluginServerContext, directory: string) {
         key: input.key,
         goal: input.goal,
         title: input.goal.slice(0, 160),
+        // App requests have no conversation to receive coordinator instructions.
+        coordinator: "agent",
         ...(input.coordinatorProfile
           ? { coordinatorProfile: input.coordinatorProfile }
           : {}),

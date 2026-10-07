@@ -29,6 +29,7 @@ export const runAgentCommandSchema = z.discriminatedUnion("kind", [
       title: text(160),
       goal: text(16000),
       concurrency: z.number().int().min(1).max(4).default(3),
+      coordinator: z.enum(["self", "agent"]).optional(),
       coordinatorProfile: text(160).optional(),
     })
     .strict(),
