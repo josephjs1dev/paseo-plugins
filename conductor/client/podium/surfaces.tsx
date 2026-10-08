@@ -12,11 +12,11 @@ import * as PluginUi from "@getpaseo/plugin/client/ui";
 import { useQueryClient } from "@tanstack/react-query";
 import { annotate, answerRequest, archiveAgent } from "../../shared/agents/rpc";
 import { isSnoozed, needsAttention } from "../../shared/agents/attention";
-import type { StoredConcert } from "../../shared/concerts/models";
+import type { StoredSymphony } from "../../shared/symphonies/models";
 import { PodiumView } from "./view";
 import { PodiumSession } from "./session";
 import { agentsQueryKey, useAgents } from "../agents/query";
-import { useConcerts } from "../concerts/query";
+import { useSymphonies } from "../symphonies/query";
 
 export class Sessions {
   private readonly entries = new Map<
@@ -24,17 +24,17 @@ export class Sessions {
     {
       session: PodiumSession;
       scroll: { offset: number };
-      workspaceId: string | undefined;
+      concertId: string | undefined;
     }
   >();
-  get(hostId: string, workspaceId?: string) {
-    const key = JSON.stringify([hostId, workspaceId ?? null]);
+  get(hostId: string, concertId?: string) {
+    const key = JSON.stringify([hostId, concertId ?? null]);
     let entry = this.entries.get(key);
     if (!entry) {
       entry = {
         session: new PodiumSession(),
         scroll: { offset: 0 },
-        workspaceId,
+        concertId,
       };
       this.entries.set(key, entry);
     }
@@ -58,38 +58,40 @@ export function useClock() {
 export function PodiumSurface(
   props: PluginSurfaceProps & {
     sessions: Sessions;
+    /** A Paseo workspace id from the host, taken in as Conductor's concertId. */
     workspaceId?: string;
     params?: PluginScreenProps["params"];
   },
 ) {
+  const concertId = props.workspaceId;
   const query = useAgents(props.host.id);
   const cache = useQueryClient();
   const send = useRpc(answerRequest);
   const change = useRpc(annotate);
   const archive = useRpc(archiveAgent);
   const now = useClock();
-  const { session, scroll } = props.sessions.get(
-    props.host.id,
-    props.workspaceId,
-  );
-  const initialConcert = props.params?.runId;
+  const { session, scroll } = props.sessions.get(props.host.id, concertId);
+  const initialSymphony = props.params?.symphonyId;
   const initialSection = props.params?.section;
   useEffect(() => {
-    if (initialSection === "runs" && typeof initialConcert !== "string") {
-      session.update({ section: "concerts", concertSelection: null });
+    if (
+      initialSection === "symphonies" &&
+      typeof initialSymphony !== "string"
+    ) {
+      session.update({ section: "symphonies", symphonySelection: null });
     }
-    if (typeof initialConcert === "string") {
+    if (typeof initialSymphony === "string") {
       session.update({
-        section: "concerts",
-        concertSelection: { kind: "concert", id: initialConcert },
+        section: "symphonies",
+        symphonySelection: { kind: "symphony", id: initialSymphony },
       });
     }
-  }, [initialConcert, initialSection, session]);
+  }, [initialSymphony, initialSection, session]);
   const state = useSyncExternalStore(session.subscribe, session.getSnapshot);
-  const runs = useConcerts(
+  const symphonies = useSymphonies(
     props.host.id,
-    props.workspaceId,
-    state.concertSelection,
+    concertId,
+    state.symphonySelection,
   );
   const refresh = async () => {
     await cache.invalidateQueries({ queryKey: agentsQueryKey(props.host.id) });
@@ -99,25 +101,25 @@ export function PodiumSurface(
       theme={props.theme}
       hostLabel={props.host.label}
       compact={props.layout.compact}
-      {...(props.workspaceId ? { workspaceId: props.workspaceId } : {})}
+      {...(concertId ? { concertId } : {})}
       data={query.data}
-      deleteConcert={async (run: StoredConcert) => {
-        await runs.remove(run.id, run.version);
+      deleteSymphony={async (symphony: StoredSymphony) => {
+        await symphonies.remove(symphony.id, symphony.version);
         // Only reached on success: drop the selection so the detail closes.
-        session.update({ concertSelection: null });
+        session.update({ symphonySelection: null });
       }}
-      concerts={{
-        access: runs.access.data,
-        list: runs.summaries.data,
-        loading: runs.summaries.isPending,
-        stale: runs.summaries.isError,
-        detail: runs.detail.data,
-        detailStale: runs.detail.isError,
+      symphonies={{
+        access: symphonies.access.data,
+        list: symphonies.summaries.data,
+        loading: symphonies.summaries.isPending,
+        stale: symphonies.summaries.isError,
+        detail: symphonies.detail.data,
+        detailStale: symphonies.detail.isError,
       }}
       loading={query.isPending}
       refreshing={
-        state.section === "concerts"
-          ? runs.summaries.isFetching || runs.detail.isFetching
+        state.section === "symphonies"
+          ? symphonies.summaries.isFetching || symphonies.detail.isFetching
           : query.isFetching
       }
       stale={query.isError}
@@ -125,7 +127,8 @@ export function PodiumSurface(
       session={session}
       scroll={scroll}
       refresh={() => {
-        const work = state.section === "concerts" ? runs.refresh() : refresh();
+        const work =
+          state.section === "symphonies" ? symphonies.refresh() : refresh();
         work.catch(() => undefined);
       }}
       actions={{
@@ -192,8 +195,8 @@ export function PodiumSidebar(props: PluginSidebarItemProps) {
     <PluginUi.SidebarRow
       icon="Workflow"
       label="Conductor"
-      active={props.currentScreen?.screenId === "inbox"}
-      onPress={() => props.openScreen({ screenId: "inbox" })}
+      active={props.currentScreen?.screenId === "podium"}
+      onPress={() => props.openScreen({ screenId: "podium" })}
       trailing={
         <Text
           accessibilityLabel={

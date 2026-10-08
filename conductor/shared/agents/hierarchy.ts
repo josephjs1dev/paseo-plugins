@@ -12,7 +12,7 @@ interface QueueGroup {
 /** Keep every matching request once; never hide a child just because its parent is filtered out. */
 export function queueGroups(
   items: readonly AgentItem[],
-  groupBy: "project" | "workspace",
+  groupBy: "project" | "concert",
 ): QueueGroup[] {
   const agents = new Map<string, AgentItem[]>();
   const order = new Map<string, number>();
@@ -50,7 +50,7 @@ export function queueGroups(
     const label =
       groupBy === "project"
         ? root.projectName
-        : `${root.projectName} / ${root.workspaceName}`;
+        : `${root.projectName} / ${root.concertName}`;
     const group: QueueGroup & { priority: number } = {
       label,
       entries: [],

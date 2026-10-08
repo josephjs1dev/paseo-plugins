@@ -14,9 +14,6 @@ export type PaseoWorkspace = Awaited<
 export type PaseoProfile = NonNullable<
   Awaited<ReturnType<PaseoApi["config"]["get"]>>["config"]["agentProfiles"]
 >[number];
-export type PaseoLaunchConfig = Parameters<
-  ReturnType<PaseoApi["workspaces"]["ref"]>["agents"]["create"]
->[0]["config"];
 export type AgentPermissionRequest =
   PluginLifecycleEvents["agent.permission_requested"]["request"];
 export type AgentPermissionResponse =

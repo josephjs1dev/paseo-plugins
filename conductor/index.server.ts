@@ -5,7 +5,7 @@ import { fileStore } from "./server/agents/store";
 import { turnJournal } from "./server/agents/turns";
 import { registerAgentsRpc } from "./server/entrypoints/agents-rpc";
 import { observeTurns } from "./server/entrypoints/agents-events";
-import { registerConcerts } from "./server/entrypoints/concerts-rpc";
+import { registerSymphonies } from "./server/entrypoints/symphonies-rpc";
 import { registerSkillsRpc } from "./server/entrypoints/skills-rpc";
 
 export default function contribute(
@@ -17,7 +17,7 @@ export default function contribute(
     "conductor",
   );
   const turns = turnJournal(join(directory, "turns"));
-  const stopConcerts = registerConcerts(server, directory);
+  const stopSymphonies = registerSymphonies(server, directory);
   const stopTurns = observeTurns(server, turns);
   registerSkillsRpc(server, homedir());
   registerAgentsRpc(server, fileStore(directory), turns);
@@ -25,7 +25,7 @@ export default function contribute(
     try {
       await stopTurns();
     } finally {
-      await stopConcerts();
+      await stopSymphonies();
     }
   };
 }

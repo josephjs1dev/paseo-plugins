@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "Coordinate agents and workspaces, answer blockers, and follow work through to completion.",
+  "description": "Coordinate agents and concerts, answer blockers, and follow work through to completion.",
   "scripts": {
     "typecheck": "tsc --noEmit && tsc --noEmit -p tests/preview && tsc --noEmit -p tests/browser",
     "lint": "eslint .",

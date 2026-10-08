@@ -2,21 +2,21 @@ import { useState, useSyncExternalStore } from "react";
 import { Text, View } from "react-native";
 import type { PluginTheme } from "@getpaseo/plugin";
 import type { AgentItem, AgentsSnapshot } from "../../shared/agents/models";
-import type { StoredConcert } from "../../shared/concerts/models";
+import type { StoredSymphony } from "../../shared/symphonies/models";
 import { visibleItems } from "../../shared/agents/attention";
 import { PodiumSession } from "./session";
 import { Label, Notice } from "../ui/controls";
 import { PodiumToolbar } from "./toolbar";
 import { Queue } from "../agents/queue";
 import { RequestDetail, type DetailActions } from "../agents/request-detail";
-import type { ConcertsData } from "../concerts/list";
-import { ConcertBrowser } from "../concerts/browser";
+import type { SymphoniesData } from "../symphonies/list";
+import { SymphonyBrowser } from "../symphonies/browser";
 
 export interface PodiumViewProps {
   theme: PluginTheme;
   hostLabel: string;
   compact: boolean;
-  workspaceId?: string;
+  concertId?: string;
   data: AgentsSnapshot | undefined;
   loading: boolean;
   refreshing: boolean;
@@ -25,8 +25,8 @@ export interface PodiumViewProps {
   session: PodiumSession;
   scroll: { offset: number };
   actions: DetailActions;
-  concerts?: ConcertsData;
-  deleteConcert?: (run: StoredConcert) => Promise<void>;
+  symphonies?: SymphoniesData;
+  deleteSymphony?: (symphony: StoredSymphony) => Promise<void>;
   refresh(this: void): void;
 }
 export function PodiumView(props: PodiumViewProps) {
@@ -35,12 +35,13 @@ export function PodiumView(props: PodiumViewProps) {
   const [width, setWidth] = useState(0);
   const compact = props.compact || (width > 0 && width < 740);
   const hasSelection = Boolean(state.selectedKey);
-  const isConcerts = state.section === "concerts" && Boolean(props.concerts);
+  const isSymphonies =
+    state.section === "symphonies" && Boolean(props.symphonies);
   const items = visibleItems(
     data?.items ?? [],
     state.filter,
     state.query,
-    props.workspaceId,
+    props.concertId,
     now,
     state.showSnoozed,
   );
@@ -49,14 +50,12 @@ export function PodiumView(props: PodiumViewProps) {
     data?.items ?? [],
     "attention",
     "",
-    props.workspaceId,
+    props.concertId,
     now,
   );
   const agentCount = new Set(
     (data?.items ?? [])
-      .filter(
-        (item) => !props.workspaceId || item.workspaceId === props.workspaceId,
-      )
+      .filter((item) => !props.concertId || item.concertId === props.concertId)
       .map((item) => item.agentId),
   ).size;
   const showAll = () => {
@@ -126,33 +125,37 @@ export function PodiumView(props: PodiumViewProps) {
         hasNext={Boolean(next)}
         selectNext={selectNext}
       />
-      {props.concerts && (
+      {props.symphonies && (
         <View
           style={{
             flex: 1,
             minHeight: 0,
-            display: isConcerts ? "flex" : "none",
+            display: isSymphonies ? "flex" : "none",
           }}
         >
-          <ConcertBrowser
+          <SymphonyBrowser
             theme={theme}
             now={now}
-            data={props.concerts}
+            data={props.symphonies}
             state={state}
             session={session}
             compact={compact}
-            {...(props.workspaceId ? { workspaceId: props.workspaceId } : {})}
+            {...(props.concertId ? { concertId: props.concertId } : {})}
             {...(actions.canNavigate
               ? { openAgent: (id: string) => actions.openAgent(id) }
               : {})}
-            {...(props.deleteConcert
-              ? { deleteConcert: props.deleteConcert }
+            {...(props.deleteSymphony
+              ? { deleteSymphony: props.deleteSymphony }
               : {})}
           />
         </View>
       )}
       <View
-        style={{ flex: 1, minHeight: 0, display: isConcerts ? "none" : "flex" }}
+        style={{
+          flex: 1,
+          minHeight: 0,
+          display: isSymphonies ? "none" : "flex",
+        }}
       >
         {props.loading && !data ? (
           <View style={{ padding: 24 }}>

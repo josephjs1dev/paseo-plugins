@@ -1,16 +1,15 @@
-import { useEffect } from "react";
-import { usePaseo, useRpc } from "@getpaseo/plugin/client";
+import { useRpc } from "@getpaseo/plugin/client";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { getAgents } from "../../shared/agents/rpc";
 import type { AgentsSnapshot } from "../../shared/agents/models";
-import { observeDirectory } from "../paseo/observation";
+import { useDirectoryInvalidation } from "../paseo/use-directory";
 
 export const agentsQueryKey = (hostId: string) =>
-  ["conductor", hostId, "inbox"] as const;
+  ["conductor", hostId, "agents"] as const;
 export function useAgents(hostId: string) {
   const fetch = useRpc(getAgents);
-  const paseo = usePaseo();
   const cache = useQueryClient();
+  useDirectoryInvalidation([...agentsQueryKey(hostId)]);
   const query = useQuery({
     queryKey: agentsQueryKey(hostId),
     queryFn: () => {
@@ -30,14 +29,5 @@ export function useAgents(hostId: string) {
     staleTime: 2000,
     refetchInterval: 15_000,
   });
-  useEffect(
-    () =>
-      observeDirectory(paseo, () => {
-        cache
-          .invalidateQueries({ queryKey: agentsQueryKey(hostId) })
-          .catch(() => undefined);
-      }),
-    [paseo, cache, hostId],
-  );
   return query;
 }

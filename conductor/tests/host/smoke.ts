@@ -58,7 +58,7 @@ try {
   const outcome = await worker.waitForFinish(15000);
   assert.equal(outcome.status, "permission");
   const first = snapshotSchema.parse(
-    await client.invokePluginRpc("conductor", "inbox.get", {
+    await client.invokePluginRpc("conductor", "agents.get", {
       knownAgentIds: [worker.id],
     }),
   );
@@ -67,14 +67,14 @@ try {
   );
   assert.ok(item);
   assert.equal(item.form?.kind, "questions");
-  await client.invokePluginRpc("conductor", "inbox.annotate", {
+  await client.invokePluginRpc("conductor", "agents.annotate", {
     kind: "snooze",
     key: item.key,
     minutes: 15,
   });
   await client.reloadPlugin("conductor");
   const reloaded = snapshotSchema.parse(
-    await client.invokePluginRpc("conductor", "inbox.get", {
+    await client.invokePluginRpc("conductor", "agents.get", {
       knownAgentIds: [worker.id],
     }),
   );
@@ -88,19 +88,19 @@ try {
     requestId: item.requestId,
     decision: { kind: "answers", answers: [{ selected: [0], text: "" }] },
   };
-  // Attach after the worker already exists, just as when installing Conductor mid-task.
+  // Attach after the task agent already exists, just as when installing Conductor mid-task.
   stopObservation = observeDirectory(paseo, () => {
     observedUpdates++;
   });
   await waitForUpdate(0);
   const updatesBeforeAnswer = observedUpdates;
   const result = answerResultSchema.parse(
-    await client.invokePluginRpc("conductor", "inbox.answer", input),
+    await client.invokePluginRpc("conductor", "agents.answer", input),
   );
   assert.equal(result.status, "answered");
   await waitForUpdate(updatesBeforeAnswer);
   const second = answerResultSchema.parse(
-    await client.invokePluginRpc("conductor", "inbox.answer", input),
+    await client.invokePluginRpc("conductor", "agents.answer", input),
   );
   assert.equal(second.status, "answered");
   await worker.refresh();
@@ -110,7 +110,7 @@ try {
   let completedKey: string | undefined;
   while (!completedKey && Date.now() < outcomeDeadline) {
     const latest = snapshotSchema.parse(
-      await client.invokePluginRpc("conductor", "inbox.get", {
+      await client.invokePluginRpc("conductor", "agents.get", {
         knownAgentIds: [worker.id],
       }),
     );
@@ -131,7 +131,7 @@ try {
   await client.clearAgentAttention(worker.id);
   await client.reloadPlugin("conductor");
   const final = snapshotSchema.parse(
-    await client.invokePluginRpc("conductor", "inbox.get", {
+    await client.invokePluginRpc("conductor", "agents.get", {
       knownAgentIds: [worker.id],
     }),
   );
@@ -156,7 +156,7 @@ try {
   childAgentId = child.id;
   assert.equal((await child.waitForFinish(15000)).status, "permission");
   const family = snapshotSchema.parse(
-    await client.invokePluginRpc("conductor", "inbox.get", {
+    await client.invokePluginRpc("conductor", "agents.get", {
       knownAgentIds: [worker.id, child.id],
     }),
   );
@@ -168,13 +168,13 @@ try {
   assert.equal(childRow.parentAgentTitle, "Conductor synthetic test");
   assert.equal(parentRow.childAgentCount, 1);
   assert.deepEqual(
-    await client.invokePluginRpc("conductor", "inbox.archive", {
+    await client.invokePluginRpc("conductor", "agents.archive", {
       agentId: worker.id,
       key: parentRow.archiveKey,
     }),
     { status: "has_children" },
   );
-  await client.invokePluginRpc("conductor", "inbox.answer", {
+  await client.invokePluginRpc("conductor", "agents.answer", {
     agentId: child.id,
     requestId: childRow.requestId,
     key: childRow.key,
@@ -182,7 +182,7 @@ try {
   });
   await child.waitForFinish(15000);
   const inactiveFamily = snapshotSchema.parse(
-    await client.invokePluginRpc("conductor", "inbox.get", {
+    await client.invokePluginRpc("conductor", "agents.get", {
       knownAgentIds: [worker.id, child.id],
     }),
   );
@@ -191,14 +191,14 @@ try {
   );
   assert.ok(inactiveChild?.archiveKey);
   assert.deepEqual(
-    await client.invokePluginRpc("conductor", "inbox.archive", {
+    await client.invokePluginRpc("conductor", "agents.archive", {
       agentId: child.id,
       key: inactiveChild.archiveKey,
     }),
     { status: "archived" },
   );
   const archivedFamily = snapshotSchema.parse(
-    await client.invokePluginRpc("conductor", "inbox.get", {
+    await client.invokePluginRpc("conductor", "agents.get", {
       knownAgentIds: [worker.id, child.id],
     }),
   );
@@ -214,7 +214,7 @@ try {
   await worker.send("Start a new fixture turn");
   assert.equal((await worker.waitForFinish(15000)).status, "permission");
   const nextTurn = snapshotSchema.parse(
-    await client.invokePluginRpc("conductor", "inbox.get", {
+    await client.invokePluginRpc("conductor", "agents.get", {
       knownAgentIds: [worker.id],
     }),
   );

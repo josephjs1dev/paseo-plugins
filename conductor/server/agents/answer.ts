@@ -3,7 +3,7 @@ import type { answerRequest } from "../../shared/agents/rpc";
 import type { AnswerResult, Receipt } from "../../shared/agents/models";
 import { questionAnswers, requestForm } from "../../shared/agents/questions";
 import { digest, requestKey } from "./identity";
-import type { AgentPermissionResponse } from "../paseo/types";
+import type { AgentPermissionResponse } from "../../shared/agents/agent";
 import type { AgentsHost } from "./host";
 import type { AgentsStore } from "./store";
 
@@ -29,7 +29,7 @@ export async function answer(
     return { status: previous.status === "answered" ? "answered" : "unknown" };
   }
   const agent = await runtime.inspect(input.agentId);
-  if (!agent || agent.archivedAt) {
+  if (!agent || agent.archived) {
     return { status: "stale" };
   }
   const request = agent.pendingPermissions.find(

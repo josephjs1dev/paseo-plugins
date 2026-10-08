@@ -1,15 +1,15 @@
+import type { AgentSnapshot } from "../../shared/agents/agent";
 import type { ArchiveResult } from "../../shared/agents/models";
-import type { PaseoAgent } from "../paseo/types";
 import type { AgentsHost } from "./host";
 import { digest } from "./identity";
 import { pages } from "./directory";
 
-export function archiveKey(agent: PaseoAgent): string | null {
+export function archiveKey(agent: AgentSnapshot): string | null {
   if (
-    agent.archivedAt ||
+    agent.archived ||
     agent.activeTurn ||
     agent.pendingPermissions.length ||
-    agent.attentionReason === "permission" ||
+    agent.awaitingPermission ||
     !["idle", "closed"].includes(agent.status)
   ) {
     return null;
@@ -18,10 +18,10 @@ export function archiveKey(agent: PaseoAgent): string | null {
     agent.id,
     agent.provider,
     agent.createdAt,
-    agent.runtimeInfo?.sessionId ?? agent.persistence?.sessionId,
+    agent.sessionId,
     agent.status,
     agent.updatedAt,
-    agent.labels,
+    agent.parentAgentId,
   ]);
 }
 
@@ -37,15 +37,13 @@ export async function archiveInactive(
     }
     if (
       directory.entries.some(
-        (agent) =>
-          !agent.archivedAt &&
-          agent.labels["paseo.parent-agent-id"]?.trim() === input.agentId,
+        (agent) => !agent.archived && agent.parentAgentId === input.agentId,
       )
     ) {
       return { status: "has_children" };
     }
     const agent = await runtime.inspect(input.agentId);
-    if (agent?.archivedAt) {
+    if (agent?.archived) {
       return { status: "archived" };
     }
     if (!agent || archiveKey(agent) !== input.key) {

@@ -72,7 +72,7 @@ export function ArchiveAction({
             }}
           >
             Archive {item.agentTitle}? This removes the agent from active Paseo
-            lists. Workspace files remain.
+            lists. Concert files remain.
           </Text>
           <View style={rowStyle}>
             <Button

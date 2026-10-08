@@ -22,7 +22,7 @@ export function openPodium(
   params?: PluginScreenParams,
 ): void {
   if (typeof context.openScreen === "function") {
-    context.openScreen({ screenId: "inbox", ...(params ? { params } : {}) });
+    context.openScreen({ screenId: "podium", ...(params ? { params } : {}) });
   } else {
     context.openSurface("podium");
   }
@@ -40,12 +40,12 @@ export function registerPodiumNavigation(
   ) {
     removers.push(
       client.addScreen({
-        id: "inbox",
+        id: "podium",
         title: "Conductor · Podium",
         Component: Surface,
       }),
       client.addSidebarHeaderItem({
-        id: "inbox",
+        id: "podium",
         title: "Conductor",
         Component: Sidebar,
       }),
@@ -54,7 +54,7 @@ export function registerPodiumNavigation(
     removers.push(
       client.addSurface("podium", Surface),
       client.addSidebarItem({
-        id: "inbox",
+        id: "podium",
         title: "Conductor",
         icon: "Workflow",
         surface: "podium",
@@ -63,8 +63,8 @@ export function registerPodiumNavigation(
   }
   removers.push(
     client.addCommandCenterItem({
-      id: "open-inbox",
-      title: "Open podium: all workspaces",
+      id: "open-podium",
+      title: "Open podium: all concerts",
       icon: "Workflow",
       keywords: ["waiting", "questions", "permissions", "agents"],
       context: "global",

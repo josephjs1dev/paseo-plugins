@@ -4,6 +4,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { AgentsHost } from "../server/agents/host";
 import type { AgentPermissionRequest, PaseoAgent } from "../server/paseo/types";
+import type { AgentSnapshot } from "../shared/agents/agent";
+import { toAgentSnapshot } from "../server/paseo/mapping";
 
 export function question(
   overrides: Partial<AgentPermissionRequest> = {},
@@ -36,7 +38,7 @@ export function agent(overrides: Partial<PaseoAgent> = {}): PaseoAgent {
     provider: "codex",
     cwd: "/test/repo",
     workspaceId: "workspace-1",
-    title: "API worker",
+    title: "API task agent",
     model: "test-model",
     createdAt: "2026-10-04T12:00:00Z",
     updatedAt: "2026-10-04T12:10:00Z",
@@ -61,8 +63,14 @@ export function agent(overrides: Partial<PaseoAgent> = {}): PaseoAgent {
     ...overrides,
   };
 }
+/** The same fixtures translated into the domain shape the host ports use. */
+export function domainAgent(
+  overrides: Partial<PaseoAgent> = {},
+): AgentSnapshot {
+  return toAgentSnapshot(agent(overrides));
+}
 export function runtime(
-  current: () => PaseoAgent | null,
+  current: () => AgentSnapshot | null,
   overrides: Partial<AgentsHost> = {},
 ): AgentsHost {
   return {
@@ -70,7 +78,7 @@ export function runtime(
       const value = current();
       return { entries: value ? [value] : [], next: null };
     },
-    workspaces: async () => ({ entries: [], next: null }),
+    concerts: async () => ({ entries: [], next: null }),
     inspect: async () => current(),
     archive: async () => {},
     answer: async () => {},

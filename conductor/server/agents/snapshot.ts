@@ -1,4 +1,9 @@
 import type {
+  AgentSnapshot,
+  AgentPermissionRequest,
+} from "../../shared/agents/agent";
+import type { ConcertEntry } from "../../shared/concert";
+import type {
   Bucket,
   AgentItem,
   AgentsSnapshot,
@@ -6,11 +11,6 @@ import type {
 } from "../../shared/agents/models";
 import { requestForm } from "../../shared/agents/questions";
 import { agentKey, requestKey } from "./identity";
-import type {
-  AgentPermissionRequest,
-  PaseoAgent,
-  PaseoWorkspace,
-} from "../paseo/types";
 import type { AgentsHost } from "./host";
 import type { AgentsStore } from "./store";
 import type { TurnJournal } from "./turns";
@@ -18,7 +18,7 @@ import { pages } from "./directory";
 import { archiveKey } from "./archive";
 
 function bucket(
-  agent: PaseoAgent,
+  agent: AgentSnapshot,
   request: AgentPermissionRequest | undefined,
   marked: boolean,
 ): Bucket {
@@ -28,7 +28,7 @@ function bucket(
   if (agent.status === "closed") {
     return "closed";
   }
-  if (request || marked || agent.attentionReason === "permission") {
+  if (request || marked || agent.awaitingPermission) {
     return "waiting";
   }
   if (agent.status === "running" || agent.status === "initializing") {
@@ -43,12 +43,12 @@ function details(value: unknown): string {
   return JSON.stringify(value, null, 2).slice(0, 16000);
 }
 async function row(
-  agent: PaseoAgent,
+  agent: AgentSnapshot,
   request: AgentPermissionRequest | undefined,
-  workspace: PaseoWorkspace | undefined,
+  concert: ConcertEntry | undefined,
   store: AgentsStore,
   lastTurn: TurnOutcome | null,
-  agents: Map<string, PaseoAgent>,
+  agents: Map<string, AgentSnapshot>,
   children: Map<string, number>,
 ): Promise<AgentItem> {
   const key = request ? requestKey(agent, request) : agentKey(agent.id);
@@ -58,7 +58,7 @@ async function row(
     store.receipt(key),
   ]);
   const marked = agentAnnotation?.marked ?? false;
-  const parentAgentId = agent.labels["paseo.parent-agent-id"]?.trim() || null;
+  const parentAgentId = agent.parentAgentId;
   const state = bucket(agent, request, marked);
   const agentTitle = (agent.title?.trim() || "Untitled agent").slice(0, 1000);
   return {
@@ -67,12 +67,9 @@ async function row(
     requestId: request?.id ?? null,
     agentTitle,
     provider: agent.provider.slice(0, 100),
-    workspaceId: agent.workspaceId ?? null,
-    workspaceName: (workspace?.name ?? "Workspace unavailable").slice(0, 1000),
-    projectName: (workspace?.projectDisplayName ?? "Other agents").slice(
-      0,
-      1000,
-    ),
+    concertId: agent.concertId,
+    concertName: (concert?.name ?? "Concert unavailable").slice(0, 1000),
+    projectName: (concert?.projectName ?? "Other agents").slice(0, 1000),
     parentAgentId,
     parentAgentTitle: parentAgentId
       ? (agents.get(parentAgentId)?.title?.slice(0, 1000) ?? null)
@@ -103,9 +100,9 @@ export async function snapshot(
   now = Date.now(),
   turns?: TurnJournal,
 ): Promise<AgentsSnapshot> {
-  const [agents, workspaces, receipts] = await Promise.all([
+  const [agents, concerts, receipts] = await Promise.all([
     pages((cursor) => runtime.agents(cursor)),
-    pages((cursor) => runtime.workspaces(cursor)).catch(() => ({
+    pages((cursor) => runtime.concerts(cursor)).catch(() => ({
       entries: [],
       incomplete: true,
     })),
@@ -129,13 +126,13 @@ export async function snapshot(
       }
     }
   }
-  const workspaceMap = new Map(
-    workspaces.entries.map((workspace) => [workspace.id, workspace]),
+  const concertMap = new Map(
+    concerts.entries.map((concert) => [concert.id, concert]),
   );
   const childCounts = new Map<string, number>();
   for (const agent of byId.values()) {
-    const parent = agent.labels["paseo.parent-agent-id"]?.trim();
-    if (parent && !agent.archivedAt) {
+    const parent = agent.parentAgentId;
+    if (parent && !agent.archived) {
       childCounts.set(parent, (childCounts.get(parent) ?? 0) + 1);
     }
   }
@@ -143,7 +140,7 @@ export async function snapshot(
   let incomplete = agents.incomplete;
   let turnHistoryIncomplete = false;
   for (const agent of byId.values()) {
-    if (agent.archivedAt) {
+    if (agent.archived) {
       continue;
     }
     const lastTurn = turns
@@ -166,7 +163,7 @@ export async function snapshot(
         await row(
           agent,
           request,
-          agent.workspaceId ? workspaceMap.get(agent.workspaceId) : undefined,
+          agent.concertId ? concertMap.get(agent.concertId) : undefined,
           store,
           lastTurn,
           byId,
@@ -180,7 +177,7 @@ export async function snapshot(
     receipts,
     fetchedAt: now,
     incomplete,
-    workspaceIncomplete: workspaces.incomplete,
+    concertIncomplete: concerts.incomplete,
     turnHistoryIncomplete,
   };
 }

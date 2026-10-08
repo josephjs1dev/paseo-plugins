@@ -11,7 +11,7 @@ interface Props {
   theme: PluginTheme;
   now: number;
   selectedKey: string | null;
-  groupBy: "project" | "workspace";
+  groupBy: "project" | "concert";
   onSelect(this: void, item: AgentItem): void;
   scroll: { offset: number };
   emptyTitle: string;
@@ -177,7 +177,7 @@ export function Queue({
                     lineHeight: 16,
                   }}
                 >
-                  {item.workspaceName}
+                  {item.concertName}
                 </Text>
                 {item.parentAgentId && depth === 0 && (
                   <Text

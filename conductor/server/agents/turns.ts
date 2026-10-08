@@ -2,6 +2,7 @@ import { join } from "node:path";
 import { identifier } from "../../shared/schema";
 import { randomUUID } from "node:crypto";
 import { z } from "zod";
+import type { AgentSnapshot } from "../../shared/agents/agent";
 import {
   keySchema,
   turnOutcomeSchema,
@@ -9,7 +10,6 @@ import {
 } from "../../shared/agents/models";
 import { atomicJson, readJson } from "../files";
 import { agentKey, digest } from "./identity";
-import type { PaseoAgent } from "../paseo/types";
 
 const recordSchema = z.object({
   identity: keySchema,
@@ -29,18 +29,13 @@ export interface TurnJournal {
   record(
     agentId: string,
     event: TurnEvent,
-    inspect: () => Promise<PaseoAgent | null>,
+    inspect: () => Promise<AgentSnapshot | null>,
   ): Promise<void>;
-  last(agent: PaseoAgent): Promise<TurnOutcome | null>;
+  last(agent: AgentSnapshot): Promise<TurnOutcome | null>;
   flush(): Promise<void>;
 }
-function identity(agent: PaseoAgent): string {
-  return digest([
-    agent.id,
-    agent.provider,
-    agent.createdAt,
-    agent.runtimeInfo?.sessionId ?? agent.persistence?.sessionId ?? null,
-  ]);
+function identity(agent: AgentSnapshot): string {
+  return digest([agent.id, agent.provider, agent.createdAt, agent.sessionId]);
 }
 
 /** One bounded latest-turn record per agent. Lifecycle evidence never uses unread flags. */
@@ -58,7 +53,7 @@ export function turnJournal(directory: string): TurnJournal {
         .catch(() => undefined)
         .then(async () => {
           const agent = await inspect();
-          if (!agent || agent.archivedAt) {
+          if (!agent || agent.archived) {
             return;
           }
           if (

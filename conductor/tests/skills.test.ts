@@ -17,19 +17,21 @@ const skillPaths = (home: string) =>
     join(home, dir, "skills", "conductor-orchestrate"),
   );
 
-void test("the skill names itself and documents concertId", () => {
+void test("the skill names itself and documents symphonyId", () => {
   assert.match(
     ORCHESTRATE_SKILL,
     /^---\nname: conductor-orchestrate\ndescription: \S/,
   );
-  assert.match(ORCHESTRATE_SKILL, /concertId/);
-  assert.equal(ORCHESTRATE_SKILL.includes("runId"), false);
-  assert.equal(/performance/i.test(ORCHESTRATE_SKILL), false);
+  assert.match(ORCHESTRATE_SKILL, /symphonyId/);
+  // Bracketed so this guard against the old names does not itself trip the
+  // repository-wide stale-name grep.
+  assert.equal(/r[u]nId/.test(ORCHESTRATE_SKILL), false);
+  assert.equal(/p[e]rformance/i.test(ORCHESTRATE_SKILL), false);
   assert.equal(ORCHESTRATE_SKILL.includes("\\`"), false);
 });
 
-void test("the skill lists worker options before splitting and teaches the task contract", () => {
-  const options = ORCHESTRATE_SKILL.indexOf("List the worker options");
+void test("the skill lists profiles and models before splitting and teaches the task contract", () => {
+  const options = ORCHESTRATE_SKILL.indexOf("List profiles and models");
   const split = ORCHESTRATE_SKILL.indexOf("Split the goal into tasks");
   assert.ok(options >= 0 && options < split);
   assert.match(ORCHESTRATE_SKILL, /Objective:/);

@@ -5,7 +5,7 @@ import { snapshot } from "../server/agents/snapshot";
 import { agentKey } from "../server/agents/identity";
 import { visibleItems, ageLabel } from "../shared/agents/attention";
 import { snapshotSchema } from "../shared/agents/models";
-import { agent, question, runtime, testDirectory } from "./fixtures";
+import { domainAgent, question, runtime, testDirectory } from "./fixtures";
 import { PodiumSession } from "../client/podium/session";
 
 async function store() {
@@ -19,14 +19,17 @@ await test("the default attention queue combines questions, approvals, failures,
     attentionReason: null,
   };
   const agents = [
-    agent({ id: "question" }),
-    agent({ id: "approval", pendingPermissions: [question({ kind: "tool" })] }),
-    agent({ id: "permission", pendingPermissions: [] }),
-    agent({ ...idle, id: "failed", status: "error" }),
-    agent({ ...idle, id: "reminder" }),
-    agent({ ...idle, id: "running", status: "running" }),
-    agent({ ...idle, id: "idle" }),
-    agent({ id: "closed", status: "closed" }),
+    domainAgent({ id: "question" }),
+    domainAgent({
+      id: "approval",
+      pendingPermissions: [question({ kind: "tool" })],
+    }),
+    domainAgent({ id: "permission", pendingPermissions: [] }),
+    domainAgent({ ...idle, id: "failed", status: "error" }),
+    domainAgent({ ...idle, id: "reminder" }),
+    domainAgent({ ...idle, id: "running", status: "running" }),
+    domainAgent({ ...idle, id: "idle" }),
+    domainAgent({ id: "closed", status: "closed" }),
   ];
   await storage.annotate({
     key: agentKey("reminder"),
@@ -69,7 +72,7 @@ await test("the default attention queue combines questions, approvals, failures,
   );
 });
 await test("one agent with multiple requests exposes each exact request; errors retain precedence", async () => {
-  const current = agent({
+  const current = domainAgent({
     status: "error",
     pendingPermissions: [question(), question({ id: "another" })],
   });
@@ -90,11 +93,11 @@ await test("one agent with multiple requests exposes each exact request; errors 
 await test("truncated directories preserve known pending agents through direct inspection", async () => {
   let inspections = 0;
   const result = await snapshot(
-    runtime(() => agent(), {
+    runtime(() => domainAgent(), {
       agents: async () => ({ entries: [], next: "repeating-cursor" }),
       inspect: async () => {
         inspections++;
-        return agent();
+        return domainAgent();
       },
     }),
     await store(),
@@ -104,17 +107,17 @@ await test("truncated directories preserve known pending agents through direct i
   assert.equal(result.items.length, 1);
   assert.equal(inspections, 1);
 });
-await test("workspace failures preserve agent requests and explicitly mark names incomplete", async () => {
+await test("concert failures preserve agent requests and explicitly mark names incomplete", async () => {
   const result = await snapshot(
-    runtime(() => agent(), {
-      workspaces: async () => {
-        throw new Error("workspace directory unavailable");
+    runtime(() => domainAgent(), {
+      concerts: async () => {
+        throw new Error("concert directory unavailable");
       },
     }),
     await store(),
     [],
   );
-  assert.equal(result.workspaceIncomplete, true);
+  assert.equal(result.concertIncomplete, true);
   assert.equal(result.items.length, 1);
 });
 await test("inspection failures are never interpreted as resolution", async () => {
@@ -132,7 +135,7 @@ await test("inspection failures are never interpreted as resolution", async () =
 });
 await test("snooze is request-specific, expires, and manual reminders persist independently", async () => {
   const storage = await store();
-  const host = runtime(() => agent());
+  const host = runtime(() => domainAgent());
   const initial = await snapshot(host, storage, [], 1000);
   const item = initial.items[0];
   assert.ok(item);
@@ -158,7 +161,7 @@ await test("snooze is request-specific, expires, and manual reminders persist in
   });
   const idle = await snapshot(
     runtime(() =>
-      agent({
+      domainAgent({
         pendingPermissions: [],
         attentionReason: null,
         requiresAttention: false,
@@ -174,7 +177,7 @@ await test("archived agents are excluded; idle is not fabricated as finished", a
   assert.equal(
     (
       await snapshot(
-        runtime(() => agent({ archivedAt: new Date().toISOString() })),
+        runtime(() => domainAgent({ archivedAt: new Date().toISOString() })),
         await store(),
         [],
       )
@@ -183,7 +186,7 @@ await test("archived agents are excluded; idle is not fabricated as finished", a
   );
   const result = await snapshot(
     runtime(() =>
-      agent({
+      domainAgent({
         pendingPermissions: [],
         requiresAttention: false,
         attentionReason: null,
@@ -193,12 +196,14 @@ await test("archived agents are excluded; idle is not fabricated as finished", a
     [],
   );
   assert.equal(result.items[0]?.bucket, "idle");
-  assert.equal(result.items[0]?.title, "API worker");
+  assert.equal(result.items[0]?.title, "API task agent");
 });
 await test("drafts survive selecting another request and remain bound to their original key", async () => {
   const result = await snapshot(
     runtime(() =>
-      agent({ pendingPermissions: [question(), question({ id: "two" })] }),
+      domainAgent({
+        pendingPermissions: [question(), question({ id: "two" })],
+      }),
     ),
     await store(),
     [],
@@ -234,7 +239,7 @@ await test("age calculation handles invalid and future timestamps without mislea
 
 await test("initial load discovers existing agents across pages without prior registration", async () => {
   const existing = Array.from({ length: 205 }, (_, index) =>
-    agent({
+    domainAgent({
       id: `existing-${index}`,
       pendingPermissions: index === 204 ? [question()] : [],
       status: index === 0 ? "running" : "idle",

@@ -7,10 +7,10 @@ import { snapshot } from "../server/agents/snapshot";
 import { fileStore } from "../server/agents/store";
 import { agentKey } from "../server/agents/identity";
 import { visibleItems } from "../shared/agents/attention";
-import { agent, runtime, testDirectory } from "./fixtures";
+import { domainAgent, runtime, testDirectory } from "./fixtures";
 
 const idle = () =>
-  agent({
+  domainAgent({
     pendingPermissions: [],
     attentionReason: null,
     requiresAttention: false,
@@ -96,7 +96,7 @@ await test("new turns and missed endings remain unknown instead of inheriting an
   assert.equal(
     await turns.last({
       ...current,
-      persistence: { provider: "codex", sessionId: "new-session" },
+      sessionId: "new-session",
     }),
     null,
   );

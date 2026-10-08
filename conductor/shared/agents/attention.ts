@@ -24,14 +24,14 @@ export function visibleItems(
   items: readonly AgentItem[],
   filter: Filter,
   query: string,
-  workspaceId: string | undefined,
+  concertId: string | undefined,
   now: number,
   showSnoozed = false,
 ): AgentItem[] {
   const search = query.trim().toLocaleLowerCase();
   return items
     .filter((item) => {
-      if (workspaceId && item.workspaceId !== workspaceId) {
+      if (concertId && item.concertId !== concertId) {
         return false;
       }
       if (filter !== "all" && category(item) !== filter) {
@@ -46,7 +46,7 @@ export function visibleItems(
           item.agentTitle,
           item.title,
           item.projectName,
-          item.workspaceName,
+          item.concertName,
           item.provider,
           item.parentAgentTitle ?? "",
         ].some((value) => value.toLocaleLowerCase().includes(search))

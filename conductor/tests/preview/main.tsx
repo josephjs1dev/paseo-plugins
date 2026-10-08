@@ -5,8 +5,8 @@ import { PodiumSession } from "../../client/podium/session";
 import { initial, light, dark } from "./fixtures";
 import type { AgentsSnapshot } from "../../shared/agents/models";
 import { requestForm } from "../../shared/agents/questions";
-import type { StoredConcert } from "../../shared/concerts/models";
-import { usePreviewConcerts } from "./concerts";
+import type { StoredSymphony } from "../../shared/symphonies/models";
+import { usePreviewSymphonies } from "./symphonies";
 
 const session = new PodiumSession();
 const scroll = { offset: 0 };
@@ -55,8 +55,8 @@ function Preview() {
             if (item.agentId === "agent-api") {
               return {
                 ...item,
-                title: "Coordinator A",
-                agentTitle: "Coordinator A",
+                title: "Conductor A",
+                agentTitle: "Conductor A",
                 bucket: params.has("inactive-parent")
                   ? ("idle" as const)
                   : ("running" as const),
@@ -68,8 +68,8 @@ function Preview() {
             if (item.agentId === "agent-ui") {
               return {
                 ...item,
-                agentTitle: "Worker B",
-                parentAgentTitle: "Coordinator A",
+                agentTitle: "Task agent B",
+                parentAgentTitle: "Conductor A",
               };
             }
             return item;
@@ -79,11 +79,10 @@ function Preview() {
   const [opened, setOpened] = useState("");
   const [stale, setStale] = useState(params.has("stale"));
   const [sends, setSends] = useState(0);
-  const runs = usePreviewConcerts(
+  const symphonies = usePreviewSymphonies(
     session,
-    params.has("concert-failed"),
-    params.has("legacy-concert"),
-    params.get("concert-fixture") ?? undefined,
+    params.has("symphony-failed"),
+    params.get("symphony-fixture") ?? undefined,
   );
   return (
     <div style={{ height: "100%", display: "flex", flexDirection: "column" }}>
@@ -95,25 +94,25 @@ function Preview() {
         {opened} · sends:{sends}
       </div>
       <PodiumView
-        {...(params.has("concerts")
+        {...(params.has("symphonies")
           ? {
-              concerts: runs.data,
+              symphonies: symphonies.data,
               ...(params.has("global") ? {} : { workspaceId: "ws-api" }),
             }
           : {})}
         theme={params.has("dark") ? dark : light}
         hostLabel="Development host"
         compact={false}
-        deleteConcert={async (run: StoredConcert) => {
+        deleteSymphony={async (symphony: StoredSymphony) => {
           if (params.has("delete-error")) {
-            throw new Error("This concert changed. Refresh before deleting.");
+            throw new Error("This symphony changed. Refresh before deleting.");
           }
           if (params.has("delete-slow")) {
             await new Promise((resolve) => setTimeout(resolve, 400));
           }
-          await runs.remove(run);
+          await symphonies.remove(symphony);
           // Mirror the surface callback: clear the selection after success.
-          session.update({ concertSelection: null });
+          session.update({ symphonySelection: null });
         }}
         data={data}
         loading={false}
@@ -186,16 +185,16 @@ function Preview() {
           },
         }}
       />
-      {params.has("concerts") && !params.get("concert-fixture") && (
-        <div data-testid="concert-fixture-controls">
-          <button onClick={() => runs.progress("claim")}>
+      {params.has("symphonies") && !params.get("symphony-fixture") && (
+        <div data-testid="symphony-fixture-controls">
+          <button onClick={() => symphonies.progress("claim")}>
             Source claims task
           </button>
-          <button onClick={() => runs.progress("block")}>
+          <button onClick={() => symphonies.progress("block")}>
             Source reports blocker
           </button>
-          <button onClick={() => runs.progress("complete")}>
-            Source completes concert
+          <button onClick={() => symphonies.progress("complete")}>
+            Source completes symphony
           </button>
         </div>
       )}

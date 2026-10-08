@@ -1,5 +1,8 @@
 import { createHash } from "node:crypto";
-import type { AgentPermissionRequest, PaseoAgent } from "../paseo/types";
+import type {
+  AgentPermissionRequest,
+  AgentSnapshot,
+} from "../../shared/agents/agent";
 
 export function digest(value: unknown): string {
   return createHash("sha256")
@@ -20,14 +23,14 @@ export function digest(value: unknown): string {
     .digest("hex");
 }
 export function requestKey(
-  agent: PaseoAgent,
+  agent: AgentSnapshot,
   request: AgentPermissionRequest,
 ): string {
   return digest([
     agent.id,
     agent.provider,
     agent.createdAt,
-    agent.runtimeInfo?.sessionId ?? agent.persistence,
+    agent.sessionId,
     request,
   ]);
 }

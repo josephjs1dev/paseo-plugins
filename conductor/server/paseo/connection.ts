@@ -1,4 +1,4 @@
-import { ConcertError } from "../concerts/errors";
+import { SymphonyError } from "../symphonies/errors";
 import type { PaseoApi } from "./types";
 
 /** Holds the latest daemon connection that a handler or hook received. */
@@ -13,7 +13,7 @@ export function paseoConnection() {
     },
     require: (): PaseoApi => {
       if (!current) {
-        throw new ConcertError(
+        throw new SymphonyError(
           "Conductor needs an agent lifecycle event or a Podium refresh to obtain its runtime connection. Retry after the source session starts.",
         );
       }

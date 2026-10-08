@@ -1,10 +1,10 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { archiveInactive, archiveKey } from "../server/agents/archive";
-import { agent, runtime } from "./fixtures";
+import { domainAgent, runtime } from "./fixtures";
 
 const inactive = () =>
-  agent({
+  domainAgent({
     pendingPermissions: [],
     attentionReason: null,
     requiresAttention: false,
@@ -17,7 +17,7 @@ await test("an inactive leaf can be archived once; repeated calls are already ar
   const host = runtime(() => current, {
     archive: async () => {
       calls++;
-      current = { ...current, archivedAt: new Date().toISOString() };
+      current = { ...current, archived: true };
     },
   });
   const input = { agentId: current.id, key };
@@ -32,9 +32,9 @@ await test("a fresh inactivity and fingerprint check rejects changed, running, o
   const variants = [
     { ...old, status: "running" as const },
     { ...old, updatedAt: "2026-10-05T00:00:00Z" },
-    agent(),
+    domainAgent(),
     { ...old, activeTurn: { turnId: "new", startedAt: null } },
-    { ...old, persistence: { provider: "codex", sessionId: "replacement" } },
+    { ...old, sessionId: "replacement" },
   ];
   for (const current of variants) {
     let calls = 0;
@@ -50,11 +50,11 @@ await test("a fresh inactivity and fingerprint check rejects changed, running, o
     assert.equal(calls, 0);
   }
 });
-await test("any unarchived child blocks parent archive, even across workspaces", async () => {
+await test("any unarchived child blocks parent archive, even across concerts", async () => {
   const parent = inactive();
   const key = archiveKey(parent);
   assert.ok(key);
-  const child = agent({
+  const child = domainAgent({
     id: "child",
     workspaceId: "another-worktree",
     labels: { "paseo.parent-agent-id": parent.id },

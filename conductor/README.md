@@ -1,7 +1,26 @@
 # Conductor
 
 Conductor adds a Paseo podium for finding blockers, responding to agents, and
-following work across projects and workspaces on the selected daemon.
+following work across projects and concerts on the selected daemon.
+
+## Vocabulary
+
+Conductor uses musical terms for the orchestration structure and roles, and
+technical names for units of work.
+
+| Technical term      | Conductor term | Meaning                                                         |
+| ------------------- | -------------- | --------------------------------------------------------------- |
+| Paseo workspace     | Concert        | One project that can contain several symphonies                 |
+| Inbox / overview    | Podium         | The screen that follows agents and symphonies                   |
+| Task orchestration  | Symphony       | One orchestrated goal, from score to finish                     |
+| Orchestrating agent | Conductor      | Writes the score, dispatches task agents, reviews, and finishes |
+| Task graph          | Score          | A symphony's tasks and their dependencies                       |
+| Task                | Task           | One unit of work in the score                                   |
+| Worker agent        | Task agent     | The agent assigned to one task                                  |
+| Attempt / retry     | Attempt        | One try at a task                                               |
+
+A symphony is split into tasks; do not call tasks pieces or parts. A concert
+has symphonies. Use _workspace_ only when describing Paseo itself.
 
 Install the Conductor skills once: open the Command Center (**⌘K** on macOS,
 **Ctrl+K** elsewhere) and select **Install conductor skills**. It writes each skill,
@@ -12,48 +31,47 @@ same name that you created.
 
 Then invoke `conductor-orchestrate` in any agent, or ask the agent to orchestrate.
 That agent becomes the Conductor and keeps its conversation context: it splits the
-work into tasks, chooses a worker per task, and dispatches real child agents. The
-Concerts tab shows planning, task agents, dependencies, blockers, and reported
+work into tasks, chooses a task agent per task, and dispatches real child agents. The
+Symphonies tab shows planning, task agents, dependencies, blockers, and reported
 results.
 
 ## Features
 
-### Orchestrated concerts
+### Symphonies
 
-Each orchestration is a _concert_: a Conductor agent and its task agents. Agent
-commands take `concertId` and acknowledge with `concertId`/`concert` (`concerts`
-for `list`); `runId` and `performanceId` are still accepted from prompts recorded
-before the renames. UI RPCs and storage keep the `run` name (`runs/`).
+Each symphony is one task orchestration: a Conductor agent and its task agents.
+Agent commands use `symphonyId` and acknowledge with `symphonyId`/`symphony`
+(`symphonies` for `list`). UI RPCs use `symphonies.*`.
 
-The user supplies the goal, not a task form. The Conductor agent defines the task
-graph and chooses a worker per task: a configured profile, an inline
+The user supplies the goal, not a task form. The Conductor agent defines the score
+and chooses a task agent per task: a configured profile, an inline
 provider/model, or the Conductor's own settings. Each ready task
-gets its own child agent, with a link from its task, graph node, and attempt history.
-**Conductor agent** opens the coordinating conversation. Agents and Concerts remain
+gets its own child agent, with a link from its task, score node, and attempt history.
+**Conductor agent** opens the conducting conversation. Agents and Symphonies remain
 separate sections of the same Podium and retain independent searches and selections.
 
-The graph draws directed dependencies and supports keyboard selection, agent
-navigation, and scrolling on small screens. Concerts uses the same underlined filters,
-compact search, and list rows as Agents, without redundant workspace group headings.
-Legacy manual plans and creation/edit/accept endpoints are removed from the podium.
+The score draws directed dependencies and supports keyboard selection, agent
+navigation, and scrolling on small screens. Symphonies uses the same underlined filters,
+compact search, and list rows as Agents, without redundant concert group headings.
+Symphonies track executed work.
 
-Up to four read-only workers can run concurrently (three by default). Workers share
+Up to four read-only task agents can run concurrently (three by default). Task agents share
 the current checkout; writers are serialized, including against existing recorded
-concerts. Scope declarations guide coordination and prompts; they are not filesystem
+Symphonies. Scope declarations guide task assignment and prompts; they are not filesystem
 sandboxes. Profiles preserve configured settings without silently granting broader
-permissions. Small edits need no concert unless requested.
+permissions. Small edits need no symphony unless requested.
 
-A report alone does not release an orchestrated worker's resources. Dependencies
+A report alone does not release an orchestrated task agent's resources. Dependencies
 wait for an explicit completed report with all required checks passed **and** an
-observed end to the worker's turn. A worker that stops without reporting is
+observed end to the task agent's turn. A task agent that stops without reporting is
 nudged once to report or block; a second stop becomes a blocker. An uncertain
 launch is checked again with backoff before it is blocked. The Conductor agent
 acts on bounded per-task failure summaries, reviews all results, and finishes
-the concert with a summary.
+the symphony with a summary.
 
-Workers diagnose and fix their own changes before reporting failure, with up to
+Task agents diagnose and fix their own changes before reporting failure, with up to
 3 fix rounds and an early stop for repeated errors, refused scope requests, or
-needs for input or another model. They report a structured diagnosis. A worker
+needs for input or another model. They report a structured diagnosis. A task agent
 can request up to 5 extra write paths per `widen` call and 2 calls per attempt;
 the server refuses paths owned by unfinished tasks or overlapping resources
 held by another attempt. Each grant records its reason on the attempt.
@@ -64,72 +82,72 @@ Agents start orchestration with:
 
 ```bash
 node "$CONDUCTOR_COMMAND" orchestrate <<'JSON'
-{"key":"feature-request-1","title":"Implement the feature","goal":"Inspect the workspace, split the requested feature into tasks, implement and verify it","concurrency":3}
+{"key":"feature-request-1","title":"Implement the feature","goal":"Inspect the repository, split the requested feature into tasks, implement and verify it","concurrency":3}
 JSON
 ```
 
-By default the requesting agent becomes the concert's Conductor agent. The
+By default the requesting agent becomes the symphony's Conductor agent. The
 acknowledgement includes `instructions` for defining, dispatching, and finishing
-the concert from the same conversation; no coordinator agent is created. While task
-agents work, the coordinating agent should not edit the checkout itself, because
+the symphony from the same conversation; no separate Conductor agent is created. While task
+agents work, the Conductor should not edit the checkout itself, because
 Conductor only serializes writes between task agents. Notifications to a busy
-coordinator wait until its turn ends.
+Conductor wait until its turn ends.
 
-Set `"coordinator":"agent"` to create a dedicated Conductor agent instead. Optional
-`coordinatorProfile` selects its configured profile by name and implies
-`"coordinator":"agent"`; otherwise it inherits the requesting agent's settings.
+Set `"conductor":"agent"` to create a dedicated Conductor agent instead. Optional
+`conductorProfile` selects its configured profile by name and implies
+`"conductor":"agent"`; otherwise it inherits the requesting agent's settings.
 `profiles` lists each worker profile's id, name, notes, provider, model, mode and
 thinking option; `models` lists available providers and model IDs. Only the
-Conductor agent can define or dispatch its concert:
+Conductor agent can define or dispatch its symphony:
 
 ```bash
 node "$CONDUCTOR_COMMAND" define <<'JSON'
-{"concertId":"<concert UUID>","tasks":[{"id":"api","title":"Inspect API","description":"Report API constraints with evidence","reads":["src/api"],"writes":[],"checks":[]},{"id":"ui","title":"Inspect UI","description":"Report UI constraints with evidence","reads":["src/ui"],"writes":[],"checks":[]},{"id":"combine","title":"Combine findings","description":"Compare API and UI reports","dependsOn":["api","ui"],"reads":[],"writes":[],"checks":[]}]}
+{"symphonyId":"<symphony UUID>","tasks":[{"id":"api","title":"Inspect API","description":"Report API constraints with evidence","reads":["src/api"],"writes":[],"checks":[]},{"id":"ui","title":"Inspect UI","description":"Report UI constraints with evidence","reads":["src/ui"],"writes":[],"checks":[]},{"id":"combine","title":"Combine findings","description":"Compare API and UI reports","dependsOn":["api","ui"],"reads":[],"writes":[],"checks":[]}]}
 JSON
 node "$CONDUCTOR_COMMAND" dispatch <<'JSON'
-{"concertId":"<concert UUID>"}
+{"symphonyId":"<symphony UUID>"}
 JSON
 ```
 
 Each task may select `profile` by configured id or name, or `provider`, `model`,
-and an optional `thinkingOptionId` from `models`; never both. Without either, the worker
+and an optional `thinkingOptionId` from `models`; never both. Without either, the task agent
 inherits the Conductor's provider, model, thinking option, and mode. The permission
-mode is never selected inline: a worker on the same provider copies the Conductor's
+mode is never selected inline: a task agent on the same provider copies the Conductor's
 mode, and another provider starts in its default mode. Assignments carry the goal,
-prerequisite reports, declared scopes/checks, and exact concert/attempt identity.
-Workers call `report` or `block` for their existing assignment, then stop. They do
-not create another concert or claim the coordinator's task. The scheduler observes
+prerequisite reports, declared scopes/checks, and exact symphony/attempt identity.
+Task agents call `report` or `block` for their existing assignment, then stop. They do
+not create another symphony or claim the Conductor's task. The scheduler observes
 settlement, starts dependents, and notifies the Conductor agent of blockers or the
-completed graph. Notifications wait until the coordinator can receive them.
+completed score. Notifications wait until the Conductor can receive them.
 
-`dispatch` with `retryTaskId` resumes a settled blocked task on its worker or
+`dispatch` with `retryTaskId` resumes a settled blocked task on its task agent or
 retries a failed task. Optional `note` adds retry guidance; `addWrites` extends
 that task's write scope as a new definition revision, subject to conflict checks.
 If the worker choice is unchanged and the previous agent still exists and is
 inactive, the failed task continues on that agent with a new attempt. Otherwise
 Conductor creates a new agent seeded with the failed report and note. A replacement
 `profile` or inline `provider`/`model`/`thinkingOptionId` changes the worker choice.
-Old attempts stay visible, and a still-active worker cannot be replaced. Creation
+Old attempts stay visible, and a still-active task agent cannot be replaced. Creation
 intent and agent IDs are saved before launch; uncertain launch retries use the same
 SDK identity and never resend the initial prompt to an existing matching child.
 Reload observes existing children rather than replacing them.
 
 For a `need: "scope"` diagnosis, retry with `addWrites` set to the requested paths,
 or ask the user if they exceed the goal. For `input`, ask the user and put the
-answer in `note`; for `model`, choose a different worker; for `none`, give a
-specific direction in `note`. Read `get` or open a worker conversation only when
+answer in `note`; for `model`, choose a different task agent; for `none`, give a
+specific direction in `note`. Read `get` or open a task agent conversation only when
 the notification summary does not explain the failure. Review granted paths and
 their reasons in the attempts, and include them in the finish summary.
 
-Workers request scope while their attempt is running:
+Task agents request scope while their attempt is running:
 
 ```bash
 node "$CONDUCTOR_COMMAND" widen --agent "$CONDUCTOR_AGENT_ID" --socket "$CONDUCTOR_SOCKET" <<'JSON'
-{"concertId":"<concert UUID>","attemptId":"<attempt UUID>","paths":["shared/schema.ts"],"reason":"My change broke the exported schema used by typecheck"}
+{"symphonyId":"<symphony UUID>","attemptId":"<attempt UUID>","paths":["shared/schema.ts"],"reason":"My change broke the exported schema used by typecheck"}
 JSON
 ```
 
-A refusal leaves the scope unchanged. The worker reports `need: "scope"` and
+A refusal leaves the scope unchanged. The task agent reports `need: "scope"` and
 `requestedWrites`; the Conductor can retry with `addWrites` when appropriate.
 
 ### Agent commands and compatibility
@@ -138,10 +156,10 @@ New agents receive an explicit command in their system guidance. Its helper is
 bound to the agent and daemon before the first interactive turn, so shell tools
 can use it even when they do not inherit session environment variables. No manual
 agent registration is needed. Paseo's SDK handles agent creation and lifecycle;
-this helper sends Conductor-specific concert and report operations.
+this helper sends Conductor-specific symphony and report operations.
 
 Assignments include explicit script/socket paths, the assigned agent ID, and an
-executable heredoc that sends JSON on standard input. Workers must inspect the
+executable heredoc that sends JSON on standard input. Task agents must inspect the
 returned JSON acknowledgement before claiming a report was saved. Some provider
 shell tools omit session environment variables, so assignments do not depend on
 them. The public session-opening hook also supplies these convenience variables
@@ -166,29 +184,29 @@ JSON
 ```
 
 The older `start`/`claim` workflow tracks only the calling agent; it is not
-orchestration. Start returns the concert. Omitting tasks creates one assignment named `work` with
+orchestration. Start returns the symphony. Omitting tasks creates one assignment named `work` with
 conservative checkout-wide read/write scope. A key is stable per source agent:
 repeat identical input after lost acknowledgement; changed input under that key
 is rejected. Distinct work needs a distinct key.
 
 ```bash
 node "$CONDUCTOR_COMMAND" claim <<'JSON'
-{"concertId":"<returned UUID>","taskId":"work"}
+{"symphonyId":"<returned UUID>","taskId":"work"}
 JSON
 ```
 
 Save the returned `attempt.id`, then work through normal agent tools. Claims are
 recorded before work starts. Repeating a claim returns its unfinished attempt.
-Conflicts across recorded concerts in the same checkout block new claims; blocked or
+Conflicts across recorded symphonies in the same checkout block new claims; blocked or
 interrupted work retains ownership. Scopes coordinate these assignments, not
 external processes or file sandbox permissions.
 
 ```bash
 node "$CONDUCTOR_COMMAND" report <<'JSON'
-{"concertId":"<concert UUID>","attemptId":"<attempt UUID>","report":{"outcome":"completed","summary":"Applied the fix","evidence":["Describe actual changed behavior and verification"],"checks":[]}}
+{"symphonyId":"<symphony UUID>","attemptId":"<attempt UUID>","report":{"outcome":"completed","summary":"Applied the fix","evidence":["Describe actual changed behavior and verification"],"checks":[]}}
 JSON
 node "$CONDUCTOR_COMMAND" finish <<'JSON'
-{"concertId":"<concert UUID>","summary":"Describe the result and remaining limitations"}
+{"symphonyId":"<symphony UUID>","summary":"Describe the result and remaining limitations"}
 JSON
 ```
 
@@ -200,29 +218,21 @@ Every declared check must appear by its exact name in the report with
 or block the task; never invent a pass. Retrying failure requires `claim` with
 `retry: true`, creates a new attempt, and preserves the old report.
 
-`block` takes `concertId`, `attemptId`, and `message`; ask any question in the
-source conversation. Reclaim resumes a blocked attempt. `get` takes `concertId`;
-`list` needs no input and returns that source's concerts. Exact report/finish retries are idempotent;
+`block` takes `symphonyId`, `attemptId`, and `message`; ask any question in the
+source conversation. Reclaim resumes a blocked attempt. `get` takes `symphonyId`;
+`list` needs no input and returns that source's symphonies. Exact report/finish retries are idempotent;
 changed terminal reports and superseded attempt IDs are rejected. Finish requires
 completed reports for every task. Run help for complete examples.
 
-For user-requested cleanup, `remove-legacy` takes `concertId` and `expectedVersion`
-from `get`. It removes only the original source agent's non-executed legacy plan
-in the same workspace. A stale version or any execution record refuses removal.
-Immutable context artifacts are retained because other records may reference them.
-The source's command `list` still includes old plans for this maintenance purpose;
-normal Concerts queries exclude them. After an uncertain removal response, use `list`
-to confirm the record is absent before retrying.
-
 The transport trusts the daemon OS account through a private directory and
 mode-0600 Unix socket; it does not isolate agents sharing that account. Declared
-source identity and workspace are checked against Paseo on mutation; a source may
-update only its own recorded concerts. No HTTP port is exposed. Request/response limits
+source identity and concert are checked against Paseo on mutation; a source may
+update only its own recorded symphonies. No HTTP port is exposed. Request/response limits
 are 256 KiB / 2.2 MB, with 16 pending commands, a 12-second response deadline, and
 15-second CLI timeout. Uncertain acknowledgement is not proof of failure: inspect
-the concert and reuse its identities.
+the symphony and reuse its identities.
 
-A callback or an `inbox.*` RPC supplies the subprocess-lifetime SDK connection. A cold
+A callback or an `agents.*` RPC supplies the subprocess-lifetime SDK connection. A cold
 command before either fails explicitly; agent lifecycle hooks normally supply it
 before work. Unix socket paths must be at most 100 bytes. Monitoring remains
 available when command transport is unsupported or unavailable.
@@ -233,8 +243,8 @@ The default **Needs attention** view combines questions, permissions, failures,
 and reminders. Use **Next item** to move through the queue, or switch to
 **Running**, **Inactive**, or **All** for other activity.
 
-Search by title, project, workspace, or provider. The global podium covers the
-selected host; the workspace panel covers the current workspace. Parent/child
+Search by title, project, concert, or provider. The global podium covers the
+selected host; the workspace panel covers the current concert. Parent/child
 relationships and **Open parent** help you follow delegated work.
 
 ### Questions and permissions
@@ -289,8 +299,8 @@ https://github.com/josephjs1dev/paseo-plugins.git:conductor
 ```
 
 4. Select **Install plugin** and confirm that `conductor` reports `running`.
-5. Open **Conductor** from the sidebar, or **Open podium: all workspaces** /
-   **Open podium: this workspace** in the Command Center (**⌘K** on macOS, **Ctrl+K** elsewhere).
+5. Open **Conductor** from the sidebar, or **Open podium: all concerts** /
+   **Open podium: this concert** in the Command Center (**⌘K** on macOS, **Ctrl+K** elsewhere).
 
 ### CLI (Git source)
 
@@ -353,9 +363,9 @@ For focused checks, use `npm run typecheck`, `npm test`, or `npm run test:ui`.
 | `index.client.tsx`    | Client entry point and feature registration.                                |
 | `client/podium/`      | Podium shell and shared navigation.                                         |
 | `client/agents/`      | Agent snapshots, queue, request UI, drafts, navigation, and subscriptions.  |
-| `client/concerts/`    | Concert graph, task progress, blockers, and reports.                        |
+| `client/symphonies/`  | Symphony score, task progress, blockers, and reports.                       |
 | `server/agents/`      | Agent snapshots, request delivery, turn observation, and guarded archiving. |
-| `server/concerts/`    | Concert orchestration, execution, persistence, and recovery.                |
+| `server/symphonies/`  | Symphony orchestration, execution, persistence, and recovery.               |
 | `server/entrypoints/` | Server RPC registration and command handling.                               |
 | `server/paseo/`       | Paseo SDK integration and host adapters.                                    |
 | `shared/`             | Runtime-neutral Zod RPC contracts, request models, filters, and hierarchy.  |
@@ -403,22 +413,24 @@ pointing to a disposable daemon at `ws://127.0.0.1:<port>/ws` with ID `conductor
 running. The client test needs its web app; the host test installs a fixture
 provider and creates temporary workspaces/agents. These are separate from `check`.
 
-### Concert storage and recovery
+### Symphony storage and recovery
 
-Concert envelopes remain in `plugin-data/conductor/runs/<uuid>.json`; immutable goal
-context is in `artifacts/<sha256>.json`. Definitions, attempts, blockers, report
-hashes, and final summaries are stored together. Legacy schema-v1 records load
-with empty execution metadata and retain their history. Git metadata and the
+Symphony records and immutable goal context are stored under
+`plugin-data/conductor/symphonies/` and `artifacts/`. Definitions, attempts,
+blockers, report hashes, and final summaries are stored together. After upgrading,
+delete `runs/`, `run-write-lock`, and `artifacts/` under the Conductor plugin data
+directory, then run **Install conductor skills** again. Upgrade while no Podium answer is being sent: request keys changed, so a
+native-answer receipt recorded before the upgrade no longer blocks a repeated send. Git metadata and the
 tracked-diff/status fingerprint are context, not settlement proof.
 
-Bounds are 200 concerts and 200 context artifacts (including orphans), 40 tasks,
-120 attempts per concert, 24 definition revisions, a 2,000,000-byte envelope, and
+Bounds are 200 symphonies and 200 context artifacts (including orphans), 40 tasks,
+120 attempts per symphony, 24 definition revisions, a 2,000,000-byte envelope, and
 128,000-byte context. Field/command bounds also apply. Limits refuse new history
 instead of pruning evidence. Corrupt records are isolated from healthy reads and
-the Concerts view. Incomplete coverage blocks resource claims because existing
+the Symphonies view. Incomplete coverage blocks resource claims because existing
 ownership cannot be established.
 
-`ConcertStore` serializes updates, fences processes with `run-write-lock`, checks
+`SymphonyStore` serializes updates, fences processes with `symphony-write-lock`, checks
 versions, syncs files and Unix directories, and atomically replaces snapshots.
 Context is durable before publication. The socket admits one live server; another
 installation cannot steal it. Graceful reload releases the socket/hooks.
@@ -426,18 +438,18 @@ Unreported running attempts become blocked and retain their IDs and claims until
 the source resumes or reports them. Turn endings and archive events never
 manufacture completion.
 
-Interrupted processes may leave `run-write-lock` or `commands.sock`. Neither is
+Interrupted processes may leave `symphony-write-lock` or `commands.sock`. Neither is
 automatically stolen/deleted. For manual recovery, disable every Conductor
 installation using the root, confirm its processes exited, and back up the records.
 Inspect unresolved attempts before removing a stale lock/socket and reloading.
 Never remove a live owner's files or native-answer receipts.
 
-There is no automatic purge, but Conductor can delete one finished concert
+There is no automatic purge, but Conductor can delete one finished symphony
 at a time. Deletion is refused while an attempt is running or blocked, while an
-agent launch is unsettled, and for concerts that are not complete or failed. Deleting
-a concert removes its snapshot and removes its content-addressed context artifact
-only when no remaining concert references it; shared context is retained. Offline
+agent launch is unsettled, and for symphonies that are not complete or failed. Deleting
+a symphony removes its snapshot and removes its content-addressed context artifact
+only when no remaining symphony references it; shared context is retained. Offline
 maintenance must still preserve unresolved claims.
-Orchestration dispatches real children and observes settlement through the host.
-Workers run their own checks and submit evidence. Cancellation of a concert, isolated
+Symphonies dispatch real children and observe settlement through the host.
+Task agents run their own checks and submit evidence. Cancellation of a symphony, isolated
 worktrees, parallel writers, and recurring schedules are not part of this release.

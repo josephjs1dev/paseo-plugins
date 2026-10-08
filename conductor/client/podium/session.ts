@@ -4,17 +4,17 @@ import type {
   AnswerResult,
 } from "../../shared/agents/models";
 import type { Filter } from "../../shared/agents/attention";
-import type { ConcertSelection } from "../concerts/selection";
+import type { SymphonySelection } from "../symphonies/selection";
 
 export interface ViewState {
-  section: "agents" | "concerts";
-  concertQuery: string;
-  concertFilter: "all" | "active" | "blocked" | "completed";
+  section: "agents" | "symphonies";
+  symphonyQuery: string;
+  symphonyFilter: "all" | "active" | "blocked" | "completed";
   filter: Filter;
   query: string;
-  groupBy: "project" | "workspace";
+  groupBy: "project" | "concert";
   selectedKey: string | null;
-  concertSelection: ConcertSelection | null;
+  symphonySelection: SymphonySelection | null;
   showSnoozed: boolean;
   drafts: Readonly<Record<string, Decision>>;
   notices: Readonly<Record<string, AnswerResult["status"] | "sending">>;
@@ -22,13 +22,13 @@ export interface ViewState {
 export class PodiumSession {
   private state: ViewState = {
     section: "agents",
-    concertQuery: "",
-    concertFilter: "all",
+    symphonyQuery: "",
+    symphonyFilter: "all",
     filter: "attention",
     query: "",
     groupBy: "project",
     selectedKey: null,
-    concertSelection: null,
+    symphonySelection: null,
     showSnoozed: false,
     drafts: {},
     notices: {},
@@ -73,7 +73,7 @@ export class PodiumSession {
       drafts: {},
       notices: {},
       selectedKey: null,
-      concertSelection: null,
+      symphonySelection: null,
     };
     this.listeners.clear();
   }

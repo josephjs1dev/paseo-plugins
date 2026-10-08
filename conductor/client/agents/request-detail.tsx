@@ -68,7 +68,7 @@ export function RequestDetail({
     (delivery !== null && delivery !== undefined) ||
     item.bucket === "failed" ||
     item.bucket === "closed";
-  const run = async (work: () => Promise<void>) => {
+  const submit = async (work: () => Promise<void>) => {
     setBusy(true);
     setActionError(null);
     try {
@@ -125,7 +125,7 @@ export function RequestDetail({
           {item.provider} · {item.bucket} · {ageLabel(item.since, now)}
         </Text>
         <Text style={{ fontSize: 12, color: theme.colors.foregroundMuted }}>
-          {item.projectName} / {item.workspaceName}
+          {item.projectName} / {item.concertName}
         </Text>
       </View>
       {item.parentAgentId && (
@@ -219,7 +219,9 @@ export function RequestDetail({
             disabled={!valid || locked}
             onPress={() => {
               if (draft) {
-                run(() => actions.answer(item, draft)).catch(() => undefined);
+                submit(() => actions.answer(item, draft)).catch(
+                  () => undefined,
+                );
               }
             }}
           />
@@ -278,7 +280,7 @@ export function RequestDetail({
             label={isSnoozed(item, now) ? "Unsnooze" : "Snooze 15 min"}
             disabled={stale || busy}
             onPress={() => {
-              run(() =>
+              submit(() =>
                 actions.snooze(item, isSnoozed(item, now) ? 0 : 15),
               ).catch(() => undefined);
             }}
@@ -290,7 +292,7 @@ export function RequestDetail({
             label="Clear my reminder"
             disabled={stale || busy}
             onPress={() => {
-              run(() => actions.mark(item)).catch(() => undefined);
+              submit(() => actions.mark(item)).catch(() => undefined);
             }}
           />
         )}

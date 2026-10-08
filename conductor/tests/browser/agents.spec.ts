@@ -22,7 +22,7 @@ test("Needs attention combines requests, failures, and reminders and updates its
     page.getByRole("button", { name: "Open Integration checks", exact: true }),
   ).toBeVisible();
   const reminder = page.getByRole("button", {
-    name: "Open Existing workspace agent",
+    name: "Open Existing concert agent",
     exact: true,
   });
   await expect(reminder).toContainText("Manual reminder");
@@ -254,21 +254,21 @@ test("existing agents stay discoverable when no agent needs attention; toolbar c
     .getByRole("button", { name: "View all agents", exact: true })
     .click();
   await expect(
-    page.getByText("Existing workspace agent", { exact: false }),
+    page.getByText("Existing concert agent", { exact: false }),
   ).toBeVisible();
   await page.getByRole("button", { name: "Inactive", exact: true }).click();
   const idleCard = page.getByRole("button", {
-    name: "Open Existing workspace agent",
+    name: "Open Existing concert agent",
     exact: true,
   });
   await expect(idleCard.getByText("Idle", { exact: true })).toHaveCount(1);
   await expect(
-    idleCard.getByText("Existing workspace agent", { exact: true }),
+    idleCard.getByText("Existing concert agent", { exact: true }),
   ).toHaveCount(1);
   await idleCard.click();
   await expect(
     page.getByRole("heading", {
-      name: "Existing workspace agent",
+      name: "Existing concert agent",
       exact: true,
     }),
   ).toBeVisible();
@@ -360,15 +360,15 @@ test("four filters keep child context when parents are hidden and nest visible f
     ).toHaveCount(0);
   }
   const child = page.getByRole("button", {
-    name: /Open Run the focused test suite from Worker B/,
+    name: /Open Run the focused test suite from Task agent B/,
   });
-  await expect(child).toContainText("Parent: Coordinator A");
+  await expect(child).toContainText("Parent: Conductor A");
   await expect(
-    page.getByRole("button", { name: "Open Coordinator A", exact: true }),
+    page.getByRole("button", { name: "Open Conductor A", exact: true }),
   ).toHaveCount(0);
   await child.click();
   await expect(page.getByTestId("parent-agent")).toContainText("PARENT AGENT");
-  await expect(page.getByTestId("parent-agent")).toContainText("Coordinator A");
+  await expect(page.getByTestId("parent-agent")).toContainText("Conductor A");
   await page
     .getByTestId("parent-agent")
     .getByRole("button", { name: "Open parent ↗", exact: true })
@@ -376,7 +376,7 @@ test("four filters keep child context when parents are hidden and nest visible f
   await expect(page.getByTestId("preview-status")).toContainText("agent-api");
   await page.getByRole("button", { name: "All", exact: true }).click();
   const parentBounds = await page
-    .getByRole("button", { name: "Open Coordinator A", exact: true })
+    .getByRole("button", { name: "Open Conductor A", exact: true })
     .boundingBox();
   const childBounds = await child.boundingBox();
   expect(parentBounds).not.toBeNull();
@@ -396,7 +396,7 @@ test("four filters keep child context when parents are hidden and nest visible f
   await page.goto("/?family&dark");
   await page.getByRole("button", { name: "All", exact: true }).click();
   const compactParent = await page
-    .getByRole("button", { name: "Open Coordinator A", exact: true })
+    .getByRole("button", { name: "Open Conductor A", exact: true })
     .boundingBox();
   const compactChild = await child.boundingBox();
   expect(compactParent).not.toBeNull();
@@ -446,7 +446,7 @@ test("archive requires confirmation, removes an inactive leaf, and protects pare
   await page.goto("/?family&inactive-parent");
   await page.getByRole("button", { name: "Inactive", exact: true }).click();
   await page
-    .getByRole("button", { name: "Open Coordinator A", exact: true })
+    .getByRole("button", { name: "Open Conductor A", exact: true })
     .click();
   await expect(
     page.getByRole("button", { name: "Archive agent", exact: true }),

@@ -4,20 +4,20 @@ import { queueGroups } from "../shared/agents/hierarchy";
 import { visibleItems } from "../shared/agents/attention";
 import { snapshot } from "../server/agents/snapshot";
 import { fileStore } from "../server/agents/store";
-import { agent, runtime, testDirectory } from "./fixtures";
+import { domainAgent, runtime, testDirectory } from "./fixtures";
 
 async function family() {
-  const parent = agent({
+  const parent = domainAgent({
     id: "a",
-    title: "Coordinator A",
+    title: "Conductor A",
     status: "running",
     pendingPermissions: [],
     attentionReason: null,
     requiresAttention: false,
   });
-  const child = agent({
+  const child = domainAgent({
     id: "b",
-    title: "Worker B",
+    title: "Task agent B",
     workspaceId: "other-workspace",
     labels: { "paseo.parent-agent-id": "a" },
   });
@@ -30,11 +30,11 @@ async function family() {
   );
   return data.items;
 }
-await test("children nest under visible parents across workspaces, with each request once", async () => {
+await test("children nest under visible parents across concerts, with each request once", async () => {
   const items = await family();
   assert.equal(
     items.find((item) => item.agentId === "b")?.parentAgentTitle,
-    "Coordinator A",
+    "Conductor A",
   );
   assert.equal(items.find((item) => item.agentId === "a")?.childAgentCount, 1);
   const child = items.find((item) => item.agentId === "b");
@@ -44,7 +44,7 @@ await test("children nest under visible parents across workspaces, with each req
       ...items,
       { ...child, key: "f".repeat(64), requestId: "another-question" },
     ],
-    "workspace",
+    "concert",
   );
   assert.deepEqual(
     groups.flatMap((group) =>
@@ -65,7 +65,7 @@ await test("a waiting child remains visible when a running parent is filtered ou
   );
   assert.equal(rows.length, 1);
   assert.equal(rows[0]?.depth, 0);
-  assert.equal(rows[0]?.item.parentAgentTitle, "Coordinator A");
+  assert.equal(rows[0]?.item.parentAgentTitle, "Conductor A");
 });
 await test("missing parents and cycles cannot drop or duplicate agents", async () => {
   const items = await family();
@@ -82,7 +82,7 @@ await test("missing parents and cycles cannot drop or duplicate agents", async (
     parentAgentId: "unavailable",
   }));
   assert.equal(
-    queueGroups(missing, "workspace").flatMap((group) => group.entries).length,
+    queueGroups(missing, "concert").flatMap((group) => group.entries).length,
     2,
   );
 });

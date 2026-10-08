@@ -10,17 +10,17 @@ import {
 } from "./models";
 
 export const getAgents = defineRpc({
-  name: "inbox.get",
+  name: "agents.get",
   input: z.object({ knownAgentIds: z.array(identifier).max(2000).default([]) }),
   output: snapshotSchema,
 });
 export const archiveAgent = defineRpc({
-  name: "inbox.archive",
+  name: "agents.archive",
   input: z.object({ agentId: identifier, key: keySchema }),
   output: archiveResultSchema,
 });
 export const answerRequest = defineRpc({
-  name: "inbox.answer",
+  name: "agents.answer",
   input: z.object({
     key: keySchema,
     agentId: identifier,
@@ -30,7 +30,7 @@ export const answerRequest = defineRpc({
   output: answerResultSchema,
 });
 export const annotate = defineRpc({
-  name: "inbox.annotate",
+  name: "agents.annotate",
   input: z.discriminatedUnion("kind", [
     z.object({
       kind: z.literal("snooze"),

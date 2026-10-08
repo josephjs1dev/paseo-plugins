@@ -23,7 +23,7 @@ export default function contribute(client: PluginClientContext) {
       PodiumSidebar,
     ),
     client.addWorkspacePanel({
-      id: "inbox",
+      id: "podium",
       title: "Conductor",
       icon: "Workflow",
       context: "workspace",
@@ -33,11 +33,11 @@ export default function contribute(client: PluginClientContext) {
       ),
     }),
     client.addCommandCenterItem({
-      id: "open-workspace-inbox",
-      title: "Open podium: this workspace",
+      id: "open-concert-podium",
+      title: "Open podium: this concert",
       icon: "Workflow",
       context: "workspace",
-      onSelect: (context) => context.openPanel("inbox"),
+      onSelect: (context) => context.openPanel("podium"),
     }),
   ];
   return async () => {

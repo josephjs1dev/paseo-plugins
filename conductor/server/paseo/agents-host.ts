@@ -1,4 +1,5 @@
 import type { AgentsHost } from "../agents/host";
+import { toAgentSnapshot, toConcertEntry } from "./mapping";
 import type { PaseoApi } from "./types";
 
 export function paseoAgentsHost(paseo: PaseoApi): AgentsHost {
@@ -8,21 +9,22 @@ export function paseoAgentsHost(paseo: PaseoApi): AgentsHost {
         page: { limit: 200, ...(cursor ? { cursor } : {}) },
       });
       return {
-        entries: page.entries.map((entry) => entry.agent),
+        entries: page.entries.map((entry) => toAgentSnapshot(entry.agent)),
         next: page.pageInfo.hasMore ? (page.pageInfo.nextCursor ?? null) : null,
       };
     },
-    async workspaces(cursor) {
+    async concerts(cursor) {
       const page = await paseo.workspaces.list({
         page: { limit: 200, ...(cursor ? { cursor } : {}) },
       });
       return {
-        entries: page.entries,
+        entries: page.entries.map(toConcertEntry),
         next: page.pageInfo.hasMore ? (page.pageInfo.nextCursor ?? null) : null,
       };
     },
     async inspect(agentId) {
-      return (await paseo.agents.ref(agentId).refresh())?.agent ?? null;
+      const value = (await paseo.agents.ref(agentId).refresh())?.agent ?? null;
+      return value ? toAgentSnapshot(value) : null;
     },
     async archive(agentId) {
       await paseo.agents.ref(agentId).archive();

@@ -1,8 +1,8 @@
 import type {
   AgentPermissionResponse,
-  PaseoAgent,
-  PaseoWorkspace,
-} from "../paseo/types";
+  AgentSnapshot,
+} from "../../shared/agents/agent";
+import type { ConcertEntry } from "../../shared/concert";
 
 export interface Directory<T> {
   entries: T[];
@@ -11,9 +11,9 @@ export interface Directory<T> {
 
 /** Paseo operations that the Podium's Agents section needs. server/paseo/agents-host.ts implements it. */
 export interface AgentsHost {
-  agents(cursor?: string): Promise<Directory<PaseoAgent>>;
-  workspaces(cursor?: string): Promise<Directory<PaseoWorkspace>>;
-  inspect(agentId: string): Promise<PaseoAgent | null>;
+  agents(cursor?: string): Promise<Directory<AgentSnapshot>>;
+  concerts(cursor?: string): Promise<Directory<ConcertEntry>>;
+  inspect(agentId: string): Promise<AgentSnapshot | null>;
   archive(agentId: string): Promise<void>;
   answer(
     agentId: string,

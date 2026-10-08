@@ -78,8 +78,8 @@ export const itemSchema = z.object({
   requestId: identifier.nullable(),
   agentTitle: z.string().max(1000),
   provider: z.string().max(100),
-  workspaceId: identifier.nullable(),
-  workspaceName: z.string().max(1000),
+  concertId: identifier.nullable(),
+  concertName: z.string().max(1000),
   projectName: z.string().max(1000),
   parentAgentId: identifier.nullable(),
   parentAgentTitle: z.string().max(1000).nullable(),
@@ -112,7 +112,7 @@ export const snapshotSchema = z.object({
   receipts: z.array(receiptSchema).max(30),
   fetchedAt: z.number(),
   incomplete: z.boolean(),
-  workspaceIncomplete: z.boolean(),
+  concertIncomplete: z.boolean(),
   turnHistoryIncomplete: z.boolean(),
 });
 export type AgentsSnapshot = z.infer<typeof snapshotSchema>;

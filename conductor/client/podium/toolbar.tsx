@@ -10,8 +10,8 @@ import {
 } from "../../shared/agents/attention";
 import type { PodiumSession } from "./session";
 import { Button, Label, Notice, rowStyle } from "../ui/controls";
-import { visibleConcerts, type ConcertsData } from "../concerts/list";
-import { ConcertToolbar } from "../concerts/toolbar";
+import { visibleSymphonies, type SymphoniesData } from "../symphonies/list";
+import { SymphonyToolbar } from "../symphonies/toolbar";
 import { RefreshButton } from "../ui/refresh-button";
 
 const filters: { id: Filter; label: string }[] = [
@@ -24,9 +24,9 @@ const filters: { id: Filter; label: string }[] = [
 interface Props {
   theme: PluginTheme;
   hostLabel: string;
-  workspaceId?: string;
+  concertId?: string;
   data: AgentsSnapshot | undefined;
-  concerts?: ConcertsData;
+  symphonies?: SymphoniesData;
   session: PodiumSession;
   compact: boolean;
   stale: boolean;
@@ -43,19 +43,20 @@ export function PodiumToolbar(props: Props) {
   const state = useSyncExternalStore(session.subscribe, session.getSnapshot);
   const [showHistory, setShowHistory] = useState(false);
   const scoped = (data?.items ?? []).filter(
-    (item) => !props.workspaceId || item.workspaceId === props.workspaceId,
+    (item) => !props.concertId || item.concertId === props.concertId,
   );
-  const concertCount = visibleConcerts(
-    props.concerts?.list?.runs ?? [],
-    { ...state, concertQuery: "", concertFilter: "all" },
-    props.workspaceId,
+  const symphonyCount = visibleSymphonies(
+    props.symphonies?.list?.symphonies ?? [],
+    { ...state, symphonyQuery: "", symphonyFilter: "all" },
+    props.concertId,
   ).length;
   const agentCount = new Set(scoped.map((item) => item.agentId)).size;
   const reliable = data && !props.stale;
   const controls = { theme, dense: !compact };
-  const isConcerts = state.section === "concerts" && Boolean(props.concerts);
+  const isSymphonies =
+    state.section === "symphonies" && Boolean(props.symphonies);
   const hasSelection = Boolean(
-    isConcerts ? state.concertSelection : state.selectedKey,
+    isSymphonies ? state.symphonySelection : state.selectedKey,
   );
   return (
     <View
@@ -96,12 +97,12 @@ export function PodiumToolbar(props: Props) {
             }}
           >
             {props.hostLabel} ·{" "}
-            {props.workspaceId ? "This workspace" : "All workspaces"}
-            {!isConcerts && data
+            {props.concertId ? "This concert" : "All concerts"}
+            {!isSymphonies && data
               ? ` · ${agentCount}${data.incomplete ? "+" : ""} agents${props.stale ? " · last known" : ""}`
               : ""}
-            {isConcerts && props.concerts?.list
-              ? ` · ${concertCount} ${concertCount === 1 ? "concert" : "concerts"}${props.concerts.stale ? " · last known" : ""}`
+            {isSymphonies && props.symphonies?.list
+              ? ` · ${symphonyCount} ${symphonyCount === 1 ? "symphony" : "symphonies"}${props.symphonies.stale ? " · last known" : ""}`
               : ""}
           </Text>
         </View>
@@ -109,12 +110,12 @@ export function PodiumToolbar(props: Props) {
           {compact && hasSelection && (
             <Button
               {...controls}
-              label={isConcerts ? "← Back to concerts" : "← Back to queue"}
+              label={isSymphonies ? "← Back to symphonies" : "← Back to queue"}
               variant="quiet"
               onPress={() =>
                 session.update(
-                  isConcerts
-                    ? { concertSelection: null }
+                  isSymphonies
+                    ? { symphonySelection: null }
                     : { selectedKey: null },
                 )
               }
@@ -125,7 +126,7 @@ export function PodiumToolbar(props: Props) {
             refreshing={props.refreshing}
             onPress={props.refresh}
           />
-          {!isConcerts && (
+          {!isSymphonies && (
             <Button
               {...controls}
               label="Next item →"
@@ -135,7 +136,7 @@ export function PodiumToolbar(props: Props) {
           )}
         </View>
       </View>
-      {props.concerts && (
+      {props.symphonies && (
         <View
           accessibilityRole="tablist"
           accessibilityLabel="Podium sections"
@@ -145,53 +146,53 @@ export function PodiumToolbar(props: Props) {
             borderBottomColor: theme.colors.border,
           }}
         >
-          {(["agents", "concerts"] as const).map((section) => (
+          {(["agents", "symphonies"] as const).map((section) => (
             <Button
               key={section}
               {...controls}
               role="tab"
               variant="tab"
-              label={section === "agents" ? "Agents" : "Concerts"}
+              label={section === "agents" ? "Agents" : "Symphonies"}
               selected={state.section === section}
               onPress={() => session.update({ section })}
             />
           ))}
         </View>
       )}
-      {!isConcerts && props.stale && (
+      {!isSymphonies && props.stale && (
         <Notice theme={theme} warning>
           Could not refresh this host. Showing the last known state; answer
           controls are disabled.
         </Notice>
       )}
-      {!isConcerts && data?.incomplete && (
+      {!isSymphonies && data?.incomplete && (
         <Notice theme={theme} warning>
           Directory is incomplete. Counts are a lower bound; previously waiting
           agents are checked separately.
         </Notice>
       )}
-      {!isConcerts && data?.workspaceIncomplete && (
+      {!isSymphonies && data?.concertIncomplete && (
         <Notice theme={theme}>
-          Some workspace names are unavailable. Agent requests remain visible.
+          Some concert names are unavailable. Agent requests remain visible.
         </Notice>
       )}
-      {!isConcerts && data?.turnHistoryIncomplete && (
+      {!isSymphonies && data?.turnHistoryIncomplete && (
         <Notice theme={theme} warning>
           Some recorded turn outcomes could not be loaded. Missing outcomes
           remain unknown.
         </Notice>
       )}
-      {isConcerts && props.concerts && (!compact || !hasSelection) && (
-        <ConcertToolbar
+      {isSymphonies && props.symphonies && (!compact || !hasSelection) && (
+        <SymphonyToolbar
           theme={theme}
-          data={props.concerts}
+          data={props.symphonies}
           state={state}
           session={session}
           compact={compact}
-          {...(props.workspaceId ? { workspaceId: props.workspaceId } : {})}
+          {...(props.concertId ? { concertId: props.concertId } : {})}
         />
       )}
-      {!isConcerts && (!compact || !hasSelection) && (
+      {!isSymphonies && (!compact || !hasSelection) && (
         <>
           <ScrollView
             horizontal
@@ -238,7 +239,7 @@ export function PodiumToolbar(props: Props) {
           >
             <TextInput
               accessibilityLabel="Search agents and requests"
-              placeholder="Search agents, requests, workspaces…"
+              placeholder="Search agents, requests, concerts…"
               placeholderTextColor={theme.colors.foregroundMuted}
               value={state.query}
               onChangeText={(query) => session.update({ query })}
@@ -262,12 +263,11 @@ export function PodiumToolbar(props: Props) {
               label={
                 state.groupBy === "project"
                   ? "Group: project"
-                  : "Group: workspace"
+                  : "Group: concert"
               }
               onPress={() =>
                 session.update({
-                  groupBy:
-                    state.groupBy === "project" ? "workspace" : "project",
+                  groupBy: state.groupBy === "project" ? "concert" : "project",
                 })
               }
             />
@@ -296,7 +296,7 @@ export function PodiumToolbar(props: Props) {
           </View>
         </>
       )}
-      {!isConcerts && data && (
+      {!isSymphonies && data && (
         <Text
           style={{
             fontSize: 11,
@@ -311,7 +311,7 @@ export function PodiumToolbar(props: Props) {
           })}
         </Text>
       )}
-      {!isConcerts && showHistory && (
+      {!isSymphonies && showHistory && (
         <View style={{ gap: 8 }}>
           <Label theme={theme}>RECENT RESPONSE DELIVERY</Label>
           {data?.receipts.length === 0 && (

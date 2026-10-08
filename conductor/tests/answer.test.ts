@@ -6,8 +6,8 @@ import { answer } from "../server/agents/answer";
 import { fileStore } from "../server/agents/store";
 import { requestKey } from "../server/agents/identity";
 import type { Decision } from "../shared/agents/models";
-import { agent, question, runtime, testDirectory } from "./fixtures";
-import type { AgentPermissionResponse } from "../server/paseo/types";
+import { domainAgent, question, runtime, testDirectory } from "./fixtures";
+import type { AgentPermissionResponse } from "../shared/agents/agent";
 
 const decision: Decision = {
   kind: "answers",
@@ -15,7 +15,7 @@ const decision: Decision = {
 };
 async function setup() {
   const directory = await testDirectory();
-  const current = agent();
+  const current = domainAgent();
   const key = requestKey(current, question());
   return {
     directory,
@@ -104,10 +104,14 @@ await test("an interrupted durable claim cannot be replayed after restart", asyn
 });
 await test("changed questions, reused request IDs in a new session, and archived agents reject stale answers", async () => {
   for (const current of [
-    agent({ pendingPermissions: [question({ title: "A different request" })] }),
-    agent({ persistence: { provider: "codex", sessionId: "new-session" } }),
-    agent({ archivedAt: new Date().toISOString() }),
-    agent({ pendingPermissions: [] }),
+    domainAgent({
+      pendingPermissions: [question({ title: "A different request" })],
+    }),
+    domainAgent({
+      persistence: { provider: "codex", sessionId: "new-session" },
+    }),
+    domainAgent({ archivedAt: new Date().toISOString() }),
+    domainAgent({ pendingPermissions: [] }),
   ]) {
     const f = await setup();
     let sends = 0;
@@ -126,12 +130,14 @@ await test("changed questions, reused request IDs in a new session, and archived
     assert.equal(sends, 0);
   }
 });
-await test("errored or closed workers, unsupported forms and invalid answers are not dispatched", async () => {
+await test("errored or closed agents, unsupported forms and invalid answers are not dispatched", async () => {
   for (const current of [
-    agent({ status: "error" }),
-    agent({ status: "closed" }),
-    agent({ pendingPermissions: [question({ kind: "plan" })] }),
-    agent({ pendingPermissions: [question({ input: { questions: [] } })] }),
+    domainAgent({ status: "error" }),
+    domainAgent({ status: "closed" }),
+    domainAgent({ pendingPermissions: [question({ kind: "plan" })] }),
+    domainAgent({
+      pendingPermissions: [question({ input: { questions: [] } })],
+    }),
   ]) {
     const f = await setup();
     const request = current.pendingPermissions[0];
@@ -164,7 +170,7 @@ await test("native tool action IDs are validated server-side and retained in the
     kind: "tool",
     actions: [{ id: "one", label: "Allow this command", behavior: "allow" }],
   });
-  const current = agent({ pendingPermissions: [request] });
+  const current = domainAgent({ pendingPermissions: [request] });
   const responses: AgentPermissionResponse[] = [];
   const host = runtime(() => current, {
     answer: async (_agent, _request, response) => {
