@@ -15,7 +15,7 @@ import { collectPi, piHistoryDirectory } from "../../server/collectors/pi";
 import { collectOpenCode } from "../../server/history-sources";
 import { createHistoryStore } from "../../server/history";
 import type { HistoryRow } from "../../shared/history";
-import { fakeCollectors } from "../history-fixtures";
+import { fakeCollectors, inDirectory } from "../history-fixtures";
 
 test("Pi resolves daemon environment session path overrides", () => {
   assert.equal(
@@ -186,7 +186,11 @@ test("rescanning migrated Pi usage updates costs without double-counting native 
         .join("\n"),
     );
     await store.refresh();
-    const result = await store.read("opencode-go", "/workspace", 7);
+    const result = await store.read(
+      "opencode-go",
+      inDirectory("/workspace"),
+      7,
+    );
     assert.equal(result.warning, "");
     assert.equal(result.sessionCount, 2);
     assert.deepEqual(result.totals, {
@@ -210,7 +214,11 @@ test("rescanning migrated Pi usage updates costs without double-counting native 
     );
 
     try {
-      const saved = await reloaded.read("opencode-go", "/workspace", 7);
+      const saved = await reloaded.read(
+        "opencode-go",
+        inDirectory("/workspace"),
+        7,
+      );
       assert.deepEqual(saved.totals, result.totals);
       assert.equal(saved.sessionCount, 2);
     } finally {
@@ -256,8 +264,8 @@ test("both provider views share a Pi collector scan and retain harness identity 
 
   try {
     const [chatgpt, go] = await Promise.all([
-      store.read("chatgpt", "/workspace", 7),
-      store.read("opencode-go", "/workspace", 7),
+      store.read("chatgpt", inDirectory("/workspace"), 7),
+      store.read("opencode-go", inDirectory("/workspace"), 7),
     ]);
     assert.equal(piScans, 1);
     assert.equal(chatgpt.workspaceSessionCount, 2);
@@ -271,7 +279,7 @@ test("both provider views share a Pi collector scan and retain harness identity 
     await store.refresh();
     assert.equal(piScans, 2);
     assert.equal(
-      (await store.read("chatgpt", "/workspace", 7)).totals.input,
+      (await store.read("chatgpt", inDirectory("/workspace"), 7)).totals.input,
       34,
     );
     await store.close();
@@ -279,7 +287,8 @@ test("both provider views share a Pi collector scan and retain harness identity 
 
     try {
       assert.equal(
-        (await reloaded.read("chatgpt", "/workspace", 7)).sessionCount,
+        (await reloaded.read("chatgpt", inDirectory("/workspace"), 7))
+          .sessionCount,
         2,
       );
       assert.equal(piScans, 2);
@@ -317,13 +326,13 @@ test("a failed native collector preserves its cached usage while importing fresh
     await store.refresh();
     failNative = true;
     await store.refresh();
-    const result = await store.read("chatgpt", "/workspace", 7);
+    const result = await store.read("chatgpt", inDirectory("/workspace"), 7);
     assert.equal(result.workspaceSessionCount, 2);
     assert.equal(result.totals.input, 34);
     assert.match(result.warning, /previously stored/);
     assert.ok(!result.warning.includes("private failure"));
     assert.equal(
-      (await store.read("opencode-go", "/workspace", 7)).warning,
+      (await store.read("opencode-go", inDirectory("/workspace"), 7)).warning,
       "",
     );
   } finally {

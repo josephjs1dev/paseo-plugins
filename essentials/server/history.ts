@@ -1,6 +1,6 @@
 import { homedir } from "node:os";
-import { join, resolve } from "node:path";
-import type { HistoryScope } from "../shared/history";
+import { join } from "node:path";
+import type { HistoryRow, HistoryScope } from "../shared/history";
 import { summarizeHistory } from "../shared/history-analysis";
 import type { Provider } from "../shared/usage";
 import { usageCollectors } from "./collectors";
@@ -27,7 +27,7 @@ export function createHistoryStore(
   return {
     async read(
       provider: Provider,
-      cwd: string,
+      matchesWorkspace: (row: HistoryRow) => boolean,
       days: 7 | 30 | 90,
       sessionOffset = 0,
       scope: HistoryScope = "workspace",
@@ -36,7 +36,6 @@ export function createHistoryStore(
       const loaded = await cache.load(forceRefresh);
       const start = new Date(now());
       const periodEnd = start.toISOString().slice(0, 10);
-      const workspaceDirectory = resolve(cwd);
       start.setUTCDate(start.getUTCDate() - days + 1);
       const summary = summarizeHistory(
         loaded.history.rows.map(withCodexCostEstimate),
@@ -46,8 +45,7 @@ export function createHistoryStore(
           lastDay: periodEnd,
           sessionOffset,
           scope,
-          matchesWorkspace: (directory) =>
-            resolve(directory) === workspaceDirectory,
+          matchesWorkspace,
         },
       );
 

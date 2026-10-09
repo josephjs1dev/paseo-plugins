@@ -18,7 +18,7 @@ import {
 } from "../../server/collectors/claude";
 import { createHistoryStore } from "../../server/history";
 import { writeSavedHistory } from "../../server/history-files";
-import { fakeCollectors } from "../history-fixtures";
+import { fakeCollectors, inDirectory } from "../history-fixtures";
 import { readHistory } from "../../shared/history";
 
 const NOW = Date.parse("2026-10-05T12:00:00Z");
@@ -241,8 +241,14 @@ test("Claude history is available without quota login and preserves cached sessi
     });
     await store.refresh();
     assert.equal(firstScan, NOW - 90 * DAY);
-    const workspace = await store.read("claude", "/workspace", 7);
-    const host = await store.read("claude", "/workspace", 30, 0, "host");
+    const workspace = await store.read("claude", inDirectory("/workspace"), 7);
+    const host = await store.read(
+      "claude",
+      inDirectory("/workspace"),
+      30,
+      0,
+      "host",
+    );
     assert.equal(workspace.workspaceSessionCount, 1);
     assert.equal(workspace.workspaceTotals.output, 23);
     assert.equal(host.sessionCount, 2);
@@ -259,7 +265,7 @@ test("Claude history is available without quota login and preserves cached sessi
       }),
     );
     await store.refresh();
-    const partial = await store.read("claude", "/workspace", 7);
+    const partial = await store.read("claude", inDirectory("/workspace"), 7);
     assert.equal(partial.workspaceTotals.output, 23);
     assert.match(partial.warning, /previously stored/);
     await store.close();
@@ -271,7 +277,8 @@ test("Claude history is available without quota login and preserves cached sessi
 
     try {
       assert.equal(
-        (await reloaded.read("claude", "/workspace", 7)).workspaceTotals.output,
+        (await reloaded.read("claude", inDirectory("/workspace"), 7))
+          .workspaceTotals.output,
         23,
       );
     } finally {

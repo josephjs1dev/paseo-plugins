@@ -43,8 +43,11 @@ Open **Usage history** from a usage popover to explore:
 
 History combines native Codex and Claude Code session logs, Pi records for ChatGPT
 and OpenCode Go, and OpenCode Go database records.
-Workspace attribution uses the session's working directory; records use UTC days
-and the cache retains 90 days. Unreadable sources produce partial-data warnings.
+Workspace scope counts sessions started by that workspace's Paseo agents, so
+workspaces sharing a checkout stay separate. Essentials saves these session links
+on the daemon host so deleted agents remain attributed. Sessions started outside
+Paseo appear only under all workspaces. Records use UTC days and the cache retains
+90 days. Unreadable sources produce partial-data warnings.
 
 Claude history reads `<CLAUDE_CONFIG_DIR>/projects` (default `~/.claude/projects`),
 with `CLAUDE_USAGE_PROJECTS_DIR` available as an explicit projects-directory override.
@@ -149,7 +152,7 @@ paseo plugin logs essentials
 **Settings → Plugins** also provides reload, logs, removal, and an enable switch.
 For missing UI, check the selected host, plugin status, and app version. For
 unavailable quota, check the host's provider login; for empty history, check its
-session records, selected provider, and working directory.
+session records, selected provider, and whether Paseo started the sessions.
 
 ## Development
 

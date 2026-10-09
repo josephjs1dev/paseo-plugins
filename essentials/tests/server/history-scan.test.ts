@@ -1,4 +1,4 @@
-import { fakeCollectors } from "../history-fixtures";
+import { fakeCollectors, inDirectory } from "../history-fixtures";
 import assert from "node:assert/strict";
 import { randomBytes } from "node:crypto";
 import { mkdtemp, rm, utimes, writeFile } from "node:fs/promises";
@@ -93,7 +93,7 @@ test("a bounded scan imports yesterday first and retains older saved usage", asy
 
     try {
       await store.refresh();
-      const history = await store.read("chatgpt", "/workspace", 7);
+      const history = await store.read("chatgpt", inDirectory("/workspace"), 7);
       assert.equal(history.workspaceTotals.input, 600);
       assert.equal(history.workspaceSessionCount, 2);
       assert.equal(

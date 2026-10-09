@@ -13,7 +13,7 @@ import { readSavedHistory } from "../../server/history-files";
 import { harnessIds, type Harness } from "../../shared/harnesses";
 import { historyCollectionSchema, type HistoryRow } from "../../shared/history";
 import { readUsage } from "../../shared/usage";
-import { fakeCollectors } from "../history-fixtures";
+import { fakeCollectors, inDirectory } from "../history-fixtures";
 
 const NOW = Date.parse("2026-10-03T12:00:00Z");
 const DAY = 86_400_000;
@@ -169,7 +169,7 @@ test("Pi failure warns both providers while native collectors advance independen
     assert.equal(failed?.collectors.opencode?.updatedThrough, iso(clock));
 
     for (const provider of ["chatgpt", "opencode-go"] as const) {
-      const result = await store.read(provider, "/workspace", 7);
+      const result = await store.read(provider, inDirectory("/workspace"), 7);
       assert.equal(result.sessionCount, 2);
       assert.match(result.warning, /previously stored/);
       assert.ok(!result.warning.includes("private"));
@@ -182,9 +182,12 @@ test("Pi failure warns both providers while native collectors advance independen
     assert.equal(windows.get("codex")?.[2], clock - DAY - 1000);
     const recovered = await readSavedHistory(directory);
     assert.equal(recovered?.collectors.pi?.updatedThrough, iso(clock));
-    assert.equal((await store.read("chatgpt", "/workspace", 7)).warning, "");
     assert.equal(
-      (await store.read("opencode-go", "/workspace", 7)).warning,
+      (await store.read("chatgpt", inDirectory("/workspace"), 7)).warning,
+      "",
+    );
+    assert.equal(
+      (await store.read("opencode-go", inDirectory("/workspace"), 7)).warning,
       "",
     );
   } finally {
@@ -263,11 +266,12 @@ test("legacy cache migration preserves source-less records, strips one Pi prefix
       );
     assert.deepEqual(sortRows(saved?.rows), sortRows(migrated?.rows));
     assert.equal(
-      (await store.read("chatgpt", "/workspace", 7)).sessionCount,
+      (await store.read("chatgpt", inDirectory("/workspace"), 7)).sessionCount,
       2,
     );
     assert.equal(
-      (await store.read("opencode-go", "/workspace", 7)).sessionCount,
+      (await store.read("opencode-go", inDirectory("/workspace"), 7))
+        .sessionCount,
       2,
     );
     assert.ok(
@@ -286,7 +290,8 @@ test("legacy cache migration preserves source-less records, strips one Pi prefix
 
     try {
       assert.equal(
-        (await reloaded.read("chatgpt", "/workspace", 7)).sessionCount,
+        (await reloaded.read("chatgpt", inDirectory("/workspace"), 7))
+          .sessionCount,
         2,
       );
     } finally {

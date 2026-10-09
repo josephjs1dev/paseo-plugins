@@ -115,20 +115,16 @@ function migrateHistory(
 export async function readSavedHistory(
   directory: string,
 ): Promise<SavedHistory | undefined> {
-  const path = join(directory, "history.json");
-
   try {
-    const info = await lstat(path);
+    const contents = await readStorageFile(
+      directory,
+      "history.json",
+      MAX_HISTORY_BYTES,
+    );
 
-    if (!info.isFile() || info.isSymbolicLink()) {
-      throw new Error("Invalid history file");
+    if (contents === undefined) {
+      return;
     }
-
-    if (info.size > MAX_HISTORY_BYTES) {
-      throw new Error("History file too large");
-    }
-
-    const contents = await readFile(path, "utf8");
 
     const saved = z
       .union([savedHistorySchema, previousHistorySchema, legacyHistorySchema])
@@ -141,11 +137,7 @@ export async function readSavedHistory(
     return withoutClaudeHistory(
       saved.version === 1 ? migrateHistory(saved) : saved,
     );
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === "ENOENT") {
-      return;
-    }
-
+  } catch {
     throw new Error(
       "Stored history could not be read; it was not overwritten.",
     );
@@ -158,10 +150,54 @@ export async function writeSavedHistory(
   signal?: AbortSignal,
 ): Promise<void> {
   const validated = savedHistorySchema.parse(history);
-  const path = join(directory, "history.json");
+  await writeStorageFile(
+    directory,
+    "history.json",
+    JSON.stringify(validated),
+    signal,
+  );
+}
+
+/** Reads a regular storage file, or returns undefined when it does not exist. */
+export async function readStorageFile(
+  directory: string,
+  name: string,
+  maxBytes: number,
+): Promise<string | undefined> {
+  const path = join(directory, name);
+
+  try {
+    const info = await lstat(path);
+
+    if (!info.isFile() || info.isSymbolicLink()) {
+      throw new Error("Invalid storage file");
+    }
+
+    if (info.size > maxBytes) {
+      throw new Error("Storage file too large");
+    }
+
+    return await readFile(path, "utf8");
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+      return;
+    }
+
+    throw error;
+  }
+}
+
+/** Atomically replaces a private storage file. */
+export async function writeStorageFile(
+  directory: string,
+  name: string,
+  contents: string,
+  signal?: AbortSignal,
+): Promise<void> {
+  const path = join(directory, name);
   const temporaryPath = join(
     directory,
-    `history-${process.pid}-${Date.now()}.tmp`,
+    `${name}-${process.pid}-${Date.now()}.tmp`,
   );
 
   function checkCancelled() {
@@ -182,7 +218,7 @@ export async function writeSavedHistory(
     const file = await open(temporaryPath, "wx", 0o600);
 
     try {
-      await file.writeFile(JSON.stringify(validated));
+      await file.writeFile(contents);
       await file.sync();
     } finally {
       await file.close();

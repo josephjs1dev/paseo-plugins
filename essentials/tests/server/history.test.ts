@@ -1,4 +1,4 @@
-import { fakeCollectors } from "../history-fixtures";
+import { fakeCollectors, inDirectory } from "../history-fixtures";
 import assert from "node:assert/strict";
 import {
   mkdir,
@@ -80,7 +80,11 @@ test(
       );
 
       try {
-        const result = await store.read("chatgpt", "/workspace", 7);
+        const result = await store.read(
+          "chatgpt",
+          inDirectory("/workspace"),
+          7,
+        );
         assert.equal(result.workspaceDaily[0]?.day, timestamp.slice(0, 10));
         assert.equal(result.workspaceTotals.input, 100);
         assert.equal(result.warning, "");
@@ -270,7 +274,7 @@ test("history survives reload, filters workspace sessions, and retains data afte
         incomplete: false,
       })),
     );
-    const result = await store.read("chatgpt", "/workspace", 7);
+    const result = await store.read("chatgpt", inDirectory("/workspace"), 7);
     assert.equal(result.sessions.length, 1);
     assert.equal(result.totals.input, 200);
     assert.equal(result.totals.cost, null);
@@ -289,7 +293,7 @@ test("history survives reload, filters workspace sessions, and retains data afte
       }),
     );
     await reloaded.refresh();
-    const stale = await reloaded.read("chatgpt", "/workspace", 30);
+    const stale = await reloaded.read("chatgpt", inDirectory("/workspace"), 30);
     assert.equal(stale.totals.input, 200);
     assert.equal(stale.workspaceTotals.input, 100);
     assert.equal(stale.workspaceDaily[0]?.totals.input, 100);
@@ -316,12 +320,12 @@ test("provider and workspace readers share scans and cached local history", asyn
 
   try {
     await Promise.all([
-      store.read("chatgpt", "/workspace", 7),
-      store.read("opencode-go", "/workspace", 30),
-      store.read("chatgpt", "/other", 90),
+      store.read("chatgpt", inDirectory("/workspace"), 7),
+      store.read("opencode-go", inDirectory("/workspace"), 30),
+      store.read("chatgpt", inDirectory("/other"), 90),
     ]);
     assert.deepEqual(collected.sort(), ["claude", "codex", "opencode", "pi"]);
-    await store.read("chatgpt", "/workspace", 30, 20);
+    await store.read("chatgpt", inDirectory("/workspace"), 30, 20);
     assert.equal(collected.length, 4);
     const saved = JSON.parse(
       await readFile(join(directory, "history.json"), "utf8"),
@@ -343,7 +347,7 @@ test("corrupt stored history is preserved", async () => {
       fakeCollectors(async () => ({ rows: [], incomplete: false })),
     );
     await assert.rejects(
-      store.read("chatgpt", "/workspace", 7),
+      store.read("chatgpt", inDirectory("/workspace"), 7),
       /not overwritten/,
     );
     assert.equal(
@@ -384,9 +388,9 @@ test("scopes and pages share source scans, retain rows and warnings, and satisfy
 
   try {
     const [workspace, host, second] = await Promise.all([
-      store.read("opencode-go", "/workspace", 7),
-      store.read("opencode-go", "/workspace", 7, 0, "host"),
-      store.read("opencode-go", "/workspace", 7, 20, "host"),
+      store.read("opencode-go", inDirectory("/workspace"), 7),
+      store.read("opencode-go", inDirectory("/workspace"), 7, 0, "host"),
+      store.read("opencode-go", inDirectory("/workspace"), 7, 20, "host"),
     ]);
     assert.deepEqual(collected.sort(), [
       "claude",
@@ -413,18 +417,19 @@ test("scopes and pages share source scans, retain rows and warnings, and satisfy
     const before = await readFile(join(directory, "history.json"), "utf8");
     const matched = await store.read(
       "opencode-go",
-      "/other/project/.",
+      inDirectory("/other/project/."),
       30,
       0,
       "workspace",
     );
     assert.equal(matched.sessionCount, 13);
     assert.equal(
-      (await store.read("opencode-go", "/other", 90)).sessionCount,
+      (await store.read("opencode-go", inDirectory("/other"), 90)).sessionCount,
       0,
     );
     assert.equal(
-      (await store.read("chatgpt", "/workspace", 7, 0, "host")).sessionCount,
+      (await store.read("chatgpt", inDirectory("/workspace"), 7, 0, "host"))
+        .sessionCount,
       0,
     );
     assert.equal(collected.length, 5);
@@ -449,7 +454,7 @@ test("scopes and pages share source scans, retain rows and warnings, and satisfy
     try {
       const stale = await reloaded.read(
         "opencode-go",
-        "/workspace",
+        inDirectory("/workspace"),
         7,
         20,
         "host",

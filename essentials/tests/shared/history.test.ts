@@ -71,7 +71,7 @@ test("summaries filter providers and dates while matching workspace sessions sep
   const summary = summarizeHistory(rows, {
     provider: "chatgpt",
     firstDay: "2026-09-20",
-    matchesWorkspace: (directory) => directory === "/workspace",
+    matchesWorkspace: ({ cwd }: HistoryRow) => cwd === "/workspace",
   });
 
   assert.equal(summary.totals.input, 200);
@@ -98,7 +98,7 @@ test("workspace costs include every matching session before the recent-list limi
   const summary = summarizeHistory(rows, {
     provider: "chatgpt",
     firstDay: "2026-09-20",
-    matchesWorkspace: (directory) => directory === "/workspace",
+    matchesWorkspace: ({ cwd }: HistoryRow) => cwd === "/workspace",
   });
 
   assert.equal(summary.sessions.length, 20);
@@ -118,7 +118,7 @@ test("missing workspace costs remain unknown while a different workspace stays c
     {
       provider: "chatgpt",
       firstDay: "2026-09-20",
-      matchesWorkspace: (directory) => directory === "/other",
+      matchesWorkspace: ({ cwd }: HistoryRow) => cwd === "/other",
     },
   );
 
@@ -205,7 +205,7 @@ for (const provider of ["chatgpt", "opencode-go"] as const) {
       provider,
       firstDay: "2026-09-20",
       lastDay: "2026-09-25",
-      matchesWorkspace: (cwd: string) => cwd === "/workspace",
+      matchesWorkspace: ({ cwd }: HistoryRow) => cwd === "/workspace",
     };
     const excluded: HistoryRow[] = [
       {
@@ -290,11 +290,11 @@ for (const provider of ["chatgpt", "opencode-go"] as const) {
     const matched = summarizeHistory(rows, {
       ...options,
       scope: "host",
-      matchesWorkspace: (cwd) => cwd === "/other/project",
+      matchesWorkspace: ({ cwd }: HistoryRow) => cwd === "/other/project",
     });
     const defaultScope = summarizeHistory(rows, {
       ...options,
-      matchesWorkspace: (cwd) => cwd === "/other/project",
+      matchesWorkspace: ({ cwd }: HistoryRow) => cwd === "/other/project",
     });
     assert.deepEqual(defaultScope.models, matched.workspaceModels);
     assert.equal(defaultScope.sessionCount, matched.workspaceSessionCount);

@@ -1,4 +1,4 @@
-import { fakeCollectors } from "../history-fixtures";
+import { fakeCollectors, inDirectory } from "../history-fixtures";
 import assert from "node:assert/strict";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -50,7 +50,11 @@ test("history derives cost estimates for older cached rows across days, models, 
     );
 
     try {
-      const workspace = await store.read("chatgpt", "/workspace", 7);
+      const workspace = await store.read(
+        "chatgpt",
+        inDirectory("/workspace"),
+        7,
+      );
       assert.equal(workspace.workspaceTotals.costEstimate?.amount, 2.05);
       assert.equal(
         workspace.workspaceDaily[0]?.totals.costEstimate?.amount,
@@ -62,7 +66,13 @@ test("history derives cost estimates for older cached rows across days, models, 
         workspace.sessions[0]?.models[0]?.totals.costEstimate?.amount,
         2.05,
       );
-      const host = await store.read("chatgpt", "/workspace", 7, 0, "host");
+      const host = await store.read(
+        "chatgpt",
+        inDirectory("/workspace"),
+        7,
+        0,
+        "host",
+      );
       assert.deepEqual(host.totals.costEstimate, {
         amount: 2.05,
         pricedTokens: 1_100_000,

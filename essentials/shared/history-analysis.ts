@@ -24,7 +24,8 @@ interface SummaryOptions {
   lastDay?: string;
   sessionOffset?: number;
   scope?: HistoryScope;
-  matchesWorkspace: (directory: string) => boolean;
+  /** Whether a row belongs to the selected workspace. */
+  matchesWorkspace: (row: HistoryRow) => boolean;
 }
 
 export function aggregateRows(rows: readonly HistoryRow[]): HistoryRow[] {
@@ -141,7 +142,7 @@ export function summarizeHistory(
       addScopeRow(selected, row);
     }
 
-    if (options.matchesWorkspace(row.cwd)) {
+    if (options.matchesWorkspace(row)) {
       workspaceTotals = addTotals(workspaceTotals, row.totals);
       workspaceDaily.set(
         row.day,

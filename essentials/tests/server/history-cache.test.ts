@@ -1,4 +1,4 @@
-import { fakeCollectors } from "../history-fixtures";
+import { fakeCollectors, inDirectory } from "../history-fixtures";
 import assert from "node:assert/strict";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -83,15 +83,21 @@ test(
     );
 
     try {
-      const cached = await store.read("chatgpt", "/workspace", 7);
+      const cached = await store.read("chatgpt", inDirectory("/workspace"), 7);
       assert.equal(cached.workspaceTotals.input, 100);
       assert.equal(cached.refreshing, true);
-      const other = await store.read("chatgpt", "/workspace", 30, 0, "host");
+      const other = await store.read(
+        "chatgpt",
+        inDirectory("/workspace"),
+        30,
+        0,
+        "host",
+      );
       assert.equal(other.totals.input, 100);
       assert.equal(calls, 1);
       gate.release();
       await store.refresh();
-      const fresh = await store.read("chatgpt", "/workspace", 7);
+      const fresh = await store.read("chatgpt", inDirectory("/workspace"), 7);
       assert.equal(fresh.workspaceTotals.input, 150);
       assert.equal(fresh.refreshing, false);
       assert.equal(calls, 1);
@@ -131,7 +137,11 @@ test("fresh disk cache survives reload without rescanning or writing", async () 
       );
 
       try {
-        const result = await store.read("chatgpt", "/workspace", 7);
+        const result = await store.read(
+          "chatgpt",
+          inDirectory("/workspace"),
+          7,
+        );
         assert.equal(result.workspaceTotals.input, 100);
         assert.equal(result.refreshing, false);
         assert.match(result.warning, /previously stored/);
@@ -217,7 +227,7 @@ test("failed scans retain the checkpoint so recovery cannot skip usage", async (
       (await readSavedHistory(directory))?.collectors.codex?.updatedThrough,
       iso(checkpoint),
     );
-    const cached = await store.read("chatgpt", "/workspace", 7);
+    const cached = await store.read("chatgpt", inDirectory("/workspace"), 7);
     assert.equal(cached.workspaceTotals.input, 100);
     assert.match(cached.warning, /previously stored/);
     assert.ok(!cached.warning.includes("private"));
@@ -230,7 +240,8 @@ test("failed scans retain the checkpoint so recovery cannot skip usage", async (
       iso(clock),
     );
     assert.equal(
-      (await store.read("chatgpt", "/workspace", 7)).workspaceTotals.input,
+      (await store.read("chatgpt", inDirectory("/workspace"), 7))
+        .workspaceTotals.input,
       150,
     );
   } finally {
@@ -258,7 +269,7 @@ test("bounded bootstrap establishes recent coverage and keeps backlog warnings",
   );
 
   try {
-    await store.read("chatgpt", "/workspace", 7);
+    await store.read("chatgpt", inDirectory("/workspace"), 7);
     assert.deepEqual(windows, [NOW - 90 * DAY, NOW - DAY]);
     assert.equal(
       (await readSavedHistory(directory))?.collectors.codex?.updatedThrough,
@@ -268,7 +279,7 @@ test("bounded bootstrap establishes recent coverage and keeps backlog warnings",
     await store.refresh();
     assert.equal(windows[2], clock - DAY);
     assert.match(
-      (await store.read("chatgpt", "/workspace", 7)).warning,
+      (await store.read("chatgpt", inDirectory("/workspace"), 7)).warning,
       /previously stored/,
     );
   } finally {
@@ -306,7 +317,7 @@ test("closing a background scan cancels it without replacing the saved cache", a
 
   try {
     assert.equal(
-      (await store.read("chatgpt", "/workspace", 7)).refreshing,
+      (await store.read("chatgpt", inDirectory("/workspace"), 7)).refreshing,
       true,
     );
     await store.close();
