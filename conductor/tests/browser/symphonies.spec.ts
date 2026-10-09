@@ -355,3 +355,32 @@ test("task and graph agent links open the actual task agent and retain the Condu
   await instance("Open agent · attempt 1").click();
   await expect(page.getByTestId("preview-status")).toContainText("worker-api");
 });
+
+test("Symphonies groups rows by project and prints the goal once in Context", async ({
+  page,
+}) => {
+  await page.goto("/?symphonies&symphony-fixture=goal-echo");
+  await page.getByRole("tab", { name: "Symphonies", exact: true }).click();
+  // The project heading matches the Agents queue label style; the row keeps
+  // the concert name only when it differs from the project.
+  await expect(
+    page
+      .getByTestId("symphonies-queue")
+      .getByText("NORTHWIND", { exact: true }),
+  ).toBeVisible();
+  const row = page.getByRole("button", { name: symphonyName, exact: true });
+  await expect(row).toContainText("Conductor concert");
+  // Project names are searchable like titles and concerts.
+  await page
+    .getByRole("textbox", { name: "Search symphonies" })
+    .fill("northwind");
+  await expect(row).toBeVisible();
+  await row.click();
+  const detail = page.getByTestId("symphony-detail");
+  await detailButton(detail, "Context").click();
+  // Orchestrated symphonies carry the goal as both plan and outcome; the goal
+  // must print once and the duplicated outcome line must disappear.
+  const goal = "Investigate API and UI pagination, then collect the findings.";
+  await expect(detail.getByText(goal, { exact: true })).toHaveCount(1);
+  await expect(detail.getByText(/Expected outcome/)).toHaveCount(0);
+});

@@ -6,11 +6,11 @@ import type {
 } from "../../shared/symphonies/rpc";
 import {
   type SymphonyContext,
-  type SymphonySummary,
+  type SymphonyListEntry,
   type StoredSymphony,
 } from "../../shared/symphonies/models";
 import type { PodiumSession, ViewState } from "../podium/session";
-import { Notice } from "../ui/controls";
+import { Label, Notice } from "../ui/controls";
 import { SymphonyRow } from "./row";
 import { SymphonyDetail } from "./detail";
 
@@ -24,7 +24,7 @@ export interface SymphoniesData {
 }
 
 export function visibleSymphonies(
-  symphonies: SymphonySummary[],
+  symphonies: SymphonyListEntry[],
   state: ViewState,
   concertId?: string,
 ) {
@@ -40,10 +40,22 @@ export function visibleSymphonies(
         symphony.status === state.symphonyFilter) &&
       [
         symphony.title,
+        symphony.projectName,
         symphony.source.concertName,
         symphony.source.agentId ?? "",
       ].some((value) => value.toLowerCase().includes(query)),
   );
+}
+
+/** Groups by project in list order, so the most recent project leads. */
+export function symphonyGroups(symphonies: readonly SymphonyListEntry[]) {
+  const groups = new Map<string, SymphonyListEntry[]>();
+  for (const symphony of symphonies) {
+    const group = groups.get(symphony.projectName) ?? [];
+    group.push(symphony);
+    groups.set(symphony.projectName, group);
+  }
+  return [...groups].map(([label, entries]) => ({ label, entries }));
 }
 
 export function SymphonyRows({
@@ -115,23 +127,28 @@ export function SymphonyRows({
           </Text>
         </View>
       )}
-      <View style={{ gap: 6 }}>
-        {symphonies.map((symphony) => (
-          <SymphonyRow
-            key={symphony.id}
-            symphony={symphony}
-            theme={theme}
-            now={now}
-            selected={state.symphonySelection?.id === symphony.id}
-            onSelect={() =>
-              session.update({
-                section: "symphonies",
-                symphonySelection: { kind: "symphony", id: symphony.id },
-              })
-            }
-          />
-        ))}
-      </View>
+      {symphonyGroups(symphonies).map(({ label, entries }) => (
+        <View key={label} style={{ gap: 6 }}>
+          <View style={{ paddingHorizontal: 8 }}>
+            <Label theme={theme}>{label.toUpperCase()}</Label>
+          </View>
+          {entries.map((symphony) => (
+            <SymphonyRow
+              key={symphony.id}
+              symphony={symphony}
+              theme={theme}
+              now={now}
+              selected={state.symphonySelection?.id === symphony.id}
+              onSelect={() =>
+                session.update({
+                  section: "symphonies",
+                  symphonySelection: { kind: "symphony", id: symphony.id },
+                })
+              }
+            />
+          ))}
+        </View>
+      ))}
     </View>
   );
 }

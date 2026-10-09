@@ -6,8 +6,11 @@ import {
   readSymphony,
 } from "../../shared/symphonies/rpc";
 import { SymphonyError } from "../symphonies/errors";
+import { withProjectNames } from "../symphonies/projects";
 import { symphonyService } from "./symphonies-service";
 import { paseoSymphonyHost } from "../paseo/symphony-host";
+import { paseoAgentsHost } from "../paseo/agents-host";
+import { pages } from "../agents/directory";
 import { paseoConnection } from "../paseo/connection";
 import { commandHooks } from "./symphonies-hooks";
 
@@ -51,13 +54,22 @@ export function registerSymphonies(
   server.handle(listSymphonies, (input, { paseo }) =>
     guarded(async () => {
       connection.remember(paseo);
-      const list = await store.list();
+      const host = paseoAgentsHost(paseo);
+      const [list, concerts] = await Promise.all([
+        store.list(),
+        // Grouping is cosmetic; an unreadable directory must not hide symphonies.
+        pages((cursor) => host.concerts(cursor)).catch(() => ({
+          entries: [],
+          incomplete: true,
+        })),
+      ]);
+      const visible = list.symphonies.filter(
+        (symphony) =>
+          !input.concertId || symphony.source.concertId === input.concertId,
+      );
       return {
         ...list,
-        symphonies: list.symphonies.filter(
-          (symphony) =>
-            !input.concertId || symphony.source.concertId === input.concertId,
-        ),
+        symphonies: withProjectNames(visible, concerts.entries),
       };
     }),
   );

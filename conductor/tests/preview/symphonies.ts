@@ -4,6 +4,7 @@ import type { SymphoniesData } from "../../client/symphonies/list";
 import {
   summarizeSymphony,
   type StoredSymphony,
+  type SymphonyContext,
 } from "../../shared/symphonies/models";
 import {
   fixtureSymphonies,
@@ -104,6 +105,12 @@ function fixtureSymphonyByName(
   return extendedFixtureSymphonies[fixture] ?? fixtureSymphonies[fixture];
 }
 
+/** Orchestrated symphonies record the goal as both plan and expected outcome. */
+const goalEchoContext = {
+  ...planContext,
+  expectedOutcome: planContext.plan,
+} satisfies SymphonyContext;
+
 export function usePreviewSymphonies(
   session: PodiumSession,
   failed: boolean,
@@ -123,7 +130,9 @@ export function usePreviewSymphonies(
       message: null,
     },
     list: {
-      symphonies: symphony ? [summarizeSymphony(symphony)] : [],
+      symphonies: symphony
+        ? [{ ...summarizeSymphony(symphony), projectName: "Northwind" }]
+        : [],
       incomplete: false,
       unavailable: failed ? 1 : 0,
     },
@@ -131,7 +140,10 @@ export function usePreviewSymphonies(
     stale: failed,
     detail:
       symphony && state.symphonySelection?.id === symphony.id
-        ? { symphony, context: planContext }
+        ? {
+            symphony,
+            context: fixture === "goal-echo" ? goalEchoContext : planContext,
+          }
         : undefined,
     detailStale: failed,
   };

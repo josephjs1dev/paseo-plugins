@@ -4,7 +4,7 @@ import {
   contextSchema,
   uuidSchema,
   symphonySchema,
-  symphonySummarySchema,
+  symphonyListEntrySchema,
   SYMPHONY_LIMITS,
 } from "./models";
 import { identifier } from "../schema";
@@ -13,7 +13,9 @@ export const listSymphonies = defineRpc({
   name: "symphonies.list",
   input: z.object({ concertId: identifier.optional() }).strict(),
   output: z.object({
-    symphonies: z.array(symphonySummarySchema).max(SYMPHONY_LIMITS.symphonies),
+    symphonies: z
+      .array(symphonyListEntrySchema)
+      .max(SYMPHONY_LIMITS.symphonies),
     unavailable: z.number().int().nonnegative(),
     incomplete: z.boolean(),
   }),

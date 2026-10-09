@@ -4,7 +4,7 @@ import type { PluginTheme } from "@getpaseo/plugin";
 import { ageLabel } from "../../shared/agents/attention";
 import {
   symphonyStatusLabel,
-  type SymphonySummary,
+  type SymphonyListEntry,
 } from "../../shared/symphonies/models";
 
 export function SymphonyRow({
@@ -14,7 +14,7 @@ export function SymphonyRow({
   selected,
   onSelect,
 }: {
-  symphony: SymphonySummary;
+  symphony: SymphonyListEntry;
   theme: PluginTheme;
   now: number;
   selected: boolean;
@@ -96,7 +96,9 @@ export function SymphonyRow({
           lineHeight: 16,
         }}
       >
-        {symphony.source.concertName} ·{" "}
+        {/* The project heading already names a concert that shares its name. */}
+        {symphony.source.concertName !== symphony.projectName &&
+          `${symphony.source.concertName} · `}
         {symphony.status === "planning"
           ? "Splitting into tasks"
           : `${symphony.completedTasks}/${symphony.taskCount} tasks complete`}

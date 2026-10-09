@@ -49,7 +49,9 @@ export function SymphonyInspection({
             style={{ color: theme.colors.foregroundMuted, lineHeight: 21 }}
           >
             Source: {context.provenance}
-            {"\n"}Expected outcome: {context.expectedOutcome}
+            {/* The server stores the goal, cut to 4000 characters, as the outcome. */}
+            {context.expectedOutcome !== context.plan.slice(0, 4000).trim() &&
+              `\nExpected outcome: ${context.expectedOutcome}`}
             {"\n"}Accepted decisions: {context.decisions.join("; ") || "None"}
             {"\n"}Constraints: {context.constraints.join("; ") || "None"}
             {"\n"}Checkout: {symphony.source.checkout}

@@ -65,7 +65,7 @@ export function SymphonyToolbar({
       </ScrollView>
       <TextInput
         accessibilityLabel="Search symphonies"
-        placeholder="Search symphonies or concerts…"
+        placeholder="Search symphonies, projects, or concerts…"
         placeholderTextColor={theme.colors.foregroundMuted}
         value={state.symphonyQuery}
         onChangeText={(symphonyQuery) => session.update({ symphonyQuery })}

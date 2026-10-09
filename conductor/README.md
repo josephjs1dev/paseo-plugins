@@ -52,8 +52,9 @@ separate sections of the same Podium and retain independent searches and selecti
 
 The score draws directed dependencies and supports keyboard selection, agent
 navigation, and scrolling on small screens. Symphonies uses the same underlined filters,
-compact search, and list rows as Agents, without redundant concert group headings.
-Symphonies track executed work.
+compact search, and list rows as Agents, and groups rows under project headings like
+the Agents queue; a row omits the concert name when the concert shares the project's
+name. Symphonies track executed work.
 
 Up to four read-only task agents can run concurrently (three by default). Task agents share
 the current checkout; writers are serialized, including against existing recorded

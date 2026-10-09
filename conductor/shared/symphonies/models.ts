@@ -257,6 +257,10 @@ export const symphonySummarySchema = symphonySchema
     activeTasks: z.number().int().nonnegative(),
     message: z.string().max(8000).nullable(),
   });
+/** A summary as the Podium lists it, with its concert's current project. */
+export const symphonyListEntrySchema = symphonySummarySchema.extend({
+  projectName: z.string().max(1000),
+});
 export type TaskDefinition = z.infer<typeof taskSchema>;
 export type Score = z.infer<typeof scoreSchema>;
 export type SymphonyContext = z.infer<typeof contextSchema>;
@@ -264,6 +268,7 @@ export type SymphonySource = z.infer<typeof sourceSchema>;
 export type SymphonyPlacement = z.infer<typeof placementSchema>;
 export type StoredSymphony = z.infer<typeof symphonySchema>;
 export type SymphonySummary = z.infer<typeof symphonySummarySchema>;
+export type SymphonyListEntry = z.infer<typeof symphonyListEntrySchema>;
 export type Attempt = z.infer<typeof attemptSchema>;
 export type TaskReport = z.infer<typeof taskReportSchema>;
 export type TaskDiagnosis = z.infer<typeof taskDiagnosisSchema>;
