@@ -6,7 +6,7 @@ import {
   readSymphony,
 } from "../../shared/symphonies/rpc";
 import { SymphonyError } from "../symphonies/errors";
-import { symphonyService } from "../symphonies/service";
+import { symphonyService } from "./symphonies-service";
 import { paseoSymphonyHost } from "../paseo/symphony-host";
 import { paseoConnection } from "../paseo/connection";
 import { commandHooks } from "./symphonies-hooks";

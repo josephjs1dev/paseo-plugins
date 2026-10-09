@@ -1,13 +1,13 @@
 import { randomUUID } from "node:crypto";
 import { dirname, join, relative } from "node:path";
 import { pathToFileURL } from "node:url";
-import type { SymphonyCommandAccess } from "./server";
+import type { SymphonyCommandAccess } from "../../symphonies/command-access";
 import {
   ensureSymphonyDirectory,
   readSymphonyFile,
   writeSymphonyFile,
-} from "../files";
-import { SymphonyError } from "../errors";
+} from "../../symphonies/files";
+import { SymphonyError } from "../../symphonies/errors";
 import { missing } from "../../files";
 
 /** Creation has no agent ID yet; session opening binds it before the first turn. */

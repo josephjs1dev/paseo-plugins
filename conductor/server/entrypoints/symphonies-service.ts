@@ -1,9 +1,9 @@
-import type { SymphonyHost } from "./host";
-import { SymphonyError } from "./errors";
-import { fileSymphonyStore } from "./store";
-import { executionRuntime } from "./identity";
-import { workerRuntime } from "./workers";
-import { symphonyExecution } from "./execution";
+import type { SymphonyHost } from "../symphonies/host";
+import { SymphonyError } from "../symphonies/errors";
+import { fileSymphonyStore } from "../symphonies/store";
+import { executionRuntime } from "../symphonies/identity";
+import { workerRuntime } from "../symphonies/workers";
+import { symphonyExecution } from "../symphonies/execution";
 import { commandServer } from "./commands/server";
 import { symphonyAck } from "./commands/ack";
 

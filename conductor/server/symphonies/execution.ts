@@ -21,7 +21,7 @@ import { commandSymphonyId, type ExecutionRuntime } from "./identity";
 import { SymphonyError } from "./errors";
 import { contentHash, type SymphonyStore } from "./store";
 import { orchestration } from "./orchestration";
-import type { SymphonyCommandAccess } from "./commands/server";
+import type { SymphonyCommandAccess } from "./command-access";
 import { agentCommand } from "./prompts";
 import type { WorkerRuntime } from "./workers";
 import {

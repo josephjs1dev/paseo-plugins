@@ -5,7 +5,7 @@ import { promisify } from "node:util";
 import { request } from "node:http";
 import { stat } from "node:fs/promises";
 import { z } from "zod";
-import { commandServer } from "../server/symphonies/commands/server";
+import { commandServer } from "../server/entrypoints/commands/server";
 import { symphonyExecution } from "../server/symphonies/execution";
 import { contentHash, fileSymphonyStore } from "../server/symphonies/store";
 import { SymphonyError } from "../server/symphonies/errors";
@@ -389,6 +389,7 @@ void test("session hooks preserve configuration and inject command context witho
         systemPrompt: "Existing user guidance",
         modeId: "read-only",
         model: "chosen-model",
+        mcpServers: { existing: { type: "stdio", command: "existing-tool" } },
       },
       env: { KEEP: "value" },
     };
@@ -404,10 +405,73 @@ void test("session hooks preserve configuration and inject command context witho
     );
     assert.equal(configured.config.modeId, "read-only");
     assert.equal(configured.config.model, "chosen-model");
+    assert.deepEqual(
+      configured.config.mcpServers?.existing,
+      original.config.mcpServers?.existing,
+    );
     assert.equal(configured.env?.KEEP, "value");
     assert.equal(configured.env?.CONDUCTOR_SOCKET, commands.access.socketPath);
     const launcher = configured.env?.CONDUCTOR_COMMAND;
     assert.ok(launcher);
+    assert.deepEqual(configured.config.mcpServers?.conductor, {
+      type: "stdio",
+      command: process.execPath,
+      args: [launcher, "mcp"],
+      alwaysLoad: true,
+    });
+    assert.match(configured.config.systemPrompt ?? "", /conductor MCP server/);
+    const conflicting: Requests["agent.create"] = {
+      ...original,
+      config: {
+        ...original.config,
+        mcpServers: {
+          conductor: { type: "stdio", command: "user-tool" },
+          conductor_2: { type: "stdio", command: "another-user-tool" },
+        },
+        toolPolicy: {
+          preapproved: [
+            { kind: "mcp", server: "conductor", tool: "user-tool" },
+          ],
+        },
+      },
+    };
+    const preserved: Requests["agent.create"] | void = await create(
+      { request: conflicting },
+      context,
+    );
+    assert.deepEqual(
+      preserved?.config.mcpServers?.conductor,
+      conflicting.config.mcpServers?.conductor,
+    );
+    assert.deepEqual(
+      preserved?.config.mcpServers?.conductor_2,
+      conflicting.config.mcpServers?.conductor_2,
+    );
+    assert.equal(preserved?.config.mcpServers?.conductor_3?.type, "stdio");
+    assert.deepEqual(
+      preserved?.config.toolPolicy,
+      conflicting.config.toolPolicy,
+    );
+    assert.match(
+      preserved?.config.systemPrompt ?? "",
+      /Use the injected conductor_3 MCP server/,
+    );
+    for (const provider of ["claude", "opencode", "pi", "custom-provider"]) {
+      const configuredProvider: Requests["agent.create"] | void = await create(
+        { request: { ...original, config: { ...original.config, provider } } },
+        context,
+      );
+      assert.equal(
+        configuredProvider?.config.mcpServers?.conductor?.type,
+        "stdio",
+        provider,
+      );
+      assert.deepEqual(
+        configuredProvider?.config.mcpServers?.existing,
+        original.config.mcpServers?.existing,
+      );
+      assert.equal(configuredProvider?.config.modeId, original.config.modeId);
+    }
     assert.ok(configured.config.systemPrompt?.includes(launcher));
     assert.equal(
       configured.config.systemPrompt?.includes("$CONDUCTOR_COMMAND"),
@@ -449,6 +513,12 @@ void test("session hooks preserve configuration and inject command context witho
       context,
     );
     assert.equal(resumed?.env.CONDUCTOR_COMMAND, launcher);
+    const mcpBefore = configured.config.mcpServers?.conductor;
+    assert.equal(
+      mcpBefore?.type,
+      "stdio",
+      "The same bound launcher serves MCP across session resumes",
+    );
     await assert.rejects(async () => {
       assert.ok(open);
       return open(

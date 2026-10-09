@@ -1,14 +1,23 @@
 import type { PluginServerContext } from "@getpaseo/plugin/server";
 import type { PaseoApi } from "../paseo/types";
-import type { SymphonyCommandAccess } from "../symphonies/commands/server";
-import {
-  bindAgentCommand,
-  newAgentCommand,
-} from "../symphonies/commands/launcher";
+import type { SymphonyCommandAccess } from "../symphonies/command-access";
+import { bindAgentCommand, newAgentCommand } from "./commands/launcher";
 import { launcherCommand } from "../symphonies/prompts";
 
-const guidance = (command: string) => `[Conductor agent commands]
+function availableMcpName(servers: Record<string, unknown> = {}): string {
+  let name = "conductor";
+  for (let suffix = 2; Object.hasOwn(servers, name); suffix++) {
+    name = `conductor_${suffix}`;
+  }
+  return name;
+}
+
+const guidance = (
+  command: string,
+  serverName: string,
+) => `[Conductor agent commands]
 When the user asks to orchestrate work, use ${launcherCommand(command, "orchestrate")} with a stable key, title and goal as JSON on stdin. You become the symphony's Conductor agent: the acknowledgement includes instructions to split the work and dispatch separate task agents from this conversation. Add "conductor":"agent" (optionally with conductorProfile) only when the user wants a dedicated Conductor agent instead. Follow the conductor-orchestrate skill when it is installed. Do not substitute a source-only tracking symphony for orchestration. Do not ask the user to fill plan/task forms. Small edits need no symphony unless requested.
+Use the injected ${serverName} MCP server's report, block, get and widen tools directly when available. This is the Paseo Conductor reporting server; do not use another server with similarly named tools. Paseo binds their agent identity; do not launch the MCP server through a shell tool. They submit through the host MCP connection without needing shell sandbox escalation. Tool names may have a provider prefix; search for Conductor reporting tools if needed.
 Run ${launcherCommand(command, "help")} for JSON commands. This explicit helper already supplies your agent identity and daemon socket; it works without CONDUCTOR environment variables in shell tools. Inspect the returned JSON acknowledgement; empty output is not success. An assigned task agent must report/block its existing symphony and attempt; never start another symphony or Conductor agent for that assignment. Only its Conductor agent defines/dispatches/finishes the symphony. Report actual evidence and required checks, then stop tool work and end the turn. Never infer completion from idle. Existing start/claim commands track the current agent only and do not delegate. Preserve the user's permissions and authorized scope.`;
 
 export function commandHooks(
@@ -34,6 +43,7 @@ export function commandHooks(
       ) {
         return;
       }
+      const serverName = availableMcpName(request.config.mcpServers);
       const command = newAgentCommand(access.commandPath);
       return {
         ...request,
@@ -44,7 +54,20 @@ export function commandHooks(
         },
         config: {
           ...request.config,
-          systemPrompt: [request.config.systemPrompt, guidance(command)]
+          // Provider adapters own MCP support, including runtime detection.
+          mcpServers: {
+            ...request.config.mcpServers,
+            [serverName]: {
+              type: "stdio",
+              command: process.execPath,
+              args: [command, "mcp"],
+              alwaysLoad: true,
+            },
+          },
+          systemPrompt: [
+            request.config.systemPrompt,
+            guidance(command, serverName),
+          ]
             .filter(Boolean)
             .join("\n\n"),
         },

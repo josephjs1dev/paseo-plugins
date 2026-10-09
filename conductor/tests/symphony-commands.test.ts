@@ -9,7 +9,7 @@ import {
   SYMPHONY_LIMITS,
   taskReportSchema,
 } from "../shared/symphonies/models";
-import { symphonyAck } from "../server/symphonies/commands/ack";
+import { symphonyAck } from "../server/entrypoints/commands/ack";
 
 const id = "6f1c2b9e-4b7a-4c1e-9f0a-2d3e4f5a6b7c";
 const otherId = "0b8e7d6c-5a4b-4c3d-8e2f-1a0b9c8d7e6f";

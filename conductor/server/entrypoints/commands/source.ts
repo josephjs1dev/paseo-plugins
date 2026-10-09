@@ -1,6 +1,11 @@
+import { COMMAND_REQUEST_SOURCE } from "./request-source";
+import { MCP_SOURCE } from "./mcp-source";
+
 // This dependency-free CLI is emitted beside the socket so Git-installed plugins
 // do not need a separate SDK installation in the agent's shell environment.
 export const SYMPHONY_COMMAND_SOURCE = String.raw`import http from "node:http";
+${COMMAND_REQUEST_SOURCE}
+${MCP_SOURCE}
 
 const help = {
   usage: 'node "$CONDUCTOR_COMMAND" <command> [--agent ID] [--socket PATH] < input.json',
@@ -34,37 +39,21 @@ async function main() {
     if (flag === "--agent") agentId = value; else socketPath = value;
   }
   if (!agentId || !socketPath) throw new Error("Missing Conductor source identity or socket. Use a new agent session or supply --agent and --socket.");
+  if (kind === "mcp") {
+    if (process.argv.length !== 3) throw new Error("MCP identity must come from its bound launcher, not command-line overrides.");
+    await serveMcp(agentId, socketPath); return;
+  }
   let input = "";
   if (kind !== "list" && kind !== "profiles" && kind !== "models") {
     for await (const chunk of process.stdin) {
       input += chunk.toString();
-      if (Buffer.byteLength(input) > 262144) throw new Error("Command input exceeds 256 KiB.");
+      if (Buffer.byteLength(input) > commandLimits.inputBytes) throw new Error("Command input exceeds 256 KiB.");
     }
   }
   let fields;
   try { fields = input.trim() ? JSON.parse(input) : {}; } catch { throw new Error("Command input must be valid JSON."); }
   if (!fields || Array.isArray(fields) || typeof fields !== "object" || "kind" in fields) throw new Error("Input must be an object without a kind field.");
-  const body = JSON.stringify({ agentId, command: { kind, ...fields } });
-  const result = await new Promise((resolve, reject) => {
-    const request = http.request({ socketPath, path: "/command", method: "POST", headers: { "content-type": "application/json", "content-length": Buffer.byteLength(body) } }, (response) => {
-      let data = "";
-      response.on("data", (chunk) => {
-        data += chunk.toString();
-        if (Buffer.byteLength(data) > 2200000) { response.destroy(); reject(new Error("Command response exceeds its limit.")); }
-      });
-      response.on("error", reject);
-      response.on("end", () => {
-        try {
-          const parsed = JSON.parse(data);
-          if (response.statusCode !== 200) reject(new Error(parsed.error || "Conductor command failed."));
-          else resolve(parsed);
-        } catch { reject(new Error("Conductor returned an invalid response.")); }
-      });
-    });
-    request.setTimeout(15000, () => request.destroy(new Error("Command acknowledgement is uncertain. Inspect the symphony before retrying; reuse its start key/attempt identity.")));
-    request.on("error", (error) => reject(new Error(error.code ? "Conductor command connection failed (" + error.code + "). Check the plugin or refresh the agent session." : error.message)));
-    request.end(body);
-  });
+  const result = await requestCommand(agentId, socketPath, { kind, ...fields });
   console.log(JSON.stringify(result, null, 2));
 }
 main().catch((error) => { console.error(JSON.stringify({ error: error.message })); process.exitCode = 1; });

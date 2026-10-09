@@ -1,5 +1,5 @@
 import type { TaskReport } from "../../shared/symphonies/models";
-import type { SymphonyCommandAccess } from "./commands/server";
+import type { SymphonyCommandAccess } from "./command-access";
 
 export type CommandLine = (agentId: string, verb: string) => string;
 const shellQuote = (value: string) => `'${value.replaceAll("'", "'\\''")}'`;
@@ -37,7 +37,7 @@ export function reportInstructions(
   attemptId: string,
   checks: string[],
 ): string {
-  const example = jsonCommand(command(agentId, "report"), {
+  const input = {
     symphonyId: symphonyId,
     attemptId,
     report: {
@@ -50,8 +50,9 @@ export function reportInstructions(
         detail: "Replace with the observed check result",
       })),
     },
-  });
-  return `Report your own findings using this exact command structure, replacing the sample report with actual evidence. JSON goes on STANDARD INPUT, not in a positional argument. Use the explicit script/socket paths and your agent ID; environment variables may be absent from shell tool calls.\n\n${example}\n\nRead the acknowledgement: a report succeeds only when the command prints JSON containing this symphony and your saved attempt report. Exit code zero with empty output is NOT acknowledgement. Never claim you reported without inspecting that JSON. Use ${command(agentId, "get")} with {"symphonyId":"${symphonyId}"} on stdin to verify an uncertain result. For an unresolved blocker, use ${command(agentId, "block")} with symphonyId, attemptId and message on stdin. After successful reporting, stop tool work and end your turn.`;
+  };
+  const example = jsonCommand(command(agentId, "report"), input);
+  return `Prefer the Paseo Conductor report MCP tool from the injected server named in your [Conductor agent commands] system instructions. Do not use another server with similarly named tools. Call it directly with the following JSON arguments, replacing the sample report with actual evidence. Do not execute the MCP server in a shell. Tool names may have a provider prefix; search for Conductor reporting tools if needed. Your identity is bound by Paseo; never supply an agent ID or socket.\n\n${JSON.stringify(input, null, 2)}\n\nRead the tool result: reporting succeeds only when it is not an error and contains this symphony and your saved attempt report. Use the Paseo Conductor get MCP tool with {"symphonyId":"${symphonyId}"} to verify an uncertain result. Use the Paseo Conductor block MCP tool with symphonyId, attemptId and message for an unresolved blocker.\n\nOnly if those MCP tools are unavailable, report using this command. JSON goes on STANDARD INPUT, not in a positional argument. Use the explicit script/socket paths and your agent ID; environment variables may be absent from shell tool calls.\n\n${example}\n\nRead the acknowledgement: a report succeeds only when the command prints JSON containing this symphony and your saved attempt report. Exit code zero with empty output is NOT acknowledgement. Never claim you reported without inspecting that JSON. Use ${command(agentId, "get")} with {"symphonyId":"${symphonyId}"} on stdin to verify an uncertain result. For an unresolved blocker, use ${command(agentId, "block")} with symphonyId, attemptId and message on stdin. After successful reporting, stop tool work and end your turn.`;
 }
 
 /** Executable `widen` request for a file the task agent's own change broke. */
@@ -61,13 +62,14 @@ export function widenInstructions(
   symphonyId: string,
   attemptId: string,
 ): string {
-  const example = jsonCommand(command(agentId, "widen"), {
+  const input = {
     symphonyId,
     attemptId,
     paths: ["shared/schema.ts"],
     reason: "My change breaks the exported schema that a required check reads",
-  });
-  return `If a fix needs a file outside your write scope and your change caused the breakage or it blocks a required check, request it with widen:\n\n${example}\n\nThe server grants the paths only when no other task or reader holds them and the attempt is within its widen limits. A refusal names the holder; report outcome failed with need "scope" and requestedWrites instead of editing outside your scope.`;
+  };
+  const example = jsonCommand(command(agentId, "widen"), input);
+  return `If a fix needs a file outside your write scope and your change caused the breakage or it blocks a required check, request it with the Paseo Conductor widen MCP tool from the injected server named in your system instructions using these JSON arguments:\n\n${JSON.stringify(input, null, 2)}\n\nOnly if that MCP tool is unavailable, use this command:\n\n${example}\n\nThe server grants the paths only when no other task or reader holds them and the attempt is within its widen limits. A refusal names the holder; report outcome failed with need "scope" and requestedWrites instead of editing outside your scope.`;
 }
 
 /**

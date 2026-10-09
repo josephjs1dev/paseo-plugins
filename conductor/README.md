@@ -69,6 +69,31 @@ launch is checked again with backoff before it is blocked. The Conductor agent
 acts on bounded per-task failure summaries, reviews all results, and finishes
 the symphony with a summary.
 
+New agents receive a local `conductor` MCP configuration with `report`,
+`block`, `get`, and `widen` tools. Task agents prefer these tools for reporting,
+checking an acknowledgement, recording a blocker, and requesting extra write
+scope. The provider launches the stdio bridge outside shell command execution,
+so Codex workers do not need shell sandbox escalation to report. It uses the
+existing local command service; no TCP listener or extra npm runtime dependency
+is added. Paseo's provider adapters handle MCP support, including detection at
+runtime. Providers that do not expose the tools retain the command-line workflow.
+The MCP tools cover task reporting and recovery. Orchestration commands such as
+`orchestrate`, `define`, `dispatch`, and `finish`, and the source-only `start` and
+`claim` workflow, still use the command-line helper and its shell permissions.
+
+Each bridge uses an agent-bound launcher created before its interactive session
+opens. Tool arguments cannot choose another agent identity or socket. The daemon
+still checks task ownership, report contents and required checks, and accepts an
+identical repeated report without replacing its evidence. MCP tool approval
+policies still apply. Existing MCP servers and tool policies are preserved. If
+`conductor` is already configured, the injected server uses the first available
+name such as `conductor_2`, named in that agent's system instructions.
+
+Reload the plugin to enable injection for newly created agents. Agents created
+before this change keep their existing MCP configuration, including on refresh
+or resume, and can continue using the command-line helper. An MCP error or an
+ended turn alone never counts as an accepted task report.
+
 Task agents diagnose and fix their own changes before reporting failure, with up to
 3 fix rounds and an early stop for repeated errors, refused scope requests, or
 needs for input or another model. They report a structured diagnosis. A task agent

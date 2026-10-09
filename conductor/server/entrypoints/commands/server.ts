@@ -7,15 +7,13 @@ import { chmod } from "node:fs/promises";
 import { join } from "node:path";
 import { z } from "zod";
 import { SYMPHONY_COMMAND_SOURCE } from "./source";
-import { SymphonyError } from "../errors";
-import { ensureSymphonyDirectory, writeSymphonyFile } from "../files";
-
-export interface SymphonyCommandAccess {
-  available: boolean;
-  commandPath: string | null;
-  socketPath: string | null;
-  message: string | null;
-}
+import { COMMAND_LIMITS } from "./limits";
+import { SymphonyError } from "../../symphonies/errors";
+import {
+  ensureSymphonyDirectory,
+  writeSymphonyFile,
+} from "../../symphonies/files";
+import type { SymphonyCommandAccess } from "../../symphonies/command-access";
 
 export async function commandServer(
   directory: string,
@@ -32,7 +30,10 @@ export async function commandServer(
     } satisfies SymphonyCommandAccess,
     close: () => Promise.resolve(),
   });
-  if (process.platform === "win32" || Buffer.byteLength(socketPath) > 100) {
+  if (
+    process.platform === "win32" ||
+    Buffer.byteLength(socketPath) > COMMAND_LIMITS.socketPathBytes
+  ) {
     return unavailable(
       "Agent commands need a local Unix socket path shorter than 100 bytes on this host.",
     );
@@ -48,7 +49,7 @@ export async function commandServer(
       return;
     }
     let body = JSON.stringify(value);
-    if (Buffer.byteLength(body) > 2_200_000) {
+    if (Buffer.byteLength(body) > COMMAND_LIMITS.responseBytes) {
       body = JSON.stringify({
         error: "The response exceeds the command size limit.",
       });
@@ -73,7 +74,7 @@ export async function commandServer(
       });
       return;
     }
-    if (inFlight >= 16) {
+    if (inFlight >= COMMAND_LIMITS.inFlight) {
       respond(response, 429, {
         error:
           "Conductor has too many pending commands. Inspect the symphony before retrying.",
@@ -87,7 +88,7 @@ export async function commandServer(
           error:
             "Command acknowledgement is uncertain. Inspect the symphony before retrying with the same identity.",
         }),
-      12_000,
+      COMMAND_LIMITS.serverTimeoutMs,
     );
     try {
       const chunks: Buffer[] = [];
@@ -97,7 +98,7 @@ export async function commandServer(
           ? chunk
           : Buffer.from(String(chunk));
         bytes += buffer.length;
-        if (bytes > 262144) {
+        if (bytes > COMMAND_LIMITS.inputBytes) {
           respond(response, 413, { error: "Command exceeds 256 KiB." });
           request.resume();
           return;
@@ -134,8 +135,8 @@ export async function commandServer(
       respond(response, 500, { error: "Command service failed." }),
     );
   });
-  server.requestTimeout = 12_000;
-  server.maxConnections = 32;
+  server.requestTimeout = COMMAND_LIMITS.serverTimeoutMs;
+  server.maxConnections = COMMAND_LIMITS.connections;
   try {
     await new Promise<void>((resolve, reject) => {
       server.once("error", reject);

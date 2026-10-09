@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { spawn } from "node:child_process";
 import { join } from "node:path";
-import { commandServer } from "../server/symphonies/commands/server";
+import { commandServer } from "../server/entrypoints/commands/server";
 import {
   agentCommand,
   jsonCommand,
@@ -55,6 +55,13 @@ void test("assigned command works without Conductor environment variables and sa
     );
     assert.ok(prompt.includes("<<'CONDUCTOR_JSON'"));
     assert.ok(prompt.includes("empty output is NOT acknowledgement"));
+    assert.match(prompt, /Prefer the Paseo Conductor report MCP tool/);
+    assert.match(prompt, /Paseo Conductor get MCP tool/);
+    assert.match(prompt, /Paseo Conductor block MCP tool/);
+    assert.ok(
+      prompt.indexOf("Conductor report MCP tool") <
+        prompt.indexOf("<<'CONDUCTOR_JSON'"),
+    );
     assert.equal(prompt.includes("$CONDUCTOR_COMMAND"), false);
   } finally {
     await server.close();
@@ -80,6 +87,7 @@ void test("task agent instructions are fix-first, widen, and report", () => {
   assert.match(prompt, /two rounds in a row end with the same error/);
   assert.match(prompt, /Report breakage that existed before your change/);
   assert.match(prompt, /widen/);
+  assert.match(prompt, /Conductor widen MCP tool/);
   assert.match(prompt, /<<'CONDUCTOR_JSON'/);
   assert.match(prompt, /diagnosis/);
   assert.match(prompt, /--agent 'worker-1' --socket/);
