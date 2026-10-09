@@ -2,6 +2,7 @@ import type { SymphonyHost } from "../symphonies/host";
 import { SymphonyError } from "../symphonies/errors";
 import { fileSymphonyStore } from "../symphonies/store";
 import { executionRuntime } from "../symphonies/identity";
+import { changesRuntime } from "../symphonies/changes";
 import { workerRuntime } from "../symphonies/workers";
 import { symphonyExecution } from "../symphonies/execution";
 import { commandServer } from "./commands/server";
@@ -26,7 +27,7 @@ export function symphonyService({
   const store = fileSymphonyStore(directory);
   const execution = symphonyExecution(
     store,
-    () => executionRuntime(host()),
+    () => ({ ...executionRuntime(host()), ...changesRuntime() }),
     () => workerRuntime(host()),
     () => access,
   );

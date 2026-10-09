@@ -41,7 +41,10 @@ void test("the skill directs recovery from diagnosis and reviews granted writes"
   assert.match(ORCHESTRATE_SKILL, /per-task notification summary first/);
   assert.match(ORCHESTRATE_SKILL, /diagnosis\.need/);
   assert.match(ORCHESTRATE_SKILL, /addWrites/);
-  assert.match(ORCHESTRATE_SKILL, /different worker choice only for/);
+  assert.match(ORCHESTRATE_SKILL, /Retry on the same worker choice first/);
+  assert.match(ORCHESTRATE_SKILL, /task's second/);
+  assert.match(ORCHESTRATE_SKILL, /every[\s\S]*available choice has failed/);
+  assert.match(ORCHESTRATE_SKILL, /new worker choice succeeds/);
   assert.match(ORCHESTRATE_SKILL, /grantedWrites/);
   assert.match(ORCHESTRATE_SKILL, /Widen refused/);
 });

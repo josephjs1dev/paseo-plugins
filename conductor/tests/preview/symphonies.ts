@@ -98,6 +98,53 @@ const extendedFixtureSymphonies: Record<string, () => StoredSymphony> = {
     symphony.status = "completed";
     return symphony;
   },
+  "changed-paths": () => {
+    const symphony = recoverySymphony();
+    const failed = symphony.execution.attempts[0];
+    if (!failed) {
+      return symphony;
+    }
+    failed.endedAt = failed.startedAt + 5 * 60_000;
+    // The failed attempt's write-scope fingerprint diff: a small uncapped
+    // change set, listed in full on the attempt row.
+    failed.changedPaths = ["server/rpc.ts", "shared/schema.ts"];
+    // The completed retry on a new agent changed more paths than the stored
+    // cap keeps, so its row lists the kept paths with a "+ more" indicator.
+    const retry = structuredClone(failed);
+    retry.id = "b410f767-1197-469b-8b89-af35338a4e0e";
+    retry.agentId = "worker-repair-2";
+    retry.state = "completed";
+    retry.startedAt = failed.endedAt + 5 * 60_000;
+    retry.endedAt = retry.startedAt + 5 * 60_000;
+    retry.message = null;
+    delete retry.grantedWrites;
+    delete retry.nudgedAt;
+    retry.changedPaths = [
+      "shared/schema.ts",
+      "server/rpc.ts",
+      "server/handlers/export.ts",
+      "client/export/cursor.ts",
+      "tests/export.test.ts",
+    ];
+    retry.changedPathsTruncated = true;
+    retry.report = {
+      outcome: "completed",
+      summary: "Typecheck and the export tests pass after the schema change.",
+      evidence: ["npm run typecheck: clean; export tests pass"],
+      checks: [{ name: "typecheck", status: "passed", detail: "clean" }],
+    };
+    retry.reportHash = "e".repeat(64);
+    retry.launch = {
+      state: "started",
+      profile: "inherit",
+      generation: 0,
+      prompt: "Carry out the task and report evidence",
+      settled: true,
+    };
+    symphony.execution.attempts.push(retry);
+    symphony.status = "completed";
+    return symphony;
+  },
   "retry-added": () => {
     const symphony = recoverySymphony();
     const failed = symphony.execution.attempts[0];

@@ -3,12 +3,12 @@ import { symphonyCommandSchema } from "../../../shared/symphonies/commands";
 
 const descriptions = {
   report:
-    "Save your assigned attempt's completed or failed report with actual evidence and check results. Inspect the returned acknowledgement, then end your turn.",
+    'Save your assigned attempt\'s completed or failed report with actual evidence and check results. Use the symphonyId and attemptId from your assignment. Give a result for every required check. A failed report needs a diagnosis; need "scope" needs requestedWrites. A completed report has no diagnosis. Reporting succeeds only when the result contains your saved report. Inspect the returned acknowledgement, then end your turn.',
   block:
-    "Record a blocker on your assigned attempt when you need input or cannot proceed. This does not report successful completion.",
+    "Record a blocker on your assigned attempt when you need input or cannot proceed. This does not report successful completion. Use when you need input or cannot proceed and no report applies. The Conductor resumes you with an answer.",
   get: "Inspect a symphony you own or are assigned to, including saved reports. Use this to verify an uncertain acknowledgement before retrying.",
   widen:
-    "Request extra checkout-relative write paths for your assigned attempt. Subject to scope limits and resource conflict checks; never grants OS permissions.",
+    'Request extra checkout-relative write paths for your assigned attempt. Subject to scope limits and resource conflict checks; never grants OS permissions. Only for a file your own change broke, or one that blocks a required check. A refusal names the holder; then report failed with need "scope" and requestedWrites instead of editing the file.',
 } as const;
 
 // Plugin bundles may only include client/, server/ and shared/ modules, so

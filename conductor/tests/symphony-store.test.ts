@@ -597,6 +597,58 @@ void test("attempts and reports stored before the recovery fields remain readabl
   assert.equal(raw.execution.attempts[0]?.launch?.nextCheckAt, undefined);
 });
 
+void test("attempts stored before the changed-path fields remain readable", async () => {
+  const directory = await testDirectory();
+  const store = fileSymphonyStore(directory);
+  const symphony = executionSymphony(randomUUID(), "failed", [
+    failedUnsettledAttempt("work"),
+  ]);
+  await createSymphony(store, symphony);
+  const attempt = (await store.read(symphony.id)).symphony.execution
+    ?.attempts[0];
+  // A record written before section 4 has none of the new optional fields; it
+  // still loads and the fields stay absent rather than defaulting to something.
+  assert.equal(attempt?.changedPaths, undefined);
+  assert.equal(attempt?.changedPathsTruncated, undefined);
+  assert.equal(attempt?.writeFingerprint, undefined);
+  assert.equal(attempt?.writeFingerprintUnknown, undefined);
+});
+
+void test("an attempt with a bracketed changed path loads", async () => {
+  const directory = await testDirectory();
+  const store = fileSymphonyStore(directory);
+  const attempt: Attempt = {
+    ...blockedAttempt("work"),
+    changedPaths: ["src/[id]/page.ts"],
+    changedPathsTruncated: false,
+    writeFingerprint: [{ path: "src/[id]/page.ts", hash: "a".repeat(64) }],
+  };
+  const symphony = executionSymphony(randomUUID(), "blocked", [attempt]);
+  await createSymphony(store, symphony);
+  const stored = (await store.read(symphony.id)).symphony.execution
+    ?.attempts[0];
+  // Brackets are real file-name characters, not scope patterns.
+  assert.deepEqual(stored?.changedPaths, ["src/[id]/page.ts"]);
+  assert.deepEqual(stored?.writeFingerprint, [
+    { path: "src/[id]/page.ts", hash: "a".repeat(64) },
+  ]);
+});
+
+void test("an attempt with an unknown launch baseline loads and keeps the marker", async () => {
+  const directory = await testDirectory();
+  const store = fileSymphonyStore(directory);
+  const attempt: Attempt = {
+    ...blockedAttempt("work"),
+    writeFingerprintUnknown: true,
+  };
+  const symphony = executionSymphony(randomUUID(), "blocked", [attempt]);
+  await createSymphony(store, symphony);
+  const stored = (await store.read(symphony.id)).symphony.execution
+    ?.attempts[0];
+  assert.equal(stored?.writeFingerprint, undefined);
+  assert.equal(stored?.writeFingerprintUnknown, true);
+});
+
 void test("attempts with the recovery fields load and keep their values", async () => {
   const directory = await testDirectory();
   const store = fileSymphonyStore(directory);

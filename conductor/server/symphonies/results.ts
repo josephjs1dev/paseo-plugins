@@ -162,6 +162,42 @@ export function validateExecution(symphony: StoredSymphony): void {
     ) {
       throw new SymphonyError("Symphony attempt writes are inconsistent.");
     }
+    // Changed paths and launch fingerprints are conducted-only observations.
+    if (
+      (attempt.changedPaths !== undefined ||
+        attempt.changedPathsTruncated !== undefined ||
+        attempt.writeFingerprint !== undefined ||
+        attempt.writeFingerprintUnknown !== undefined) &&
+      symphony.execution.origin !== "conducted"
+    ) {
+      throw new SymphonyError("Symphony changed paths are inconsistent.");
+    }
+    // A baseline is either observed or known to be unavailable, never both.
+    if (
+      attempt.writeFingerprint !== undefined &&
+      attempt.writeFingerprintUnknown !== undefined
+    ) {
+      throw new SymphonyError("Symphony changed paths are inconsistent.");
+    }
+    // Changed paths are recorded when the attempt settles, but a blocked
+    // attempt that resumes or is rebound keeps them (they are cumulative for
+    // the whole attempt), so a running attempt may carry them only when it was
+    // previously blocked.
+    if (
+      attempt.state === "running" &&
+      (attempt.changedPaths !== undefined || attempt.changedPathsTruncated) &&
+      attempt.blockedBy === undefined
+    ) {
+      throw new SymphonyError(
+        "A running attempt cannot record changed paths yet.",
+      );
+    }
+    if (
+      attempt.changedPathsTruncated &&
+      (attempt.changedPaths?.length ?? 0) < SYMPHONY_LIMITS.changedPaths
+    ) {
+      throw new SymphonyError("Changed path truncation is inconsistent.");
+    }
     if (
       !terminal &&
       latestAttempt(symphony, attempt.taskId)?.id !== attempt.id

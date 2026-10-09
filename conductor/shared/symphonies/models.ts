@@ -14,6 +14,10 @@ export const SYMPHONY_LIMITS = {
   widenPathsPerCall: 5,
   /** `widen` calls a single attempt may make before it must report. */
   widenCallsPerAttempt: 2,
+  /** Paths one attempt may record as changed in its write scope. */
+  changedPaths: 50,
+  /** Dirty write-scope entries one fingerprint observation may return. */
+  fingerprintPaths: 200,
 } as const;
 export const uuidSchema = z.string().uuid();
 export const taskIdSchema = z
@@ -31,6 +35,23 @@ export const scopeSchema = text(512).refine(
         .every((part) => part !== ".." && part !== "." && part !== "")),
   "Use a relative path without traversal, wildcards, or empty segments.",
 );
+// A checkout-relative file name observed from Git, not a scope pattern.
+// Brackets, braces, `*`, `?` and `:` are real file-name characters, so only
+// traversal, absolute paths, empty segments and control characters are rejected.
+// The value is never trimmed: a leading or trailing space is part of the name.
+export const observedPathSchema = z
+  .string()
+  .min(1)
+  .max(1024)
+  .refine(
+    (path) =>
+      !/[\x00-\x1f]/.test(path) &&
+      !path.startsWith("/") &&
+      path
+        .split("/")
+        .every((part) => part !== ".." && part !== "." && part !== ""),
+    "Use a relative path without traversal or control characters.",
+  );
 export const taskSchema = z
   .object({
     id: taskIdSchema,
@@ -169,6 +190,29 @@ export const attemptSchema = z
       .array(grantedWriteSchema)
       .max(SYMPHONY_LIMITS.addedWritesPerAttempt)
       .optional(),
+    // Checkout-relative paths whose write-scope state changed while this
+    // attempt ran, recorded when it settles. Advisory only: it is never a scope
+    // check, and it is absent when the checkout observation is unavailable.
+    changedPaths: z
+      .array(observedPathSchema)
+      .max(SYMPHONY_LIMITS.changedPaths)
+      .optional(),
+    // True when more than `changedPaths` paths changed and only the first
+    // `changedPaths` limit were kept.
+    changedPathsTruncated: z.boolean().optional(),
+    // Per-path state hashes taken when the attempt launched. Diffing them
+    // against the settle observation derives `changedPaths`; the baseline is
+    // absent in a non-Git checkout or when Git failed.
+    writeFingerprint: z
+      .array(z.object({ path: observedPathSchema, hash: text(128) }).strict())
+      .max(SYMPHONY_LIMITS.fingerprintPaths)
+      .optional(),
+    // True when the launch baseline was attempted but the observation was
+    // unavailable, such as a non-Git checkout or a failed Git call. The attempt
+    // never retries the baseline, because a later capture would already include
+    // the earlier agent's edits. `changedPaths` stays absent: an empty list
+    // would falsely claim nothing changed.
+    writeFingerprintUnknown: z.boolean().optional(),
     nudgedAt: z.number().int().nonnegative().optional(),
     // Who made the attempt blocked: "worker" when the assigned agent called
     // `block`, "server" when reconciliation settled a stop with no report. The

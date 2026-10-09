@@ -1,4 +1,10 @@
-import type { TaskReport } from "../../shared/symphonies/models";
+import {
+  latestAttempt,
+  SYMPHONY_LIMITS,
+  type StoredSymphony,
+  type TaskDefinition,
+  type TaskReport,
+} from "../../shared/symphonies/models";
 import type { SymphonyCommandAccess } from "./command-access";
 
 export type CommandLine = (agentId: string, verb: string) => string;
@@ -30,76 +36,110 @@ function clamp(value: string, max: number): string {
   return value.length > max ? value.slice(0, max) : value;
 }
 
-export function reportInstructions(
-  command: CommandLine,
-  agentId: string,
-  symphonyId: string,
-  attemptId: string,
-  checks: string[],
-): string {
-  const input = {
-    symphonyId: symphonyId,
-    attemptId,
-    report: {
-      outcome: "completed",
-      summary: "Replace with the actual result",
-      evidence: ["Replace with concrete evidence"],
-      checks: checks.map((name) => ({
-        name,
-        status: "passed",
-        detail: "Replace with the observed check result",
-      })),
-    },
-  };
-  const example = jsonCommand(command(agentId, "report"), input);
-  return `Prefer the Paseo Conductor report MCP tool from the injected server named in your [Conductor agent commands] system instructions. Do not use another server with similarly named tools. Call it directly with the following JSON arguments, replacing the sample report with actual evidence. Do not execute the MCP server in a shell. Tool names may have a provider prefix; search for Conductor reporting tools if needed. Your identity is bound by Paseo; never supply an agent ID or socket.\n\n${JSON.stringify(input, null, 2)}\n\nRead the tool result: reporting succeeds only when it is not an error and contains this symphony and your saved attempt report. Use the Paseo Conductor get MCP tool with {"symphonyId":"${symphonyId}"} to verify an uncertain result. Use the Paseo Conductor block MCP tool with symphonyId, attemptId and message for an unresolved blocker.\n\nOnly if those MCP tools are unavailable, report using this command. JSON goes on STANDARD INPUT, not in a positional argument. Use the explicit script/socket paths and your agent ID; environment variables may be absent from shell tool calls.\n\n${example}\n\nRead the acknowledgement: a report succeeds only when the command prints JSON containing this symphony and your saved attempt report. Exit code zero with empty output is NOT acknowledgement. Never claim you reported without inspecting that JSON. Use ${command(agentId, "get")} with {"symphonyId":"${symphonyId}"} on stdin to verify an uncertain result. For an unresolved blocker, use ${command(agentId, "block")} with symphonyId, attemptId and message on stdin. After successful reporting, stop tool work and end your turn.`;
+const paths = (value: readonly string[], empty: string): string =>
+  value.length ? value.join(", ") : empty;
+
+/** One prerequisite task's bounded result, rendered as an assignment line. */
+export interface PrerequisiteResult {
+  taskId: string;
+  outcome?: string;
+  summary?: string;
 }
 
-/** Executable `widen` request for a file the task agent's own change broke. */
-export function widenInstructions(
-  command: CommandLine,
-  agentId: string,
-  symphonyId: string,
-  attemptId: string,
-): string {
-  const input = {
-    symphonyId,
-    attemptId,
-    paths: ["shared/schema.ts"],
-    reason: "My change breaks the exported schema that a required check reads",
-  };
-  const example = jsonCommand(command(agentId, "widen"), input);
-  return `If a fix needs a file outside your write scope and your change caused the breakage or it blocks a required check, request it with the Paseo Conductor widen MCP tool from the injected server named in your system instructions using these JSON arguments:\n\n${JSON.stringify(input, null, 2)}\n\nOnly if that MCP tool is unavailable, use this command:\n\n${example}\n\nThe server grants the paths only when no other task or reader holds them and the attempt is within its widen limits. A refusal names the holder; report outcome failed with need "scope" and requestedWrites instead of editing outside your scope.`;
+export interface AssignmentPromptInput {
+  symphonyId: string;
+  attemptId: string;
+  taskId: string;
+  title: string;
+  goal: string;
+  outcome: string;
+  reads: string[];
+  writes: string[];
+  checks: string[];
+  prerequisites: PrerequisiteResult[];
 }
 
 /**
- * Fix-first guidance for every task agent assignment and resume: diagnose and
- * fix failing checks before reporting, bounded to three rounds, with an
- * executable `widen` request for a nearby file the change broke.
+ * The full assignment for a new task agent. It states what to do and which
+ * checks to run, not how to format a tool call: the harness already carries the
+ * MCP schemas and a "[Conductor agent commands]" system prompt.
  */
-export function fixFirstInstructions(
-  command: CommandLine,
-  agentId: string,
-  symphonyId: string,
-  attemptId: string,
-): string {
-  return `If a required check fails or the work is incomplete, diagnose the cause, fix it, and re-run the failing checks. Make up to 3 fix rounds; a fix round is one change followed by re-running the checks that failed. Stop early if two rounds in a row end with the same error, if widen is refused, or if you need user input or a different model. Report breakage that existed before your change and is unrelated to it as evidence; don't fix it. Report outcome failed only then, and include a diagnosis that says what you tried, the suspected cause, and what you need.\n${widenInstructions(command, agentId, symphonyId, attemptId)}`;
+export function assignmentPrompt(input: AssignmentPromptInput): string {
+  const lines = [
+    `You are a task agent in Conductor symphony ${input.symphonyId}, attempt ${input.attemptId}.`,
+    "",
+    `Task ${input.taskId}: ${input.title}`,
+    `Goal: ${input.goal}`,
+    `Assignment: ${input.outcome}`,
+    `Reads: ${paths(input.reads, "none")}`,
+    `Writes: ${paths(input.writes, "none (read-only)")}`,
+    `Required checks: ${paths(input.checks, "none")}`,
+  ];
+  if (input.prerequisites.length) {
+    lines.push("Prerequisite results:");
+    for (const result of input.prerequisites) {
+      const detail = clamp(result.summary ?? "", 1000);
+      lines.push(
+        `- ${result.taskId}: ${result.outcome ?? "completed"}. ${detail}`.trimEnd(),
+      );
+    }
+  }
+  lines.push(
+    "",
+    "Other agents share this checkout. Edit only your write paths. Do not commit,",
+    "push, reload plugins, start agents, or go beyond this assignment.",
+    "",
+    "When the work is done, run the required checks. If one fails because of your",
+    "change, fix it and run it again, up to 3 rounds. Stop early if the same error",
+    "repeats or if you need user input, more write paths, or a different model.",
+    "Report problems that already existed and aren't caused by your change; don't",
+    "fix them.",
+    "",
+    "Then call the Conductor `report` tool:",
+    "- completed: what changed, evidence, and a result for each required check.",
+    "- failed: also say what you tried, the suspected cause, and what you need.",
+    "",
+    "If your change breaks a file outside your write paths, call `widen` before",
+    "editing it. If you can't continue, call `block`. If you can't find the",
+    "Conductor tools, follow [Conductor agent commands] in your instructions.",
+    "End your turn only after the report is accepted.",
+  );
+  return lines.join("\n");
 }
 
-/** Fix-first recovery guidance plus the exact report commands for one turn. */
-export function workerInstructions(
-  command: CommandLine,
-  agentId: string,
-  symphonyId: string,
-  attemptId: string,
-  checks: string[],
-): string {
-  return `${fixFirstInstructions(command, agentId, symphonyId, attemptId)}\n${reportInstructions(command, agentId, symphonyId, attemptId, checks)}`;
+export interface TaskAssignmentInput {
+  symphony: StoredSymphony;
+  task: TaskDefinition;
+  attemptId: string;
+  plan: string;
+  writes: string[];
 }
 
-export interface PriorAttempt {
-  report: TaskReport | null;
-  note?: string;
+/**
+ * The full assignment for a task's new or replacement agent, including one
+ * bounded line per prerequisite's latest report. `reserve` and a blocked rebind
+ * both build their prompts from it, so the two paths cannot drift apart.
+ */
+export function taskAssignmentPrompt(input: TaskAssignmentInput): string {
+  return assignmentPrompt({
+    symphonyId: input.symphony.id,
+    attemptId: input.attemptId,
+    taskId: input.task.id,
+    title: input.task.title,
+    goal: input.plan,
+    outcome: input.task.outcome,
+    reads: input.task.reads,
+    writes: input.writes,
+    checks: input.task.checks,
+    prerequisites: input.task.prerequisites.map((id) => {
+      const report = latestAttempt(input.symphony, id)?.report;
+      return {
+        taskId: id,
+        ...(report?.outcome ? { outcome: report.outcome } : {}),
+        ...(report?.summary ? { summary: report.summary } : {}),
+      };
+    }),
+  });
 }
 
 /** Per-task attempt position shared by prompts and notifications. */
@@ -109,37 +149,7 @@ export interface AttemptPosition {
   total: number;
 }
 
-/**
- * The failed report and Conductor note for a retry. A continuation on the same
- * agent omits the report copy because the agent still holds its conversation;
- * a replacement agent receives the truncated report and diagnosis. The optional
- * `attempt` names the per-task retry position so the Conductor and the UI agree.
- */
-export function retryInstructions(
-  prior: PriorAttempt,
-  continuation: boolean,
-  attempt?: AttemptPosition,
-): string {
-  const parts: string[] = [];
-  if (attempt) {
-    parts.push(
-      `Retry of \`${attempt.taskId}\`, attempt ${attempt.number} of ${attempt.total}.`,
-    );
-  }
-  if (prior.note) {
-    parts.push(`Conductor note for this retry: ${clamp(prior.note, 2000)}`);
-  }
-  if (!continuation && prior.report) {
-    parts.push(
-      `Your previous attempt failed. Its truncated report: ${JSON.stringify(
-        reportForRetry(prior.report),
-      )}`,
-    );
-  }
-  return parts.join("\n");
-}
-
-/** A bounded projection of a failed report, like a prerequisite report. */
+/** A bounded projection of a failed report, rendered as handoff lines. */
 function reportForRetry(report: TaskReport) {
   const diagnosis = report.diagnosis;
   return {
@@ -166,4 +176,165 @@ function reportForRetry(report: TaskReport) {
         }
       : {}),
   };
+}
+
+/** The previous attempt's report as lines, so a replacement agent can read it. */
+function reportedLines(report: TaskReport): string[] {
+  const projection = reportForRetry(report);
+  const lines = ["What it reported:", `- Result: ${projection.summary}`];
+  if (projection.diagnosis) {
+    for (const tried of projection.diagnosis.tried) {
+      lines.push(`- Tried: ${tried}`);
+    }
+    lines.push(`- Suspected cause: ${projection.diagnosis.suspectedCause}`);
+  }
+  const failed = projection.checks.filter((check) => check.status === "failed");
+  if (failed.length) {
+    lines.push(
+      `- Failing checks: ${failed
+        .map((check) => `${check.name}: ${check.detail}`)
+        .join("; ")}`,
+    );
+  }
+  return lines;
+}
+
+/** The union of a task's earlier attempts' changed-path observations. */
+export interface HandoffPaths {
+  /** Sorted, deduplicated and capped at `SYMPHONY_LIMITS.changedPaths`. */
+  paths: string[];
+  /** True when an attempt was truncated or the union overflows the cap. */
+  truncated: boolean;
+  /** True when at least one earlier attempt recorded an observation. */
+  observed: boolean;
+  /** True when at least one earlier attempt had no observation. */
+  incomplete: boolean;
+}
+
+/**
+ * Unions the changed paths across a task's earlier attempts. `observed` and
+ * `incomplete` let a handoff distinguish a complete empty list from a partial
+ * one and from a checkout that was never observed at all.
+ */
+export function unionChangedPaths(
+  attempts: readonly {
+    changedPaths?: readonly string[] | undefined;
+    changedPathsTruncated?: boolean | undefined;
+  }[],
+): HandoffPaths {
+  const seen = new Set<string>();
+  let truncated = false;
+  let observed = false;
+  let incomplete = false;
+  for (const attempt of attempts) {
+    if (attempt.changedPaths === undefined) {
+      incomplete = true;
+      continue;
+    }
+    observed = true;
+    truncated ||= attempt.changedPathsTruncated === true;
+    for (const path of attempt.changedPaths) {
+      seen.add(path);
+    }
+  }
+  const sorted = [...seen].sort();
+  const paths = sorted.slice(0, SYMPHONY_LIMITS.changedPaths);
+  return {
+    paths,
+    truncated: truncated || paths.length < sorted.length,
+    observed,
+    incomplete,
+  };
+}
+
+export interface HandoffInput {
+  attempt: AttemptPosition;
+  /** The previous agent's profile or provider/model for the preamble. */
+  previousWorker: string;
+  report?: TaskReport | null;
+  blockedBy?: "worker" | "server";
+  blockMessage?: string | null;
+  /** The union of earlier attempts' changed paths, when any was observed. */
+  changedPaths?: readonly string[];
+  changedPathsTruncated?: boolean;
+  /** True when some earlier attempt had no observation. */
+  changedPathsIncomplete?: boolean;
+  note?: string;
+}
+
+/**
+ * The handoff a replacement agent needs: what the previous attempts reported or
+ * why they stopped, and which paths they changed. A new agent starts from a full
+ * assignment and has no access to the previous conversation.
+ */
+export function handoffInstructions(input: HandoffInput): string {
+  const lines = [
+    `Attempt ${input.attempt.number} of ${input.attempt.total} for task ${input.attempt.taskId}. You are replacing the agent from the previous attempt (${input.previousWorker}) and you do not have its conversation.`,
+    "",
+    "Files in your write paths changed by earlier attempts:",
+  ];
+  const changed = input.changedPaths;
+  const listed = changed ?? [];
+  for (const path of listed) {
+    lines.push(`- ${path}`);
+  }
+  if (listed.length && input.changedPathsTruncated) {
+    lines.push("- (More paths changed than are listed.)");
+  }
+  if (input.changedPathsIncomplete) {
+    lines.push("This list may be incomplete; review your write paths.");
+  } else if (listed.length) {
+    lines.push("Review them before you continue; they may be incomplete.");
+  } else if (changed === undefined) {
+    lines.push("Changed files are unknown; review your write paths.");
+  } else {
+    lines.push("No changes were observed in your write paths.");
+  }
+  lines.push("");
+  if (input.report) {
+    lines.push(...reportedLines(input.report));
+  } else if (input.blockedBy === "worker" && input.blockMessage) {
+    lines.push(
+      "What it reported:",
+      `It blocked with: \`${clamp(input.blockMessage, 4000)}\``,
+    );
+  } else {
+    lines.push("What it reported:", "It stopped without reporting.");
+  }
+  if (input.note) {
+    lines.push("", `Conductor note: ${clamp(input.note, 2000)}`);
+  }
+  return lines.join("\n");
+}
+
+export interface ContinuationInput {
+  taskId: string;
+  attemptId: string;
+  position: AttemptPosition;
+  note?: string;
+  writes: string[];
+  added: readonly string[];
+}
+
+/** A same-agent continuation or resume; the agent still holds its conversation. */
+export function continuationPrompt(input: ContinuationInput): string {
+  const lines = [
+    `Continue task ${input.taskId}, now attempt ${input.attemptId} (${input.position.number} of ${input.position.total}).`,
+  ];
+  if (input.note) {
+    lines.push(`Conductor note: ${clamp(input.note, 2000)}`);
+  }
+  lines.push(
+    `Write paths now: ${paths(input.writes, "none (read-only)")} (added: ${paths(
+      input.added,
+      "none",
+    )})`,
+    "Report or block this attempt when done.",
+  );
+  return lines.join("\n");
+}
+
+/** The one nudge a stopped task agent gets before its attempt is blocked. */
+export function nudgePrompt(attemptId: string): string {
+  return `You ended your turn without reporting attempt ${attemptId}.\nCall \`report\` or \`block\` now.`;
 }

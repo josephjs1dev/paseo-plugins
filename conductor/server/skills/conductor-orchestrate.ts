@@ -168,7 +168,17 @@ JSON
 
 - Act on the per-task notification summary first. Run \`get\` or open a task agent's conversation only when the summary does not explain the failure. Task agents diagnose and fix their own changes for up to 3 rounds; do not fix the cause yourself.
 - Choose the retry action from \`diagnosis.need\`. For \`scope\`, dispatch with \`retryTaskId\` and \`addWrites\` set to \`requestedWrites\`, or ask the user if those paths exceed the goal. For \`input\`, ask the user, then include the answer in \`note\`. For \`model\`, choose a different \`profile\` or \`provider\`/\`model\`/\`thinkingOptionId\`. For \`none\`, include a specific direction in \`note\`.
-- Use a different worker choice only for \`need: "model"\` or a repeated failure. Otherwise dispatch with \`retryTaskId\`; include \`note\` when giving guidance. An unchanged worker choice continues on the same agent when it still exists and is inactive; otherwise Conductor creates a new agent with the failed report and note. A blocked task resumes on its task agent. Do not replace an active task agent.
+- Retry on the same worker choice first. Switch to a different \`profile\` or
+  \`provider\`/\`model\` when \`need\` is \`"model"\`, or when the task's second
+  attempt on the same worker choice also fails or stops without reporting. Never
+  switch to a profile whose \`modeId\` is broader than this session's. If every
+  available choice has failed, ask the user.
+  Otherwise dispatch with \`retryTaskId\`; include \`note\` when giving guidance.
+  An unchanged worker choice continues on the same agent when it still exists
+  and is inactive; otherwise Conductor creates a new agent. A blocked task
+  resumes on its task agent when the worker choice is unchanged and it can
+  receive a message; a changed worker choice starts a new agent. Do not replace
+  an active task agent.
 - Task agents can request extra write paths with \`widen\`. A refusal leaves scope unchanged; use \`need: "scope"\` and \`requestedWrites\` so you can retry with \`addWrites\` or ask the user.
 
 ### 9. Finish the symphony
@@ -192,6 +202,7 @@ JSON
 | \`Task agent model is unavailable: <provider>/<model>\` | \`models\` does not list that model. | Run \`models\` and choose a listed ID. |
 | \`Worker profile requests elevated permission mode: <mode>\` | The profile asks for more access than this session has. | Choose another profile, or an inline choice. |
 | \`Task scope leaves the selected checkout.\` | A \`reads\` or \`writes\` path is outside the checkout. | Use checkout-relative paths. |
+| A blocked retry with a new worker choice succeeds | The changed choice starts a new agent on the attempt. | Check the dispatch acknowledgement for the new agent ID. |
 | \`Widen refused: this attempt has used its 2 widen calls.\` | The attempt reached its widen-call limit. | Report \`need: "scope"\` and \`requestedWrites\`; retry with \`addWrites\` or ask the user. |
 | \`Widen refused: an attempt may hold at most 10 granted paths.\` | The request exceeds the attempt's total grant limit. | Report \`need: "scope"\` and request the necessary paths through \`addWrites\` or ask the user. |
 | \`Widen refused: ...\` naming another task or reader | The requested paths overlap an unfinished task's writes or a resource-holding attempt. | Do not edit those paths. Report \`need: "scope"\` with \`requestedWrites\`; the Conductor can retry after the conflict clears or use \`addWrites\` when appropriate. |

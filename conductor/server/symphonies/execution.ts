@@ -18,6 +18,11 @@ import {
   type TaskDefinition,
 } from "../../shared/symphonies/models";
 import { commandSymphonyId, type ExecutionRuntime } from "./identity";
+import {
+  recordChangedPaths,
+  type ChangedPaths,
+  type SymphonyChangesRuntime,
+} from "./changes";
 import { SymphonyError } from "./errors";
 import { contentHash, type SymphonyStore } from "./store";
 import { orchestration } from "./orchestration";
@@ -33,7 +38,7 @@ import {
 
 export function symphonyExecution(
   store: SymphonyStore,
-  getRuntime: () => ExecutionRuntime,
+  getRuntime: () => ExecutionRuntime & Partial<SymphonyChangesRuntime>,
   getWorkers?: () => WorkerRuntime,
   getAccess?: () => SymphonyCommandAccess,
 ) {
@@ -177,6 +182,36 @@ export function symphonyExecution(
     }
   };
 
+  /**
+   * The changed-path fields to store when a task agent's report or block
+   * settles an attempt: fingerprint the attempt's effective write scope now and
+   * diff it against the baseline recorded at launch. Empty when the checkout
+   * observation is unavailable.
+   */
+  const changedPathFields = async (
+    current: StoredSymphony,
+    attemptId: string,
+  ): Promise<Partial<ChangedPaths>> => {
+    const attempt = current.execution.attempts.find(
+      (entry) => entry.id === attemptId,
+    );
+    const task = attempt
+      ? current.revisions
+          .at(-1)
+          ?.score.tasks.find((entry) => entry.id === attempt.taskId)
+      : undefined;
+    if (!attempt || !task) {
+      return {};
+    }
+    const changed = await recordChangedPaths(
+      getRuntime(),
+      current.source.checkout,
+      effectiveTask(current, task).writes,
+      attempt.writeFingerprint,
+    );
+    return changed ?? {};
+  };
+
   const mutate = async (
     agentId: string,
     command: Exclude<
@@ -219,6 +254,13 @@ export function symphonyExecution(
         "Orchestrated tasks are dispatched to child agents, not claimed by the conductor.",
       );
     }
+    // Compute the settle observation outside the store lock; a report or block
+    // from a task agent settles the attempt and should record its changed
+    // write-scope paths.
+    const changed =
+      command.kind === "block" || command.kind === "report"
+        ? await changedPathFields(initial, command.attemptId)
+        : {};
     const symphony = await store.update(
       initial.id,
       initial.version,
@@ -337,6 +379,7 @@ export function symphonyExecution(
             // this marker the first Conductor notification would mislabel a
             // task agent block as a server no-report settlement.
             attempt.blockedBy = "worker";
+            Object.assign(attempt, changed);
           } else {
             const digest = contentHash(JSON.stringify(command.report));
             if (attempt.reportHash) {
@@ -369,6 +412,10 @@ export function symphonyExecution(
             attempt.state = command.report.outcome;
             attempt.endedAt = Date.now();
             attempt.message = null;
+            Object.assign(attempt, changed);
+            // A completed or failed attempt never resumes, so its baseline is no
+            // longer needed; the recorded changed paths stay for the handoff.
+            delete attempt.writeFingerprint;
             execution.interruption = null;
           }
         }

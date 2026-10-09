@@ -539,6 +539,7 @@ void test(
         tools: z.array(
           z.object({
             name: z.string(),
+            description: z.string(),
             inputSchema: z.record(z.string(), z.unknown()),
           }),
         ),
@@ -557,6 +558,23 @@ void test(
         false,
       );
     }
+    const byName = new Map(tools.map((tool) => [tool.name, tool]));
+    assert.match(
+      byName.get("report")?.description ?? "",
+      /A failed report needs a diagnosis; need "scope" needs requestedWrites/,
+    );
+    assert.match(
+      byName.get("report")?.description ?? "",
+      /A completed report has no diagnosis/,
+    );
+    assert.match(
+      byName.get("widen")?.description ?? "",
+      /Only for a file your own change broke/,
+    );
+    assert.match(
+      byName.get("block")?.description ?? "",
+      /The Conductor resumes you with an answer/,
+    );
     assert.equal((await worker.call("finish", {})).error?.code, -32602);
     assert.equal(
       (await worker.call("get", { symphonyId: "id", kind: "finish" })).error

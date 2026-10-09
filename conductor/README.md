@@ -146,17 +146,27 @@ not create another symphony or claim the Conductor's task. The scheduler observe
 settlement, starts dependents, and notifies the Conductor agent of blockers or the
 completed score. Notifications wait until the Conductor can receive them.
 
-`dispatch` with `retryTaskId` resumes a settled blocked task on its task agent or
-retries a failed task. Optional `note` adds retry guidance; `addWrites` adds paths
-to that task's write scope for this and later attempts, subject to conflict checks.
-If the worker choice is unchanged and the previous agent still exists and is
-inactive, the failed task continues on that agent with a new attempt. Otherwise
-Conductor creates a new agent seeded with the failed report and note. A replacement
-`profile` or inline `provider`/`model`/`thinkingOptionId` changes the worker choice.
-Old attempts stay visible, and a still-active task agent cannot be replaced. Creation
-intent and agent IDs are saved before launch; uncertain launch retries use the same
-SDK identity and never resend the initial prompt to an existing matching child.
-Reload observes existing children rather than replacing them.
+`dispatch` with `retryTaskId` resumes a settled blocked task or retries a failed
+task. Optional `note` adds retry guidance; `addWrites` adds paths to that task's
+write scope for this and later attempts, subject to conflict checks. An unchanged
+worker choice continues on the same agent when it can receive a message. For a
+blocked attempt, a changed `profile` or inline
+`provider`/`model`/`thinkingOptionId` starts a new agent on that attempt, even if
+the previous agent is still available. Failed attempts continue on the same agent
+only when the worker choice is unchanged and that agent is available; otherwise
+Conductor creates a new agent. Replacement agents receive the full assignment and
+a handoff with the previous report or block message, the Conductor note, and paths
+in the attempt's write scope that changed. Each attempt records up to 50 changed
+paths (and whether the list was truncated); paths are checkout-relative. The
+observation hashes each write-scope path's content in the checkout, including
+edits to untracked files, rather than a Git diff, and is bounded to 200 dirty
+entries. When the checkout is not a Git work tree, Git fails, or the write scope
+lists more than 200 dirty entries, the handoff says changed files are unknown
+and asks the agent to review its write paths. A still-active task agent
+cannot be replaced. Creation intent and agent IDs are saved before launch;
+uncertain launch retries use the same SDK identity and never resend the initial
+prompt to an existing matching child. Reload observes existing children rather
+than replacing them.
 
 For a `need: "scope"` diagnosis, retry with `addWrites` set to the requested paths,
 or ask the user if they exceed the goal. For `input`, ask the user and put the
@@ -184,12 +194,13 @@ can use it even when they do not inherit session environment variables. No manua
 agent registration is needed. Paseo's SDK handles agent creation and lifecycle;
 this helper sends Conductor-specific symphony and report operations.
 
-Assignments include explicit script/socket paths, the assigned agent ID, and an
-executable heredoc that sends JSON on standard input. Task agents must inspect the
-returned JSON acknowledgement before claiming a report was saved. Some provider
-shell tools omit session environment variables, so assignments do not depend on
-them. The public session-opening hook also supplies these convenience variables
-on supported Unix hosts:
+Task-agent prompts explain the assignment and which Conductor action to use, but
+do not repeat tool-call JSON samples or shell commands. Agents use the MCP tool
+schemas and descriptions for report, widen, and block rules. When MCP tools are
+unavailable, the `[Conductor agent commands]` block in the agent's system
+instructions gives the shell helper and its `help` command. The public
+session-opening hook also supplies these convenience variables on supported Unix
+hosts:
 
 - `CONDUCTOR_COMMAND`: generated Node helper path (bound to new agents).
 - `CONDUCTOR_SOCKET`: this daemon's owner-only Unix socket.

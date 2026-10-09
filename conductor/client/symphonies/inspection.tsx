@@ -500,6 +500,7 @@ function AttemptRow({
         </Text>
       )}
       <ScopeChanges theme={theme} attempt={attempt} indented={retried} />
+      <ChangedPaths theme={theme} attempt={attempt} indented={retried} />
       {diagnosis && (
         <Disclosure
           theme={theme}
@@ -518,9 +519,43 @@ function AttemptRow({
 }
 
 /**
- * "retry · same agent" when the retry reused the previous attempt's agent,
- * otherwise "retry · new agent".
+ * Paths the attempt changed in its write scope, recorded by the server from
+ * the start/settle write-scope fingerprint diff. Advisory only: it renders
+ * only when present and non-empty, and "+ more" marks a list capped by the
+ * stored-path limit. Styling follows the addedWrites and grantedWrites lines.
  */
+function ChangedPaths({
+  theme,
+  attempt,
+  indented,
+}: {
+  theme: PluginTheme;
+  attempt: Attempt;
+  indented: boolean;
+}) {
+  const changed = attempt.changedPaths;
+  if (!changed?.length) {
+    return null;
+  }
+  const line = {
+    color: theme.colors.foregroundMuted,
+    fontSize: 12,
+    lineHeight: 17,
+  } as const;
+  return (
+    <View style={{ width: "100%", gap: 2, paddingLeft: indented ? 12 : 0 }}>
+      <Text selectable numberOfLines={2} style={line}>
+        {`Changed: ${changed.join(", ")}`}
+      </Text>
+      {attempt.changedPathsTruncated && (
+        <Text selectable style={line}>
+          "+ more"
+        </Text>
+      )}
+    </View>
+  );
+}
+
 function retryLabel(
   attempt: Attempt,
   previousAgentId: string | undefined,

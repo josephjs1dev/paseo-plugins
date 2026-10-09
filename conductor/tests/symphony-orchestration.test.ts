@@ -1,4 +1,8 @@
 import assert from "node:assert/strict";
+import { execFile } from "node:child_process";
+import { mkdir, writeFile } from "node:fs/promises";
+import { join } from "node:path";
+import { promisify } from "node:util";
 import test from "node:test";
 import { symphonyExecution } from "../server/symphonies/execution";
 import { fileSymphonyStore } from "../server/symphonies/store";
@@ -8,6 +12,10 @@ import {
 } from "../server/symphonies/errors";
 import type { WorkerLaunch, WorkerRuntime } from "../server/symphonies/workers";
 import type { ExecutionRuntime } from "../server/symphonies/identity";
+import {
+  changesRuntime,
+  type SymphonyChangesRuntime,
+} from "../server/symphonies/changes";
 import {
   latestAttempt,
   type StoredSymphony,
@@ -75,13 +83,17 @@ async function fixture() {
       }
     },
   };
-  const runtime: ExecutionRuntime = {
+  let fingerprintImpl: SymphonyChangesRuntime["fingerprint"] = async () => null;
+  const runtime: ExecutionRuntime & SymphonyChangesRuntime = {
     source: async (agentId) => ({
       agentId,
       concertId: placement.concertId,
     }),
     capture: async (source) => ({ ...placement, ...source }),
     validate: async (_source, score) => validateScore(score),
+    // Tests that care about changed paths install a stateful fake; the default
+    // reports an unavailable observation, as a non-Git checkout would.
+    fingerprint: async (checkout, writes) => fingerprintImpl(checkout, writes),
   };
   let engine = symphonyExecution(
     store,
@@ -167,6 +179,9 @@ async function fixture() {
     setValidate: (fn: (score: { tasks: { writes: string[] }[] }) => void) => {
       validateScore = fn;
     },
+    setFingerprint: (fn: SymphonyChangesRuntime["fingerprint"]) => {
+      fingerprintImpl = fn;
+    },
     rejectNext: () => {
       rejected = true;
     },
@@ -185,6 +200,28 @@ const task = (id: string, dependsOn: string[] = [], writes: string[] = []) => ({
   checks: [],
   profile: "Small",
 });
+
+const execute = promisify(execFile);
+
+/** A committed Git checkout with one tracked file under `src`. */
+async function repository(): Promise<string> {
+  const directory = await testDirectory();
+  const git = (args: string[]) =>
+    execute("git", ["-c", "core.fsmonitor=false", ...args], {
+      cwd: directory,
+      timeout: 5000,
+      maxBuffer: 1_000_000,
+      env: { ...process.env, GIT_OPTIONAL_LOCKS: "0" },
+    });
+  await git(["init", "-q"]);
+  await git(["config", "user.email", "test@example.com"]);
+  await git(["config", "user.name", "Test"]);
+  await mkdir(join(directory, "src"), { recursive: true });
+  await writeFile(join(directory, "src", "a.ts"), "export const a = 1;\n");
+  await git(["add", "."]);
+  await git(["commit", "-q", "-m", "initial"]);
+  return directory;
+}
 
 type OrchestrationFixture = Awaited<ReturnType<typeof fixture>>;
 
@@ -391,6 +428,15 @@ void test("a stopped task agent is nudged once, then blocked, and a failed retry
   });
   assert.equal(latestAttempt(await f.read(plan.id), "a")?.id, a.id);
   assert.equal(f.launches.size, 2);
+  // The same worker choice resumes the same agent with a short continuation.
+  const resumed = f.wakePrompts.find((w) =>
+    w.key?.startsWith(`resume:${a.id}:`),
+  );
+  assert.ok(resumed);
+  assert.match(resumed.prompt, /Continue task a, now attempt/);
+  assert.match(resumed.prompt, /Conductor note: Check the shared schema/);
+  assert.equal(resumed.prompt.includes("CONDUCTOR_JSON"), false);
+  assert.equal(resumed.prompt.includes("--socket"), false);
   await f.report(plan.id, "a", "failed", {
     checks: [{ name: "typecheck", status: "failed", detail: "TS2345" }],
     diagnosis: {
@@ -418,7 +464,7 @@ void test("a stopped task agent is nudged once, then blocked, and a failed retry
   );
   assert.ok(continued);
   assert.match(continued.prompt, /Widen to the schema file/);
-  assert.match(continued.prompt, /3 fix rounds/);
+  assert.match(continued.prompt, /Report or block this attempt when done\./);
 });
 
 void test("a failed retry with a changed worker choice seeds a new agent with the failed report", async () => {
@@ -449,9 +495,12 @@ void test("a failed retry with a changed worker choice seeds a new agent with th
   assert.ok(retry && retry.id !== a.id);
   assert.notEqual(retry.agentId, a.agentId);
   const prompt = f.launches.get(retry.agentId)?.prompt ?? "";
-  assert.match(prompt, /previous attempt failed/i);
-  assert.match(prompt, /shared\/schema\.ts exports the old shape/);
-  assert.match(prompt, /Continue on a different provider/);
+  assert.match(prompt, /You are replacing the agent from the previous attempt/);
+  assert.match(
+    prompt,
+    /- Suspected cause: shared\/schema\.ts exports the old shape/,
+  );
+  assert.match(prompt, /Conductor note: Continue on a different provider/);
 });
 
 void test("uncertain conductor creation retries preserve the planning symphony", async () => {
@@ -866,7 +915,7 @@ void test("a retry prompt drops the failed attempt's temporary widen grants", as
     w.key?.startsWith(`continue:${continued.id}`),
   );
   assert.ok(continuation);
-  assert.match(continuation.prompt, /"src\/a"/);
+  assert.match(continuation.prompt, /src\/a/);
   assert.doesNotMatch(continuation.prompt, /shared\/old\.ts/);
   // The same rule holds for a reserve that creates a fresh agent.
   await f.send(continued.agentId, {
@@ -889,7 +938,7 @@ void test("a retry prompt drops the failed attempt's temporary widen grants", as
   const reserved = latestAttempt(await f.read(plan.id), "a");
   assert.ok(reserved && reserved.id !== continued.id);
   const launchPrompt = f.launches.get(reserved.agentId)?.prompt ?? "";
-  assert.match(launchPrompt, /"src\/a"/);
+  assert.match(launchPrompt, /src\/a/);
   assert.doesNotMatch(launchPrompt, /shared\/new\.ts/);
   const definition = (await f.read(plan.id)).revisions
     .at(-1)
@@ -1440,6 +1489,396 @@ void test("a blocked retry replaces an unavailable agent on the same attempt", a
     false,
   );
   assert.ok(f.launches.has(resumed.agentId));
+  const prompt = f.launches.get(resumed.agentId)?.prompt ?? "";
+  assert.match(prompt, /Task a: a/);
+  assert.match(prompt, /It stopped without reporting\./);
+});
+
+void test("a blocked retry with a changed worker choice rebinds to a new agent with a handoff", async () => {
+  const f = await fixture();
+  const plan = await f.start();
+  const symphony = await f.define(plan, [task("a", [], ["src"])]);
+  const a = latestAttempt(symphony, "a");
+  assert.ok(a && plan.source.agentId);
+  const workerMessage =
+    "Need the user's decision on the pagination compatibility rule.";
+  await f.send(a.agentId, {
+    kind: "block",
+    symphonyId: plan.id,
+    attemptId: a.id,
+    message: workerMessage,
+  });
+  f.active.set(a.agentId, false);
+  await f.reconcile();
+  const blocked = latestAttempt(await f.read(plan.id), "a");
+  assert.equal(blocked?.state, "blocked");
+  assert.equal(blocked?.blockedBy, "worker");
+  // The unavailable observation stores no changed paths.
+  assert.equal(blocked?.changedPaths, undefined);
+  // The blocked agent is still deliverable, but the Conductor named a new
+  // provider, so the attempt is rebound to a fresh agent instead of resumed.
+  await f.send(plan.source.agentId, {
+    kind: "dispatch",
+    symphonyId: plan.id,
+    retryTaskId: "a",
+    provider: "pi",
+    note: "Try a different provider",
+  });
+  const rebound = latestAttempt(await f.read(plan.id), "a");
+  assert.equal(rebound?.id, a.id);
+  assert.notEqual(rebound?.agentId, a.agentId);
+  assert.equal(rebound?.state, "running");
+  assert.equal(rebound?.launch?.provider, "pi");
+  assert.equal(rebound?.launch?.profile, "inherit");
+  assert.equal(
+    f.wakePrompts.some((w) => w.key?.startsWith("resume:")),
+    false,
+    "a changed choice never resumes the old agent",
+  );
+  assert.ok(f.launches.has(rebound.agentId));
+  const prompt = f.launches.get(rebound.agentId)?.prompt ?? "";
+  // The replacement gets the full assignment, not a resume prompt.
+  assert.match(prompt, /Task a: a/);
+  assert.match(prompt, /Goal: Inspect API and UI independently/);
+  assert.match(prompt, /Assignment: Inspect a/);
+  assert.match(prompt, /Reads: none/);
+  assert.match(prompt, /Writes: src/);
+  assert.match(prompt, /Required checks: none/);
+  assert.match(prompt, /up to 3 rounds/);
+  assert.match(prompt, /\[Conductor agent commands\]/);
+  // The handoff keeps the worker's block message, which is overwritten on the
+  // attempt, and names the changed paths as unknown until fingerprinting lands.
+  assert.match(prompt, /Attempt 1 of 1 for task a\./);
+  assert.match(
+    prompt,
+    /It blocked with: `Need the user's decision on the pagination compatibility rule\.`/,
+  );
+  assert.match(prompt, /Conductor note: Try a different provider/);
+  assert.match(prompt, /Changed files are unknown; review your write paths\./);
+  assert.equal(prompt.includes("CONDUCTOR_JSON"), false);
+  assert.equal(prompt.includes("--socket"), false);
+  assert.equal(prompt.includes("--agent"), false);
+});
+
+void test("an attempt records the write paths it changed and passes them to a replacement", async () => {
+  const f = await fixture();
+  const plan = await f.start();
+  const dirty = new Map<string, string>([["src/keep.ts", "keep"]]);
+  f.setFingerprint(async () => ({
+    paths: [...dirty].map(([path, hash]) => ({ path, hash })),
+  }));
+  const symphony = await f.define(plan, [task("a", [], ["src"])]);
+  const a = latestAttempt(symphony, "a");
+  assert.ok(a && plan.source.agentId);
+  // A pre-existing dirty file already matches the launch baseline; only the
+  // path changed during this attempt is recorded.
+  dirty.set("src/added.ts", "added");
+  await f.send(a.agentId, {
+    kind: "block",
+    symphonyId: plan.id,
+    attemptId: a.id,
+    message: "Need the pagination decision",
+  });
+  f.active.set(a.agentId, false);
+  await f.reconcile();
+  const blocked = latestAttempt(await f.read(plan.id), "a");
+  assert.deepEqual(blocked?.changedPaths, ["src/added.ts"]);
+  assert.equal(blocked?.changedPathsTruncated, false);
+  // The replacement handoff lists the changed path instead of "unknown".
+  await f.send(plan.source.agentId, {
+    kind: "dispatch",
+    symphonyId: plan.id,
+    retryTaskId: "a",
+    provider: "pi",
+  });
+  const rebound = latestAttempt(await f.read(plan.id), "a");
+  assert.equal(rebound?.id, a.id);
+  assert.notEqual(rebound?.agentId, a.agentId);
+  const prompt = f.launches.get(rebound.agentId)?.prompt ?? "";
+  assert.match(
+    prompt,
+    /Files in your write paths changed by earlier attempts:/,
+  );
+  assert.match(prompt, /- src\/added\.ts/);
+  assert.equal(prompt.includes("Changed files are unknown"), false);
+});
+
+void test("changed paths are capped at the stored limit and mark truncation", async () => {
+  const f = await fixture();
+  const dirty = new Map<string, string>();
+  f.setFingerprint(async () => ({
+    paths: [...dirty].map(([path, hash]) => ({ path, hash })),
+  }));
+  const plan = await f.start();
+  const symphony = await f.define(plan, [task("a", [], ["src"])]);
+  const a = latestAttempt(symphony, "a");
+  assert.ok(a && plan.source.agentId);
+  for (let index = 0; index < 60; index += 1) {
+    dirty.set(`src/file-${String(index).padStart(2, "0")}.ts`, `v${index}`);
+  }
+  await f.send(a.agentId, {
+    kind: "block",
+    symphonyId: plan.id,
+    attemptId: a.id,
+    message: "Blocked after many edits",
+  });
+  const blocked = latestAttempt(await f.read(plan.id), "a");
+  assert.equal(blocked?.changedPaths?.length, 50);
+  assert.equal(blocked?.changedPathsTruncated, true);
+});
+
+void test("a failed retry with a changed worker choice passes changed paths to the replacement", async () => {
+  const f = await fixture();
+  const plan = await f.start();
+  const dirty = new Map<string, string>([["src/keep.ts", "keep"]]);
+  f.setFingerprint(async () => ({
+    paths: [...dirty].map(([path, hash]) => ({ path, hash })),
+  }));
+  const symphony = await f.define(plan, [task("a", [], ["src"])]);
+  const a = latestAttempt(symphony, "a");
+  assert.ok(a && plan.source.agentId);
+  dirty.set("src/new.ts", "new");
+  await f.report(plan.id, "a", "failed");
+  const failed = latestAttempt(await f.read(plan.id), "a");
+  assert.deepEqual(failed?.changedPaths, ["src/new.ts"]);
+  f.active.set(a.agentId, false);
+  await f.reconcile();
+  await f.send(plan.source.agentId, {
+    kind: "dispatch",
+    symphonyId: plan.id,
+    retryTaskId: "a",
+    provider: "pi",
+  });
+  const retry = latestAttempt(await f.read(plan.id), "a");
+  assert.ok(retry && retry.id !== a.id);
+  const prompt = f.launches.get(retry.agentId)?.prompt ?? "";
+  assert.match(prompt, /- src\/new\.ts/);
+  assert.equal(prompt.includes("Changed files are unknown"), false);
+});
+
+void test("a blocked rebind with only a provider clears the old model and thinking option", async () => {
+  const f = await fixture();
+  const plan = await f.start();
+  const symphony = await f.define(plan, [
+    {
+      id: "a",
+      title: "a",
+      description: "Inspect a",
+      dependsOn: [],
+      reads: [],
+      writes: ["src"],
+      checks: [],
+      provider: "fake",
+      model: "model",
+      thinkingOptionId: "high",
+    },
+  ]);
+  const a = latestAttempt(symphony, "a");
+  assert.ok(a && plan.source.agentId);
+  assert.equal(a.launch?.provider, "fake");
+  assert.equal(a.launch?.model, "model");
+  assert.equal(a.launch?.thinkingOptionId, "high");
+  await f.send(a.agentId, {
+    kind: "block",
+    symphonyId: plan.id,
+    attemptId: a.id,
+    message: "Need another provider",
+  });
+  f.active.set(a.agentId, false);
+  await f.reconcile();
+  // A provider-only switch replaces the whole worker choice rather than
+  // merging it over the old launch.
+  await f.send(plan.source.agentId, {
+    kind: "dispatch",
+    symphonyId: plan.id,
+    retryTaskId: "a",
+    provider: "pi",
+  });
+  const rebound = latestAttempt(await f.read(plan.id), "a");
+  assert.equal(rebound?.id, a.id);
+  assert.notEqual(rebound?.agentId, a.agentId);
+  assert.equal(rebound?.launch?.profile, "inherit");
+  assert.equal(rebound?.launch?.provider, "pi");
+  assert.equal(rebound?.launch?.model, undefined);
+  assert.equal(rebound?.launch?.thinkingOptionId, undefined);
+  assert.ok(f.launches.has(rebound.agentId));
+  assert.equal(f.launches.get(rebound.agentId)?.model, undefined);
+  assert.equal(f.launches.get(rebound.agentId)?.thinkingOptionId, undefined);
+});
+
+void test("a same-agent resume keeps its baseline so changed paths stay cumulative", async () => {
+  const f = await fixture();
+  const plan = await f.start();
+  const dirty = new Map<string, string>([["src/keep.ts", "keep"]]);
+  f.setFingerprint(async () => ({
+    paths: [...dirty].map(([path, hash]) => ({ path, hash })),
+  }));
+  const symphony = await f.define(plan, [task("a", [], ["src"])]);
+  const a = latestAttempt(symphony, "a");
+  assert.ok(a && plan.source.agentId);
+  dirty.set("src/a.ts", "a");
+  await f.send(a.agentId, {
+    kind: "block",
+    symphonyId: plan.id,
+    attemptId: a.id,
+    message: "Blocked after editing A",
+  });
+  f.active.set(a.agentId, false);
+  await f.reconcile();
+  const first = latestAttempt(await f.read(plan.id), "a");
+  assert.deepEqual(first?.changedPaths, ["src/a.ts"]);
+  assert.ok(first?.writeFingerprint);
+  // The same worker choice resumes the same agent on the same attempt, and the
+  // original launch baseline survives so the list stays cumulative.
+  await f.send(plan.source.agentId, {
+    kind: "dispatch",
+    symphonyId: plan.id,
+    retryTaskId: "a",
+  });
+  const resumed = latestAttempt(await f.read(plan.id), "a");
+  assert.equal(resumed?.id, a.id);
+  assert.equal(resumed?.agentId, a.agentId);
+  assert.deepEqual(resumed?.changedPaths, ["src/a.ts"]);
+  assert.ok(resumed?.writeFingerprint);
+  dirty.set("src/b.ts", "b");
+  await f.send(a.agentId, {
+    kind: "block",
+    symphonyId: plan.id,
+    attemptId: a.id,
+    message: "Blocked after editing B",
+  });
+  f.active.set(a.agentId, false);
+  await f.reconcile();
+  const second = latestAttempt(await f.read(plan.id), "a");
+  assert.deepEqual(second?.changedPaths, ["src/a.ts", "src/b.ts"]);
+});
+
+void test("a replacement handoff lists the union of every earlier attempt's changed paths", async () => {
+  const f = await fixture();
+  const plan = await f.start();
+  const dirty = new Map<string, string>([["src/keep.ts", "keep"]]);
+  f.setFingerprint(async () => ({
+    paths: [...dirty].map(([path, hash]) => ({ path, hash })),
+  }));
+  const symphony = await f.define(plan, [task("a", [], ["src"])]);
+  const first = latestAttempt(symphony, "a");
+  assert.ok(first && plan.source.agentId);
+  dirty.set("src/a.ts", "a");
+  await f.report(plan.id, "a", "failed");
+  assert.deepEqual(latestAttempt(await f.read(plan.id), "a")?.changedPaths, [
+    "src/a.ts",
+  ]);
+  f.active.set(first.agentId, false);
+  await f.reconcile();
+  // A changed worker choice creates attempt 2, which edits B and blocks.
+  await f.send(plan.source.agentId, {
+    kind: "dispatch",
+    symphonyId: plan.id,
+    retryTaskId: "a",
+    provider: "pi",
+  });
+  const second = latestAttempt(await f.read(plan.id), "a");
+  assert.ok(second && second.id !== first.id);
+  dirty.set("src/b.ts", "b");
+  await f.send(second.agentId, {
+    kind: "block",
+    symphonyId: plan.id,
+    attemptId: second.id,
+    message: "Blocked after editing B",
+  });
+  f.active.set(second.agentId, false);
+  await f.reconcile();
+  await f.send(plan.source.agentId, {
+    kind: "dispatch",
+    symphonyId: plan.id,
+    retryTaskId: "a",
+    provider: "other",
+  });
+  const rebound = latestAttempt(await f.read(plan.id), "a");
+  assert.equal(rebound?.id, second.id);
+  const prompt = f.launches.get(rebound?.agentId ?? "")?.prompt ?? "";
+  assert.match(prompt, /- src\/a\.ts/);
+  assert.match(prompt, /- src\/b\.ts/);
+  assert.equal(prompt.includes("Changed files are unknown"), false);
+  assert.equal(prompt.includes("This list may be incomplete"), false);
+});
+
+void test("a handoff marks the union incomplete when an earlier attempt was unobservable", async () => {
+  const f = await fixture();
+  const plan = await f.start();
+  // The first attempt launches with no fingerprint runtime, so it never has an
+  // observation at all.
+  const symphony = await f.define(plan, [task("a", [], ["src"])]);
+  const first = latestAttempt(symphony, "a");
+  assert.ok(first && plan.source.agentId);
+  assert.equal(first.writeFingerprint, undefined);
+  await f.report(plan.id, "a", "failed");
+  f.active.set(first.agentId, false);
+  await f.reconcile();
+  const dirty = new Map<string, string>([["src/keep.ts", "keep"]]);
+  f.setFingerprint(async () => ({
+    paths: [...dirty].map(([path, hash]) => ({ path, hash })),
+  }));
+  await f.send(plan.source.agentId, {
+    kind: "dispatch",
+    symphonyId: plan.id,
+    retryTaskId: "a",
+    provider: "pi",
+  });
+  const second = latestAttempt(await f.read(plan.id), "a");
+  assert.ok(second && second.id !== first.id);
+  dirty.set("src/b.ts", "b");
+  await f.send(second.agentId, {
+    kind: "block",
+    symphonyId: plan.id,
+    attemptId: second.id,
+    message: "Blocked after editing B",
+  });
+  f.active.set(second.agentId, false);
+  await f.reconcile();
+  await f.send(plan.source.agentId, {
+    kind: "dispatch",
+    symphonyId: plan.id,
+    retryTaskId: "a",
+    provider: "other",
+  });
+  const rebound = latestAttempt(await f.read(plan.id), "a");
+  const prompt = f.launches.get(rebound?.agentId ?? "")?.prompt ?? "";
+  assert.match(prompt, /- src\/b\.ts/);
+  assert.match(
+    prompt,
+    /This list may be incomplete; review your write paths\./,
+  );
+});
+
+void test("a terminal attempt drops its launch baseline", async () => {
+  const f = await fixture();
+  const plan = await f.start();
+  f.setFingerprint(async () => ({
+    paths: [{ path: "src/keep.ts", hash: "keep" }],
+  }));
+  const symphony = await f.define(plan, [task("a")]);
+  const a = latestAttempt(symphony, "a");
+  assert.ok(a && plan.source.agentId);
+  assert.ok(a.writeFingerprint, "the launch records a baseline");
+  await f.report(plan.id, "a");
+  const completed = latestAttempt(await f.read(plan.id), "a");
+  assert.equal(completed?.state, "completed");
+  assert.equal(completed?.writeFingerprint, undefined);
+
+  const failedRun = await fixture();
+  const failedPlan = await failedRun.start("failed-baseline");
+  failedRun.setFingerprint(async () => ({
+    paths: [{ path: "src/keep.ts", hash: "keep" }],
+  }));
+  const failedSymphony = await failedRun.define(failedPlan, [task("a")]);
+  const failedAttempt = latestAttempt(failedSymphony, "a");
+  assert.ok(failedAttempt && failedPlan.source.agentId);
+  assert.ok(failedAttempt.writeFingerprint);
+  await failedRun.report(failedPlan.id, "a", "failed");
+  const failed = latestAttempt(await failedRun.read(failedPlan.id), "a");
+  assert.equal(failed?.state, "failed");
+  assert.equal(failed?.writeFingerprint, undefined);
 });
 
 void test("a task agent block settles without a nudge and keeps its message", async () => {
@@ -1643,4 +2082,272 @@ void test("a refused retry names the concurrency limit and saves no added writes
     "a refused retry must not save its added writes",
   );
   assert.equal(latestAttempt(refused, "a")?.id, a.id);
+});
+
+void test("an unknown launch baseline is never recaptured by a rebind", async () => {
+  const f = await fixture();
+  const plan = await f.start();
+  // The default fingerprint runtime reports an unavailable observation, as a
+  // non-Git checkout would, so the attempt's first baseline is unknown.
+  const current = await f.define(plan, [task("a", [], ["src"])]);
+  const a = latestAttempt(current, "a");
+  assert.ok(a && plan.source.agentId);
+  assert.equal(a.writeFingerprint, undefined);
+  assert.equal(a.writeFingerprintUnknown, true);
+  await f.send(a.agentId, {
+    kind: "block",
+    symphonyId: plan.id,
+    attemptId: a.id,
+    message: "Edited while the baseline was unknown",
+  });
+  f.active.set(a.agentId, false);
+  await f.reconcile();
+  // A later observation becomes available. The same attempt must not capture
+  // it: the observation already contains the earlier agent's edits, so a
+  // capture now would report an empty change list as if nothing had happened.
+  f.setFingerprint(async () => ({
+    paths: [{ path: "src/earlier.ts", hash: "earlier-worker-edit" }],
+  }));
+  await f.send(plan.source.agentId, {
+    kind: "dispatch",
+    symphonyId: plan.id,
+    retryTaskId: "a",
+    provider: "pi",
+  });
+  const rebound = latestAttempt(await f.read(plan.id), "a");
+  assert.equal(rebound?.id, a.id);
+  assert.notEqual(rebound?.agentId, a.agentId);
+  assert.equal(
+    rebound?.writeFingerprint,
+    undefined,
+    "a rebind cannot acquire a late baseline",
+  );
+  assert.equal(rebound?.writeFingerprintUnknown, true);
+  await f.report(plan.id, "a");
+  const terminal = latestAttempt(await f.read(plan.id), "a");
+  assert.equal(terminal?.state, "completed");
+  assert.equal(
+    terminal?.changedPaths,
+    undefined,
+    "an unknown baseline leaves changed paths absent",
+  );
+});
+
+void test("a launched attempt stored before baselines stays unknown across a rebind", async () => {
+  const f = await fixture();
+  const plan = await f.start();
+  const current = await f.define(plan, [task("a", [], ["src"])]);
+  const a = latestAttempt(current, "a");
+  assert.ok(a && plan.source.agentId);
+  await f.send(a.agentId, {
+    kind: "block",
+    symphonyId: plan.id,
+    attemptId: a.id,
+    message: "Blocked before the upgrade",
+  });
+  f.active.set(a.agentId, false);
+  await f.reconcile();
+  // A record written before baselines existed has neither baseline field.
+  const blocked = await f.read(plan.id);
+  await f.store.update(blocked.id, blocked.version, (value) => {
+    const attempt = latestAttempt(value, "a");
+    if (attempt) {
+      delete attempt.writeFingerprint;
+      delete attempt.writeFingerprintUnknown;
+    }
+    return value;
+  });
+  // The checkout now holds the earlier agent's edits; a capture would hide them.
+  f.setFingerprint(async () => ({
+    paths: [{ path: "src/earlier.ts", hash: "earlier-worker-edit" }],
+  }));
+  await f.send(plan.source.agentId, {
+    kind: "dispatch",
+    symphonyId: plan.id,
+    retryTaskId: "a",
+    provider: "pi",
+  });
+  const rebound = latestAttempt(await f.read(plan.id), "a");
+  assert.equal(rebound?.id, a.id);
+  assert.notEqual(rebound?.agentId, a.agentId);
+  assert.equal(
+    rebound?.writeFingerprint,
+    undefined,
+    "a rebind of a launched legacy attempt cannot acquire a late baseline",
+  );
+  assert.equal(rebound?.writeFingerprintUnknown, true);
+  await f.report(plan.id, "a");
+  const terminal = latestAttempt(await f.read(plan.id), "a");
+  assert.equal(terminal?.state, "completed");
+  assert.equal(terminal?.changedPaths, undefined);
+});
+
+void test("a failed same-agent continuation keeps its unknown baseline across a rebind", async () => {
+  const f = await fixture();
+  const plan = await f.start("continued-unknown");
+  // The first attempt launches with an observed baseline so only the
+  // continuation's missing observation is under test.
+  f.setFingerprint(async () => ({ paths: [] }));
+  const launched = await f.define(plan, [task("a", [], ["src"])]);
+  const first = latestAttempt(launched, "a");
+  assert.ok(first && plan.source.agentId);
+  await f.report(plan.id, "a", "failed");
+  f.active.set(first.agentId, false);
+  await f.reconcile();
+  // The continuation's first observation is unavailable, as a non-Git checkout
+  // or a failed Git call would report.
+  f.setFingerprint(async () => null);
+  await f.send(plan.source.agentId, {
+    kind: "dispatch",
+    symphonyId: plan.id,
+    retryTaskId: "a",
+  });
+  const continued = latestAttempt(await f.read(plan.id), "a");
+  assert.ok(continued && continued.id !== first.id);
+  assert.equal(continued.agentId, first.agentId);
+  assert.equal(continued.writeFingerprint, undefined);
+  assert.equal(continued.writeFingerprintUnknown, true);
+  await f.send(continued.agentId, {
+    kind: "block",
+    symphonyId: plan.id,
+    attemptId: continued.id,
+    message: "Edited while the continuation baseline was unknown",
+  });
+  f.active.set(continued.agentId, false);
+  await f.reconcile();
+  // The observation becomes available again. The rebind must not capture it:
+  // it already contains this agent's edits, so a capture would hide them.
+  f.setFingerprint(async () => ({
+    paths: [{ path: "src/continued.ts", hash: "prior-edit" }],
+  }));
+  await f.send(plan.source.agentId, {
+    kind: "dispatch",
+    symphonyId: plan.id,
+    retryTaskId: "a",
+    provider: "pi",
+  });
+  const rebound = latestAttempt(await f.read(plan.id), "a");
+  assert.equal(rebound?.id, continued.id);
+  assert.notEqual(rebound?.agentId, continued.agentId);
+  assert.equal(
+    rebound?.writeFingerprint,
+    undefined,
+    "a continuation cannot acquire a late baseline",
+  );
+  assert.equal(rebound?.writeFingerprintUnknown, true);
+  await f.report(plan.id, "a");
+  const terminal = latestAttempt(await f.read(plan.id), "a");
+  assert.equal(terminal?.state, "completed");
+  assert.equal(
+    terminal?.changedPaths,
+    undefined,
+    "an unknown baseline leaves changed paths absent",
+  );
+});
+
+void test("a trailing-space file name produces no phantom changed paths", async () => {
+  const directory = await repository();
+  const changes = changesRuntime();
+  await writeFile(join(directory, "src", "note.ts "), "export {};\n");
+  const f = await fixture();
+  f.setFingerprint(async (_checkout, writes) =>
+    changes.fingerprint(directory, writes),
+  );
+  const plan = await f.start("real-spaces");
+  const symphony = await f.define(plan, [task("a", [], ["src"])]);
+  const a = latestAttempt(symphony, "a");
+  assert.ok(a && plan.source.agentId);
+  // The launch persisted the observed name, including its trailing space.
+  assert.deepEqual(
+    a.writeFingerprint?.map((entry) => entry.path),
+    ["src/note.ts "],
+  );
+  await f.send(a.agentId, {
+    kind: "block",
+    symphonyId: plan.id,
+    attemptId: a.id,
+    message: "No edits since the baseline",
+  });
+  f.active.set(a.agentId, false);
+  await f.reconcile();
+  const blocked = latestAttempt(await f.read(plan.id), "a");
+  assert.deepEqual(blocked?.changedPaths, []);
+});
+
+void test("a changed worker choice on an uncertain launch is refused before any mutation", async () => {
+  const f = await fixture();
+  const plan = await f.start();
+  f.loseAck();
+  const current = await f.define(plan, [task("a", [], ["src"])]);
+  const a = latestAttempt(current, "a");
+  assert.ok(a && plan.source.agentId);
+  assert.equal(a.launch?.state, "uncertain");
+  // The lost launch never appears, so the bounded re-check settles it blocked.
+  f.launches.delete(a.agentId);
+  f.active.set(a.agentId, false);
+  await f.reconcile();
+  const blocked = latestAttempt(await f.read(plan.id), "a");
+  assert.equal(blocked?.state, "blocked");
+  assert.equal(blocked?.launch?.state, "uncertain");
+  assert.equal(blocked?.launch?.settled, true);
+  const before = await f.read(plan.id);
+  await assert.rejects(
+    f.send(plan.source.agentId, {
+      kind: "dispatch",
+      symphonyId: plan.id,
+      retryTaskId: "a",
+      provider: "pi",
+    }),
+    (error: unknown) =>
+      error instanceof SymphonyError &&
+      /dispatch without a replacement worker choice/.test(error.message),
+  );
+  const after = await f.read(plan.id);
+  assert.equal(
+    after.version,
+    before.version,
+    "a refused dispatch mutates nothing",
+  );
+  const unchanged = latestAttempt(after, "a");
+  assert.equal(unchanged?.agentId, a.agentId);
+  assert.equal(unchanged?.state, "blocked");
+  assert.equal(unchanged?.launch?.state, "uncertain");
+  assert.equal(unchanged?.launch?.provider, a.launch?.provider);
+  // Dispatching without a replacement still reconciles the saved identity.
+  await f.send(plan.source.agentId, {
+    kind: "dispatch",
+    symphonyId: plan.id,
+    retryTaskId: "a",
+  });
+  const reconciled = latestAttempt(await f.read(plan.id), "a");
+  assert.equal(reconciled?.id, a.id);
+  assert.equal(reconciled?.agentId, a.agentId);
+  assert.equal(reconciled?.launch?.state, "started");
+  assert.equal(reconciled?.state, "running");
+});
+
+void test("an uncertain launch reconciles when the same worker choice is dispatched", async () => {
+  const f = await fixture();
+  const plan = await f.start();
+  f.loseAck();
+  const current = await f.define(plan, [task("a", [], ["src"])]);
+  const a = latestAttempt(current, "a");
+  assert.ok(a && plan.source.agentId);
+  f.launches.delete(a.agentId);
+  f.active.set(a.agentId, false);
+  await f.reconcile();
+  assert.equal(
+    latestAttempt(await f.read(plan.id), "a")?.launch?.settled,
+    true,
+  );
+  await f.send(plan.source.agentId, {
+    kind: "dispatch",
+    symphonyId: plan.id,
+    retryTaskId: "a",
+    profile: "Small",
+  });
+  const reconciled = latestAttempt(await f.read(plan.id), "a");
+  assert.equal(reconciled?.id, a.id);
+  assert.equal(reconciled?.agentId, a.agentId);
+  assert.equal(reconciled?.launch?.state, "started");
 });

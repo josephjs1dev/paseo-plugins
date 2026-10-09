@@ -1,6 +1,10 @@
 import {
-  retryInstructions,
-  workerInstructions,
+  handoffInstructions,
+  taskAssignmentPrompt,
+  continuationPrompt,
+  nudgePrompt,
+  unionChangedPaths,
+  type AttemptPosition,
   type CommandLine,
 } from "./prompts";
 import { symphonyConductor } from "./conductor";
@@ -26,6 +30,11 @@ import {
   type WorkerChoice,
 } from "../../shared/symphonies/commands";
 import { commandSymphonyId, type ExecutionRuntime } from "./identity";
+import {
+  recordChangedPaths,
+  type ChangedPaths,
+  type SymphonyChangesRuntime,
+} from "./changes";
 import { contentHash, type SymphonyStore } from "./store";
 import { SymphonyError, LaunchRejectedError } from "./errors";
 import { attemptHoldsResources, executionStatus } from "./results";
@@ -103,9 +112,21 @@ function launchChoice(launch: NonNullable<Attempt["launch"]>): WorkerChoice {
   };
 }
 
+/** A short label for a launch's worker choice, used in a handoff preamble. */
+function workerLabel(launch: Attempt["launch"] | undefined): string {
+  if (!launch) {
+    return "unknown";
+  }
+  const choice = workerChoice(launch);
+  if (choice.provider && choice.model) {
+    return `${choice.provider}/${choice.model}`;
+  }
+  return choice.provider ?? choice.model ?? choice.profile ?? "unknown";
+}
+
 export function orchestration(
   store: SymphonyStore,
-  runtime: () => ExecutionRuntime,
+  runtime: () => ExecutionRuntime & Partial<SymphonyChangesRuntime>,
   workers: () => WorkerRuntime,
   command: CommandLine,
 ) {
@@ -222,6 +243,33 @@ export function orchestration(
       ...(additions?.map((grant) => grant.path) ?? []),
     ]),
   ];
+  /**
+   * The changed-path fields to store when an attempt settles: fingerprint the
+   * attempt's effective write scope now and diff it against the baseline
+   * recorded when it launched. Empty when either observation is unknown, such
+   * as a non-Git checkout.
+   */
+  const changedPathFields = async (
+    current: StoredSymphony,
+    attempt: Attempt,
+  ): Promise<Partial<ChangedPaths>> => {
+    if (!attempt.writeFingerprint) {
+      return {};
+    }
+    const task = current.revisions
+      .at(-1)
+      ?.score.tasks.find((entry) => entry.id === attempt.taskId);
+    if (!task) {
+      return {};
+    }
+    const changed = await recordChangedPaths(
+      runtime(),
+      current.source.checkout,
+      effectiveTask(current, task).writes,
+      attempt.writeFingerprint,
+    );
+    return changed ?? {};
+  };
   /** The bounded per-task position a newly created attempt will occupy. */
   const newAttemptPosition = (current: StoredSymphony, taskId: string) => {
     const total = taskAttempts(current, taskId).length + 1;
@@ -247,6 +295,30 @@ export function orchestration(
       );
     }
     return merged;
+  };
+  /**
+   * The full assignment for a new or replacement agent, combined with an
+   * optional handoff. Both `reserve` and a blocked rebind use it so their
+   * prompts stay identical apart from the handoff.
+   */
+  const agentPrompt = (assignment: string, handoff: string | null): string =>
+    [assignment, handoff]
+      .filter((part): part is string => Boolean(part))
+      .join("\n\n");
+  /**
+   * The handoff fields for a replacement agent: the union of every earlier
+   * attempt's changed paths. Omits `changedPaths` entirely when no attempt was
+   * observable, so the handoff can say the files are unknown.
+   */
+  const handoffPaths = (current: StoredSymphony, taskId: string) => {
+    const union = unionChangedPaths(taskAttempts(current, taskId));
+    return {
+      ...(union.observed ? { changedPaths: union.paths } : {}),
+      ...(union.truncated ? { changedPathsTruncated: true } : {}),
+      ...(union.observed && union.incomplete
+        ? { changedPathsIncomplete: true }
+        : {}),
+    };
   };
   const reserve = async (
     symphonyId: string,
@@ -287,30 +359,28 @@ export function orchestration(
       const attemptId = randomUUID();
       const workerId = commandSymphonyId(current.id, attemptId);
       const { context } = await store.read(current.id);
-      const prerequisiteReports = task.prerequisites.map((id) => {
-        const report = latestAttempt(current, id)?.report;
-        return {
-          taskId: id,
-          outcome: report?.outcome,
-          summary: report?.summary.slice(0, 1000),
-          evidence: report?.evidence
-            .slice(0, 2)
-            .map((value) => value.slice(0, 300)),
-          checks: report?.checks.map((check) => ({
-            name: check.name.slice(0, 80),
-            status: check.status,
-          })),
-        };
-      });
-      const priorText = options.prior
-        ? `\n${retryInstructions(
-            options.prior,
-            false,
-            newAttemptPosition(current, task.id),
-          )}`
-        : "";
       const writes = nextAttemptWrites(current, task, options.additions ?? []);
-      const prompt = `You are a task agent in Conductor symphony ${current.id}. Your assigned task is ${task.id}: ${task.title}.\nSymphony goal: ${context.plan}\nAssignment: ${task.outcome}\nRead scope: ${JSON.stringify(task.reads)}\nWrite scope: ${JSON.stringify(writes)}\nRequired checks: ${JSON.stringify(task.checks)}\nPrerequisite reports: ${JSON.stringify(prerequisiteReports)}${priorText}\nWork in the provided concert. Other agents may be reading it. Only edit the declared write scope; writes [] means read-only. Do not commit, push, reload plugins, launch extra agents, or expand this assignment. Respect repository instructions.\nYou are already assigned attempt ${attemptId}; do not start a new symphony or claim another task. ${workerInstructions(command, workerId, current.id, attemptId, task.checks)}\nYour Conductor agent is ${current.source.agentId}.`;
+      // A replacement agent gets the full assignment plus a handoff; its own
+      // conversation does not exist yet. Changed files are recorded later.
+      const handoff = options.retry
+        ? handoffInstructions({
+            attempt: newAttemptPosition(current, task.id),
+            previousWorker: workerLabel(previous?.launch),
+            report: options.prior?.report ?? null,
+            ...handoffPaths(current, task.id),
+            ...(options.prior?.note ? { note: options.prior.note } : {}),
+          })
+        : null;
+      const prompt = agentPrompt(
+        taskAssignmentPrompt({
+          symphony: current,
+          task,
+          attemptId,
+          plan: context.plan,
+          writes,
+        }),
+        handoff,
+      );
       execution.attempts.push({
         id: attemptId,
         taskId: task.id,
@@ -379,6 +449,34 @@ export function orchestration(
           }
         });
       }
+      // The agent has not started yet, so this is the write-scope baseline its
+      // settle observation is compared against. Persist it before the launch so
+      // an uncertain launch keeps the first observation instead of re-basing
+      // onto changes the lost launch may already have made. An attempt whose
+      // first observation was unavailable is recorded as unknown and never
+      // recaptured: a later rebind would otherwise capture a baseline that
+      // already includes the earlier agent's edits and hide them.
+      if (!attempt.writeFingerprint && !attempt.writeFingerprintUnknown) {
+        const baseline = await runtime().fingerprint?.(
+          symphony.source.checkout,
+          attemptWrites(symphony, task),
+        );
+        await change(symphonyId, (current) => {
+          const active = latestAttempt(current, task.id);
+          if (
+            active?.launch &&
+            active.id === attempt.id &&
+            !active.writeFingerprint &&
+            !active.writeFingerprintUnknown
+          ) {
+            if (baseline) {
+              active.writeFingerprint = baseline.paths;
+            } else {
+              active.writeFingerprintUnknown = true;
+            }
+          }
+        });
+      }
       creationStarted = true;
       await workers().launch({ ...input, config });
       await change(symphonyId, (current) => {
@@ -424,6 +522,11 @@ export function orchestration(
             active.reportHash = contentHash(JSON.stringify(active.report));
             active.endedAt = Date.now();
             active.message = null;
+            // A terminal attempt never resumes, so its baseline (or its
+            // unknown marker) is no longer needed and must not grow stored
+            // symphonies.
+            delete active.writeFingerprint;
+            delete active.writeFingerprintUnknown;
           } else {
             active.launch.state = "uncertain";
             active.state = "running";
@@ -575,16 +678,6 @@ export function orchestration(
       }
     });
   };
-  /** A resume/continuation prompt for waking an existing agent on an attempt. */
-  const resumePrompt = (
-    symphonyId: string,
-    task: TaskDefinition,
-    attempt: Attempt,
-    writes: string[],
-    position: { taskId: string; number: number; total: number },
-    prior: { report: TaskReport | null; note?: string },
-  ) =>
-    `Resume task ${task.id} in symphony ${symphonyId}, attempt ${attempt.id}. Resolve the blocker using the source conversation. Write scope: ${JSON.stringify(writes)}.\n${retryInstructions(prior, true, position)}\n${workerInstructions(command, attempt.agentId, symphonyId, attempt.id, task.checks)}`;
   /**
    * A failed task continues on its previous agent: a new attempt records the
    * work but the task agent keeps its conversation. The failed report stays
@@ -602,7 +695,25 @@ export function orchestration(
     // The continuation keeps the failed attempt's worker choice.
     const choice = workerChoice(launch);
     const initial = (await store.read(symphonyId)).symphony;
-    const prompt = `Continue task ${task.id} in symphony ${symphonyId} on attempt ${attemptId}. Your previous attempt failed; the server kept your conversation context. Write scope: ${JSON.stringify(nextAttemptWrites(initial, task, additions ?? []))}.\n${retryInstructions(prior, true, newAttemptPosition(initial, task.id))}\n${workerInstructions(command, previous.agentId, symphonyId, attemptId, task.checks)}`;
+    const writes = nextAttemptWrites(initial, task, additions ?? []);
+    // The continued agent starts from the checkout as it is now, so its own
+    // changed paths are measured against this baseline. Persist it before the
+    // continuation so a later blocked rebind keeps the first observation
+    // instead of re-basing onto changes this agent may already have made. An
+    // unavailable observation is recorded as unknown and never recaptured,
+    // mirroring `launchAttempt`.
+    const baseline = await runtime().fingerprint?.(
+      initial.source.checkout,
+      writes,
+    );
+    const prompt = continuationPrompt({
+      taskId: task.id,
+      attemptId,
+      position: newAttemptPosition(initial, task.id),
+      ...(prior.note ? { note: prior.note } : {}),
+      writes,
+      added: additions?.map((grant) => grant.path) ?? [],
+    });
     let created = false;
     await store.update(symphonyId, initial.version, async (current) => {
       const execution = current.execution;
@@ -630,6 +741,9 @@ export function orchestration(
         report: null,
         reportHash: null,
         ...(additions?.length ? { addedWrites: additions } : {}),
+        ...(baseline
+          ? { writeFingerprint: baseline.paths }
+          : { writeFingerprintUnknown: true }),
         wake: { key: `continue:${attemptId}`, prompt },
         launch: {
           state: "started",
@@ -684,6 +798,21 @@ export function orchestration(
       if (!currentTask) {
         throw new SymphonyError("Unknown task.");
       }
+      // An uncertain launch may still appear, so rebinding it to a replacement
+      // agent could create a duplicate. Refuse a changed worker choice before
+      // any mutation and ask the Conductor to reconcile the saved identity
+      // first. Dispatch without a replacement keeps reconciling as before.
+      const requested = workerChoice(replacement ?? {});
+      if (
+        attempt.state === "blocked" &&
+        attempt.launch.state === "uncertain" &&
+        Object.keys(requested).length > 0 &&
+        !sameWorkerChoice(currentTask, attempt, replacement)
+      ) {
+        throw new SymphonyError(
+          "This task's launch is unconfirmed; dispatch without a replacement worker choice to reconcile it first.",
+        );
+      }
       // Decide before any mutation, including addWrites, whether the retry can
       // start now. Otherwise dispatch would report success while the retry
       // silently never started and any added writes stayed saved.
@@ -715,22 +844,27 @@ export function orchestration(
         ...(note ? { note } : {}),
       };
       if (attempt.state === "blocked" && attempt.launch.state === "started") {
-        const prompt = resumePrompt(
-          symphonyId,
-          task,
-          attempt,
-          attemptWrites(symphony, task, additions),
-          {
-            taskId: task.id,
-            number: attemptNumber(symphony, attempt),
-            total: taskAttempts(symphony, attempt.taskId).length,
-          },
-          prior,
-        );
-        if (status.deliverable) {
+        // A blocked attempt resumes on its agent only when the Conductor kept
+        // the worker choice and that agent can still receive a message.
+        const reuse =
+          sameWorkerChoice(task, attempt, replacement) && status.deliverable;
+        const position: AttemptPosition = {
+          taskId: task.id,
+          number: attemptNumber(symphony, attempt),
+          total: taskAttempts(symphony, attempt.taskId).length,
+        };
+        const writes = attemptWrites(symphony, task, additions);
+        if (reuse) {
           const wake = {
             key: `resume:${attempt.id}:${symphony.version}`,
-            prompt,
+            prompt: continuationPrompt({
+              taskId: task.id,
+              attemptId: attempt.id,
+              position,
+              ...(note ? { note } : {}),
+              writes,
+              added: additions?.map((grant) => grant.path) ?? [],
+            }),
           };
           await change(symphonyId, (current) => {
             const a = latestAttempt(current, retryTaskId);
@@ -747,29 +881,67 @@ export function orchestration(
           });
           await deliverPendingWake(symphonyId, attempt.id);
         } else {
-          // The blocked agent can no longer receive a wake (archived or closed),
-          // so bind the same attempt to a fresh agent before resuming it.
-          const agentId = commandSymphonyId(symphonyId, randomUUID());
+          // A changed worker choice, or an agent that can no longer receive a
+          // wake: bind the same attempt to a fresh agent with the full
+          // assignment and a handoff. The previous block message is captured
+          // before the rebind overwrites it.
+          const newAgentId = commandSymphonyId(symphonyId, randomUUID());
           const choice = replacement
             ? { profile: "inherit", ...workerChoice(replacement) }
             : workerChoice(attempt.launch);
+          const { context } = await store.read(symphonyId);
+          const prompt = agentPrompt(
+            taskAssignmentPrompt({
+              symphony,
+              task,
+              attemptId: attempt.id,
+              plan: context.plan,
+              writes,
+            }),
+            handoffInstructions({
+              attempt: position,
+              previousWorker: workerLabel(attempt.launch),
+              report: attempt.report,
+              ...handoffPaths(symphony, task.id),
+              ...(attempt.blockedBy ? { blockedBy: attempt.blockedBy } : {}),
+              ...(attempt.message ? { blockMessage: attempt.message } : {}),
+              ...(note ? { note } : {}),
+            }),
+          );
           await change(symphonyId, (current) => {
             const a = latestAttempt(current, retryTaskId);
             if (!a?.launch) {
               return;
             }
-            a.agentId = agentId;
+            a.agentId = newAgentId;
             a.state = "running";
-            a.message = "Replacing an unavailable task agent…";
+            a.message = "Replacing the task agent on this attempt…";
             a.wake = undefined;
-            a.launch.state = "pending";
-            a.launch.prompt = prompt;
-            a.launch.settled = false;
-            a.launch.generation = 0;
-            delete a.launch.config;
-            Object.assign(a.launch, choice);
+            // The rebind replaces the launch's worker choice as a whole, so a
+            // provider-only switch does not keep the old model or thinking
+            // option.
+            a.launch = {
+              state: "pending",
+              prompt,
+              settled: false,
+              generation: 0,
+              profile: choice.profile ?? "inherit",
+              ...(choice.provider !== undefined
+                ? { provider: choice.provider }
+                : {}),
+              ...(choice.model !== undefined ? { model: choice.model } : {}),
+              ...(choice.thinkingOptionId !== undefined
+                ? { thinkingOptionId: choice.thinkingOptionId }
+                : {}),
+            };
             if (additions?.length) {
               a.addedWrites = mergeAddedWrites(a.addedWrites, additions);
+            }
+            // An attempt stored before baselines existed already ran without
+            // one. The relaunch must not capture a baseline that includes the
+            // earlier agent's edits, so its changed paths stay unknown.
+            if (!a.writeFingerprint && !a.writeFingerprintUnknown) {
+              a.writeFingerprintUnknown = true;
             }
           });
         }
@@ -852,6 +1024,7 @@ export function orchestration(
             }
             const completed = (attempt.launch.checks ?? 0) + 1;
             const status = await workers().inspect(attempt.agentId);
+            const fields = await changedPathFields(symphony, attempt);
             symphony = await change(symphony.id, (current) => {
               const a = current.execution.attempts.find(
                 (value) => value.id === attempt.id,
@@ -882,6 +1055,7 @@ export function orchestration(
                 a.blockedBy = "server";
                 a.message =
                   "Task agent launch could not be confirmed after repeated identity checks. Dispatch again to reconcile the same agent; no replacement has been created.";
+                Object.assign(a, fields);
               }
             });
             continue;
@@ -897,6 +1071,7 @@ export function orchestration(
             // The task agent blocked this attempt before its turn ended. Settle
             // the launch without nudging and keep the task agent's message as
             // the record; a server settlement would overwrite it otherwise.
+            const fields = await changedPathFields(symphony, attempt);
             symphony = await change(symphony.id, (current) => {
               const a = current.execution.attempts.find(
                 (value) => value.id === attempt.id,
@@ -907,6 +1082,7 @@ export function orchestration(
               a.launch.settled = true;
               a.blockedBy = "worker";
               a.wake = undefined;
+              Object.assign(a, fields);
             });
             continue;
           }
@@ -914,6 +1090,7 @@ export function orchestration(
           if (!attempt.report && pending) {
             // A saved continuation or nudge whose delivery is unconfirmed.
             if (!status.exists || !status.deliverable) {
+              const fields = await changedPathFields(symphony, attempt);
               symphony = await change(symphony.id, (current) => {
                 const a = current.execution.attempts.find(
                   (value) => value.id === attempt.id,
@@ -927,6 +1104,7 @@ export function orchestration(
                   a.blockedBy = "server";
                   a.message =
                     "Task agent became unavailable before its saved wake could be delivered. Dispatch again to reconcile or replace it.";
+                  Object.assign(a, fields);
                 }
               });
               continue;
@@ -937,6 +1115,7 @@ export function orchestration(
           if (!status.exists) {
             // A missing task agent cannot be nudged; settle the attempt as
             // blocked.
+            const fields = await changedPathFields(symphony, attempt);
             symphony = await change(symphony.id, (current) => {
               const a = current.execution.attempts.find(
                 (value) => value.id === attempt.id,
@@ -950,12 +1129,14 @@ export function orchestration(
                 a.blockedBy = "server";
                 a.message =
                   "Task agent stopped or was removed without a report. Dispatch again to reconcile or replace it.";
+                Object.assign(a, fields);
               }
             });
             continue;
           }
           if (!attempt.report && !attempt.nudgedAt) {
             if (!status.deliverable) {
+              const fields = await changedPathFields(symphony, attempt);
               symphony = await change(symphony.id, (current) => {
                 const a = current.execution.attempts.find(
                   (value) => value.id === attempt.id,
@@ -968,6 +1149,7 @@ export function orchestration(
                 a.blockedBy = "server";
                 a.message =
                   "Task agent stopped but can no longer receive a nudge. Dispatch again to reconcile or replace it.";
+                Object.assign(a, fields);
               });
               continue;
             }
@@ -975,14 +1157,9 @@ export function orchestration(
             // cleared and `nudgedAt` set only after the keyed send succeeds, so a
             // failed send or reload replays the same message exactly once.
             const generation = attempt.launch.generation;
-            const checks =
-              symphony.revisions
-                .at(-1)
-                ?.score.tasks.find((task) => task.id === attempt.taskId)
-                ?.checks ?? [];
             const wake = {
               key: `nudge:${attempt.id}:${generation}`,
-              prompt: `Task agent for task ${attempt.taskId} stopped without a report. Report or block attempt ${attempt.id} (attempt ${attemptNumber(symphony, attempt)} of ${taskAttempts(symphony, attempt.taskId).length}) now; do not end your turn without reporting.\n${workerInstructions(command, attempt.agentId, symphony.id, attempt.id, checks)}`,
+              prompt: nudgePrompt(attempt.id),
             };
             symphony = await change(symphony.id, (current) => {
               const a = current.execution.attempts.find(
@@ -1004,6 +1181,7 @@ export function orchestration(
             await deliverPendingWake(symphony.id, attempt.id);
             continue;
           }
+          const fields = await changedPathFields(symphony, attempt);
           symphony = await change(symphony.id, (current) => {
             const a = current.execution.attempts.find(
               (value) => value.id === attempt.id,
@@ -1017,6 +1195,7 @@ export function orchestration(
               a.blockedBy = "server";
               a.message =
                 "Task agent stopped without a report after a nudge. Open its conversation and resume the existing assignment.";
+              Object.assign(a, fields);
             }
           });
         }

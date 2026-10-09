@@ -305,6 +305,24 @@ test("failed reports show diagnosis, granted writes, and reused agents", async (
   await expect(legacyRetry).not.toContainText("shared/helper.ts");
   expect(await noPageOverflow(page)).toBe(true);
 
+  // A settled attempt shows the paths it changed in its write scope as one
+  // muted Changed line; an uncapped list names every path, a capped list adds
+  // "+ more". Attempts without recorded changes keep no Changed line.
+  await detailButton(detail, "Tasks").click();
+  await openSymphony(page, "changed-paths");
+  await detailButton(detail, "History").click();
+  const changedFirst = page.getByTestId("history-attempt-repair-1");
+  await expect(changedFirst).toContainText(
+    "Changed: server/rpc.ts, shared/schema.ts",
+  );
+  const changedSecond = page.getByTestId("history-attempt-repair-2");
+  await expect(changedSecond).toContainText("retry · new agent");
+  await expect(changedSecond).toContainText(
+    "Changed: shared/schema.ts, server/rpc.ts, server/handlers/export.ts",
+  );
+  await expect(changedSecond).toContainText("+ more");
+  expect(await noPageOverflow(page)).toBe(true);
+
   // Compact layout: the opened panels stay inside a 390px viewport.
   await page.setViewportSize({ width: 390, height: 844 });
   await openSymphony(page, "recovery", "&global");
