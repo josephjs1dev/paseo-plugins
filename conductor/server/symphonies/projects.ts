@@ -7,6 +7,20 @@ import type {
 /** The group for a symphony whose source concert is not in the directory. */
 export const OTHER_SYMPHONIES = "Other symphonies";
 
+/** Storage's listing and its coverage metadata, before project annotation. */
+export interface SymphonyListStorage {
+  symphonies: SymphonySummary[];
+  unavailable: number;
+  incomplete: boolean;
+}
+
+/** The `symphonies.list` payload after project annotation. */
+export interface SymphonyListResult {
+  symphonies: SymphonyListEntry[];
+  unavailable: number;
+  incomplete: boolean;
+}
+
 function projectName(value: string | undefined): string {
   return (value ?? OTHER_SYMPHONIES).slice(0, 1000);
 }
@@ -28,4 +42,32 @@ export function withProjectNames(
     ...symphony,
     projectName: projectName(byConcert.get(symphony.source.concertId)),
   }));
+}
+
+/**
+ * Compose the `symphonies.list` payload from storage and the concert
+ * directory. Both loads run in parallel. A directory that cannot be read is
+ * treated as empty: grouping is cosmetic and must not hide a symphony. The
+ * storage coverage metadata is reported unchanged, and an optional
+ * `concertId` narrows the listing before annotation. A storage rejection
+ * propagates so the caller's error handling still reports it.
+ */
+export async function listWithProjects(
+  list: () => Promise<SymphonyListStorage>,
+  concerts: () => Promise<readonly ConcertEntry[]>,
+  concertId?: string,
+): Promise<SymphonyListResult> {
+  const [stored, directory] = await Promise.all([
+    list(),
+    // Grouping is cosmetic; an unreadable directory must not hide symphonies.
+    concerts().catch((): readonly ConcertEntry[] => []),
+  ]);
+  const visible = stored.symphonies.filter(
+    (symphony) => !concertId || symphony.source.concertId === concertId,
+  );
+  return {
+    symphonies: withProjectNames(visible, directory),
+    unavailable: stored.unavailable,
+    incomplete: stored.incomplete,
+  };
 }

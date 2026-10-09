@@ -6,7 +6,7 @@ import {
   readSymphony,
 } from "../../shared/symphonies/rpc";
 import { SymphonyError } from "../symphonies/errors";
-import { withProjectNames } from "../symphonies/projects";
+import { listWithProjects } from "../symphonies/projects";
 import { symphonyService } from "./symphonies-service";
 import { paseoSymphonyHost } from "../paseo/symphony-host";
 import { paseoAgentsHost } from "../paseo/agents-host";
@@ -55,22 +55,11 @@ export function registerSymphonies(
     guarded(async () => {
       connection.remember(paseo);
       const host = paseoAgentsHost(paseo);
-      const [list, concerts] = await Promise.all([
-        store.list(),
-        // Grouping is cosmetic; an unreadable directory must not hide symphonies.
-        pages((cursor) => host.concerts(cursor)).catch(() => ({
-          entries: [],
-          incomplete: true,
-        })),
-      ]);
-      const visible = list.symphonies.filter(
-        (symphony) =>
-          !input.concertId || symphony.source.concertId === input.concertId,
+      return listWithProjects(
+        () => store.list(),
+        async () => (await pages((cursor) => host.concerts(cursor))).entries,
+        input.concertId,
       );
-      return {
-        ...list,
-        symphonies: withProjectNames(visible, concerts.entries),
-      };
     }),
   );
   server.handle(readSymphony, ({ id }, { paseo }) => {

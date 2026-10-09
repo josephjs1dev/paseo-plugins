@@ -111,17 +111,101 @@ const goalEchoContext = {
   expectedOutcome: planContext.plan,
 } satisfies SymphonyContext;
 
+/** A list row: the stored symphony plus the concert's current project. */
+interface PreviewSymphonyEntry {
+  symphony: StoredSymphony;
+  projectName: string;
+}
+
+/**
+ * Interleaved project grouping: Northwind and Harbor alternate in list order,
+ * and one Harbor concert shares its project's name, so its row must omit the
+ * concert prefix while the other concerts keep theirs.
+ */
+const projectsFixtureSymphonies = (): PreviewSymphonyEntry[] => {
+  const projectSymphony = (
+    id: string,
+    title: string,
+    concertId: string,
+    concertName: string,
+  ): StoredSymphony => {
+    const base = storedSymphony();
+    return {
+      ...base,
+      id,
+      title,
+      source: { ...base.source, concertId, concertName },
+    };
+  };
+  return [
+    {
+      symphony: projectSymphony(
+        "f1151538-5302-4fbf-b50b-f6a55f2a5b51",
+        "Export API audit",
+        "ws-export-api",
+        "export-api",
+      ),
+      projectName: "Northwind",
+    },
+    {
+      symphony: projectSymphony(
+        "f1151538-5302-4fbf-b50b-f6a55f2a5b52",
+        "Harbor intake review",
+        "ws-harbor",
+        "Harbor",
+      ),
+      projectName: "Harbor",
+    },
+    {
+      symphony: projectSymphony(
+        "f1151538-5302-4fbf-b50b-f6a55f2a5b53",
+        "Export UI audit",
+        "ws-export-ui",
+        "export-ui",
+      ),
+      projectName: "Northwind",
+    },
+    {
+      symphony: projectSymphony(
+        "f1151538-5302-4fbf-b50b-f6a55f2a5b54",
+        "Storage research",
+        "ws-storage",
+        "storage-research",
+      ),
+      projectName: "Harbor",
+    },
+  ];
+};
+
+/** Fixtures that replace the whole list instead of the single symphony. */
+const multiFixtureSymphonies: Record<string, () => PreviewSymphonyEntry[]> = {
+  projects: projectsFixtureSymphonies,
+};
+
 export function usePreviewSymphonies(
   session: PodiumSession,
   failed: boolean,
   fixture: string | undefined = undefined,
 ) {
-  const [symphony, setSymphony] = useState<StoredSymphony | null>(
-    () =>
-      (fixture ? fixtureSymphonyByName(fixture)?.() : undefined) ??
-      storedSymphony(),
-  );
+  const [entries, setEntries] = useState<PreviewSymphonyEntry[]>(() => {
+    if (fixture) {
+      const multi = multiFixtureSymphonies[fixture]?.();
+      if (multi) {
+        return multi;
+      }
+    }
+    return [
+      {
+        symphony:
+          (fixture ? fixtureSymphonyByName(fixture)?.() : undefined) ??
+          storedSymphony(),
+        projectName: "Northwind",
+      },
+    ];
+  });
   const state = useSyncExternalStore(session.subscribe, session.getSnapshot);
+  const selectionId = state.symphonySelection?.id;
+  const selected = entries.find((entry) => entry.symphony.id === selectionId);
   const data: SymphoniesData = {
     access: {
       available: true,
@@ -130,39 +214,42 @@ export function usePreviewSymphonies(
       message: null,
     },
     list: {
-      symphonies: symphony
-        ? [{ ...summarizeSymphony(symphony), projectName: "Northwind" }]
-        : [],
+      symphonies: entries.map(({ symphony, projectName }) => ({
+        ...summarizeSymphony(symphony),
+        projectName,
+      })),
       incomplete: false,
       unavailable: failed ? 1 : 0,
     },
     loading: false,
     stale: failed,
-    detail:
-      symphony && state.symphonySelection?.id === symphony.id
-        ? {
-            symphony,
-            context: fixture === "goal-echo" ? goalEchoContext : planContext,
-          }
-        : undefined,
+    detail: selected
+      ? {
+          symphony: selected.symphony,
+          context: fixture === "goal-echo" ? goalEchoContext : planContext,
+        }
+      : undefined,
     detailStale: failed,
   };
   /** In-memory stand-in for the symphonies.delete RPC. */
   const remove = (stored: StoredSymphony): Promise<void> => {
-    setSymphony((prior) => (prior && prior.id === stored.id ? null : prior));
+    setEntries((prior) =>
+      prior.filter((entry) => entry.symphony.id !== stored.id),
+    );
     return Promise.resolve();
   };
   const progress = (kind: "claim" | "block" | "complete") =>
-    setSymphony((prior) => {
-      if (!prior) {
+    setEntries((prior) => {
+      const first = prior[0];
+      if (!first) {
         return prior;
       }
-      const next = structuredClone(prior);
-      next.version++;
-      const tasks = next.revisions[0]?.score.tasks ?? [];
+      const symphony = structuredClone(first.symphony);
+      symphony.version++;
+      const tasks = symphony.revisions[0]?.score.tasks ?? [];
       if (kind === "claim") {
-        next.status = "running";
-        next.execution.attempts = [
+        symphony.status = "running";
+        symphony.execution.attempts = [
           {
             id: "4101f767-1197-469b-8b89-af35338a4ed8",
             taskId: "api",
@@ -176,19 +263,19 @@ export function usePreviewSymphonies(
           },
         ];
       } else if (kind === "block") {
-        next.status = "blocked";
-        const attempt = next.execution.attempts[0];
+        symphony.status = "blocked";
+        const attempt = symphony.execution.attempts[0];
         if (attempt) {
           attempt.state = "blocked";
           attempt.message =
             "Confirm the pagination compatibility requirement in the source conversation.";
         }
       } else {
-        next.status = "completed";
-        next.execution.finishedAt = Date.now();
-        next.execution.summary =
+        symphony.status = "completed";
+        symphony.execution.finishedAt = Date.now();
+        symphony.execution.summary =
           "Compared both implementations and recorded the pagination findings.";
-        next.execution.attempts = tasks.map((task, index) => ({
+        symphony.execution.attempts = tasks.map((task, index) => ({
           id: `4101f767-1197-469b-8b89-af35338a4ed${index}`,
           taskId: task.id,
           agentId: `worker-${task.id}`,
@@ -211,7 +298,9 @@ export function usePreviewSymphonies(
           },
         }));
       }
-      return next;
+      return prior.map((entry, index) =>
+        index === 0 ? { ...entry, symphony } : entry,
+      );
     });
   return { data, progress, remove };
 }

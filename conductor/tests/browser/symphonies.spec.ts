@@ -356,6 +356,55 @@ test("task and graph agent links open the actual task agent and retain the Condu
   await expect(page.getByTestId("preview-status")).toContainText("worker-api");
 });
 
+test("Symphonies groups interleaved projects and omits same-name concert prefixes", async ({
+  page,
+}) => {
+  await page.goto("/?symphonies&symphony-fixture=projects");
+  await page.getByRole("tab", { name: "Symphonies", exact: true }).click();
+  const queue = page.getByTestId("symphonies-queue");
+  // One heading per project in first-seen list order: Northwind leads even
+  // though Harbor's first row is second overall.
+  const northwind = queue.getByText("NORTHWIND", { exact: true });
+  const harbor = queue.getByText("HARBOR", { exact: true });
+  await expect(northwind).toHaveCount(1);
+  await expect(harbor).toHaveCount(1);
+  const northwindY = await northwind.boundingBox();
+  const harborY = await harbor.boundingBox();
+  expect(northwindY?.y ?? Number.NaN).toBeLessThan(harborY?.y ?? Number.NaN);
+  const exportApi = queue.getByTestId(
+    "symphony-row-f1151538-5302-4fbf-b50b-f6a55f2a5b51",
+  );
+  const harborIntake = queue.getByTestId(
+    "symphony-row-f1151538-5302-4fbf-b50b-f6a55f2a5b52",
+  );
+  const exportUi = queue.getByTestId(
+    "symphony-row-f1151538-5302-4fbf-b50b-f6a55f2a5b53",
+  );
+  const storageResearch = queue.getByTestId(
+    "symphony-row-f1151538-5302-4fbf-b50b-f6a55f2a5b54",
+  );
+  await expect(exportApi).toContainText("export-api ·");
+  await expect(exportUi).toContainText("export-ui ·");
+  // Northwind's rows keep their list order and stay inside their group.
+  const exportApiY = await exportApi.boundingBox();
+  const exportUiY = await exportUi.boundingBox();
+  expect(exportApiY?.y ?? Number.NaN).toBeLessThan(exportUiY?.y ?? Number.NaN);
+  expect(exportUiY?.y ?? Number.NaN).toBeLessThan(harborY?.y ?? Number.NaN);
+  // A concert sharing its project's name drops the prefix; others keep it.
+  await expect(harborIntake).toContainText("Harbor intake review");
+  await expect(harborIntake).not.toContainText("Harbor ·");
+  await expect(storageResearch).toContainText("storage-research ·");
+  const harborIntakeY = await harborIntake.boundingBox();
+  const storageResearchY = await storageResearch.boundingBox();
+  expect(harborIntakeY?.y ?? Number.NaN).toBeLessThan(
+    storageResearchY?.y ?? Number.NaN,
+  );
+  await storageResearch.click();
+  await expect(page.getByTestId("symphony-detail")).toContainText(
+    "Storage research",
+  );
+});
+
 test("Symphonies groups rows by project and prints the goal once in Context", async ({
   page,
 }) => {
