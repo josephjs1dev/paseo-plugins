@@ -357,10 +357,11 @@ function TaskHistory({
 }
 
 /**
- * One attempt row. A task's only attempt renders as the task row itself, so it
- * carries the task ID instead of an attempt number; a retried task labels each
- * row "Attempt N" and says how the retry ran ("retry · same agent" or
- * "retry · new agent"). Scope changes and the diagnosis appear beneath.
+ * One attempt row with its number, start time, and duration. A task's only
+ * attempt renders as the task row itself, so it carries the task ID before
+ * "Attempt 1"; a retried task labels each row "Attempt N" and says how the
+ * retry ran ("retry · same agent" or "retry · new agent"). Scope changes and
+ * the diagnosis appear beneath.
  */
 function AttemptRow({
   theme,
@@ -415,6 +416,18 @@ function AttemptRow({
       >
         {retried ? `Attempt ${number}` : task.id}
       </Text>
+      {!retried && (
+        <Text
+          style={{
+            color: theme.colors.foregroundMuted,
+            fontSize: 12,
+            lineHeight: 17,
+            fontVariant: ["tabular-nums"],
+          }}
+        >
+          {`Attempt ${number}`}
+        </Text>
+      )}
       <View
         aria-hidden
         style={{
@@ -445,7 +458,7 @@ function AttemptRow({
           minWidth: 0,
         }}
       >
-        {durationLabel(attempt)}
+        {`Started ${shortTimestamp(attempt.startedAt)} · ${durationLabel(attempt)}`}
       </Text>
       {number > 1 && (
         <Text

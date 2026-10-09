@@ -69,11 +69,13 @@ test("Symphonies monitors start/claim progress and results without manual author
   );
   await instance("History").click();
   // Compact History: one section per task, and a task with one attempt is a
-  // single row without an attempt number; the report summary is not repeated.
+  // single row numbered "Attempt 1" with its start time; the report summary
+  // is not repeated.
   const firstAttempt = detail.getByTestId("history-task-api");
   await expect(firstAttempt).toContainText("api");
   await expect(firstAttempt).toContainText("Completed");
-  await expect(firstAttempt).not.toContainText("Attempt 1");
+  await expect(firstAttempt).toContainText("Attempt 1");
+  await expect(firstAttempt).toContainText("Started ");
   await expect(
     firstAttempt.getByRole("button", {
       name: "Open agent · api",

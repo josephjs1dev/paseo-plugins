@@ -170,7 +170,8 @@ test("fixture scenarios render their documented task and graph states", async ({
   await expect(attemptRow).toContainText("deliver");
   await expect(attemptRow).toContainText("Finishing");
   await expect(attemptRow).toContainText("5m");
-  await expect(attemptRow).not.toContainText("Attempt 1");
+  await expect(attemptRow).toContainText("Attempt 1");
+  await expect(attemptRow).toContainText("Started ");
   await expect(attemptRow).not.toContainText(
     "Delivery package handed to the source.",
   );
