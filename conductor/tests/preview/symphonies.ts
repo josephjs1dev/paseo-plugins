@@ -51,8 +51,9 @@ const extendedFixtureSymphonies: Record<string, () => StoredSymphony> = {
       return symphony;
     }
     failed.endedAt = failed.startedAt + 5 * 60_000;
-    // A later Conductor `addWrites` revision grows the task after the failed
-    // attempt, so the history must not project it onto that attempt.
+    // A legacy record: an older Conductor `addWrites` grew the task through a
+    // second revision, so no attempt carries the paths. The Context tab names
+    // the grown task; the History rows cannot attribute the paths.
     const grown = structuredClone(symphony.revisions[0]);
     if (grown) {
       grown.number = 2;
@@ -68,8 +69,8 @@ const extendedFixtureSymphonies: Record<string, () => StoredSymphony> = {
       };
       symphony.revisions.push(grown);
     }
-    // The fresh successful retry on another agent: the task card carries no
-    // grant, so the history is the only place the earlier reason survives.
+    // The fresh successful retry on another agent. Its History row carries no
+    // scope line because the legacy record stored the paths on no attempt.
     const retry = structuredClone(failed);
     retry.id = "b410f767-1197-469b-8b89-af35338a4e0c";
     retry.agentId = "worker-repair-2";
@@ -79,6 +80,47 @@ const extendedFixtureSymphonies: Record<string, () => StoredSymphony> = {
     retry.message = null;
     delete retry.grantedWrites;
     delete retry.nudgedAt;
+    retry.report = {
+      outcome: "completed",
+      summary: "Typecheck passes after the shared helper change.",
+      evidence: ["npm run typecheck: clean"],
+      checks: [{ name: "typecheck", status: "passed", detail: "clean" }],
+    };
+    retry.reportHash = "e".repeat(64);
+    retry.launch = {
+      state: "started",
+      profile: "inherit",
+      generation: 0,
+      prompt: "Carry out the task and report evidence",
+      settled: true,
+    };
+    symphony.execution.attempts.push(retry);
+    symphony.status = "completed";
+    return symphony;
+  },
+  "retry-added": () => {
+    const symphony = recoverySymphony();
+    const failed = symphony.execution.attempts[0];
+    if (!failed) {
+      return symphony;
+    }
+    failed.endedAt = failed.startedAt + 5 * 60_000;
+    const retry = structuredClone(failed);
+    retry.id = "b410f767-1197-469b-8b89-af35338a4e0d";
+    retry.agentId = "worker-repair-2";
+    retry.state = "completed";
+    retry.startedAt = failed.endedAt + 5 * 60_000;
+    retry.endedAt = retry.startedAt + 5 * 60_000;
+    retry.message = null;
+    delete retry.grantedWrites;
+    delete retry.nudgedAt;
+    retry.addedWrites = [
+      {
+        path: "shared/helper.ts",
+        reason: "needs the exported type",
+        at: retry.startedAt,
+      },
+    ];
     retry.report = {
       outcome: "completed",
       summary: "Typecheck passes after the shared helper change.",

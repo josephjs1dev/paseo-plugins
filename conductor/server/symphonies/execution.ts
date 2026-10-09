@@ -149,6 +149,9 @@ export function symphonyExecution(
         "Symphony storage coverage is incomplete; resource ownership cannot be checked.",
       );
     }
+    // The claim candidate's own effective scope includes Conductor additions
+    // from its earlier attempts.
+    const candidate = effectiveTask(symphony, task);
     for (const summary of list.symphonies) {
       if (summary.source.checkout !== symphony.source.checkout) {
         continue;
@@ -162,10 +165,9 @@ export function symphonyExecution(
           continue;
         }
         const attempt = latestAttempt(other, definition.id);
-        const effective = effectiveTask(definition, attempt);
         if (
           attemptHoldsResources(attempt) &&
-          scopeConflictReason(task, effective)
+          scopeConflictReason(candidate, effectiveTask(other, definition))
         ) {
           throw new SymphonyError(
             `Task resources are still owned by ${other.title} / ${definition.id}. Resume or report that work before claiming this task.`,
@@ -471,9 +473,11 @@ export function symphonyExecution(
         if (!task) {
           throw new SymphonyError("Unknown task.");
         }
-        // A task the Conductor defined without writes is read-only; widening it
-        // would silently turn an exploration into a writer.
-        if (task.writes.length === 0) {
+        // A task with no effective writes is read-only; widening it would
+        // silently turn an exploration into a writer. Conductor additions count
+        // as effective writes, so such a task can widen further.
+        const effective = effectiveTask(current, task);
+        if (effective.writes.length === 0) {
           throw new SymphonyError(
             'Widen refused: read-only tasks cannot widen their write scope. Report need "scope" instead.',
           );
@@ -514,7 +518,6 @@ export function symphonyExecution(
             );
           }
         }
-        const effective = effectiveTask(task, attempt);
         const requested: TaskDefinition = {
           ...effective,
           writes: [...new Set([...effective.writes, ...command.paths])],
@@ -550,7 +553,7 @@ export function symphonyExecution(
             }
             const reason = scopeConflictReason(
               requested,
-              effectiveTask(definition, holding),
+              effectiveTask(other, definition),
             );
             if (reason) {
               throw new SymphonyError(

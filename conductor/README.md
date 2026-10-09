@@ -17,7 +17,7 @@ technical names for units of work.
 | Task graph          | Score          | A symphony's tasks and their dependencies                       |
 | Task                | Task           | One unit of work in the score                                   |
 | Worker agent        | Task agent     | The agent assigned to one task                                  |
-| Attempt / retry     | Attempt        | One try at a task                                               |
+| Attempt / retry     | Attempt        | One try at a task; numbered per task, and attempt 2+ is a retry |
 
 A symphony is split into tasks; do not call tasks pieces or parts. A concert
 has symphonies. Use _workspace_ only when describing Paseo itself.
@@ -46,7 +46,7 @@ Agent commands use `symphonyId` and acknowledge with `symphonyId`/`symphony`
 The user supplies the goal, not a task form. The Conductor agent defines the score
 and chooses a task agent per task: a configured profile, an inline
 provider/model, or the Conductor's own settings. Each ready task
-gets its own child agent, with a link from its task, score node, and attempt history.
+gets its own child agent, with a link from its task, score node, and per-task attempt history.
 **Conductor agent** opens the conducting conversation. Agents and Symphonies remain
 separate sections of the same Podium and retain independent searches and selections.
 
@@ -147,8 +147,8 @@ settlement, starts dependents, and notifies the Conductor agent of blockers or t
 completed score. Notifications wait until the Conductor can receive them.
 
 `dispatch` with `retryTaskId` resumes a settled blocked task on its task agent or
-retries a failed task. Optional `note` adds retry guidance; `addWrites` extends
-that task's write scope as a new definition revision, subject to conflict checks.
+retries a failed task. Optional `note` adds retry guidance; `addWrites` adds paths
+to that task's write scope for this and later attempts, subject to conflict checks.
 If the worker choice is unchanged and the previous agent still exists and is
 inactive, the failed task continues on that agent with a new attempt. Otherwise
 Conductor creates a new agent seeded with the failed report and note. A replacement
@@ -450,7 +450,7 @@ native-answer receipt recorded before the upgrade no longer blocks a repeated se
 tracked-diff/status fingerprint are context, not settlement proof.
 
 Bounds are 200 symphonies and 200 context artifacts (including orphans), 40 tasks,
-120 attempts per symphony, 24 definition revisions, a 2,000,000-byte envelope, and
+120 attempts per symphony, 24 plan revisions (one per plan; reserved for review rounds), a 2,000,000-byte envelope, and
 128,000-byte context. Field/command bounds also apply. Limits refuse new history
 instead of pruning evidence. Corrupt records are isolated from healthy reads and
 the Symphonies view. Incomplete coverage blocks resource claims because existing

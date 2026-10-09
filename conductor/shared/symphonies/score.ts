@@ -1,7 +1,10 @@
 import {
   scoreSchema,
+  taskAttempts,
   type Attempt,
+  type GrantedWrite,
   type Score,
+  type StoredSymphony,
   type TaskDefinition,
 } from "./models";
 
@@ -86,22 +89,71 @@ export function conflictReason(
   return null;
 }
 
+/** The attempt fields that contribute to an effective write scope. */
+type AttemptScope = Pick<Attempt, "addedWrites" | "grantedWrites">;
+
+/**
+ * The write paths a task covers across these attempts: its declared writes,
+ * every Conductor addition from any attempt, and the latest attempt's `widen`
+ * grants. Order follows first appearance.
+ */
+function writesAcrossAttempts(
+  task: TaskDefinition,
+  attempts: readonly AttemptScope[],
+): string[] {
+  const added = attempts.flatMap(
+    (attempt) => attempt.addedWrites?.map((grant) => grant.path) ?? [],
+  );
+  const granted =
+    attempts.at(-1)?.grantedWrites?.map((grant) => grant.path) ?? [];
+  return [...new Set([...task.writes, ...added, ...granted])];
+}
+
 /**
  * A task's effective definition for conflict checks: its declared writes plus
- * every path granted to the given attempt. Pure; returns the task unchanged
- * when the attempt has no grants. Callers pass the resource-holding attempt
- * (for example the latest attempt that still owns resources) so a grant blocks
- * readers and other writers exactly like a declared write.
+ * every path the Conductor added to one of its attempts (`addedWrites`, which
+ * lasts for the task) plus the latest attempt's `widen` grants (which last for
+ * that attempt). Pure; returns the task unchanged when nothing widens it. A
+ * read-only task that gains writes is an implementation, so the role follows
+ * the effective writes.
  */
 export function effectiveTask(
+  symphony: StoredSymphony,
   task: TaskDefinition,
-  attempt?: Attempt,
 ): TaskDefinition {
-  const granted = attempt?.grantedWrites?.map((grant) => grant.path) ?? [];
-  if (granted.length === 0) {
+  const writes = writesAcrossAttempts(task, taskAttempts(symphony, task.id));
+  if (writes.length === task.writes.length) {
     return task;
   }
-  return { ...task, writes: [...new Set([...task.writes, ...granted])] };
+  return {
+    ...task,
+    writes,
+    worker: {
+      ...task.worker,
+      role: writes.length ? "implementation" : task.worker.role,
+    },
+  };
+}
+
+/**
+ * The write paths a task's next attempt starts with. The new attempt becomes
+ * the latest one, so the previous attempt's temporary `widen` grants expire;
+ * only the declared writes, every Conductor `addedWrites`, and this attempt's
+ * own pending additions count. A blocked task that resumes its existing
+ * attempt keeps its grants and uses `effectiveTask` instead.
+ */
+export function nextAttemptWrites(
+  symphony: StoredSymphony,
+  task: TaskDefinition,
+  additions: readonly GrantedWrite[] = [],
+): string[] {
+  const attempts: AttemptScope[] = [
+    ...taskAttempts(symphony, task.id),
+    // The prospective attempt is always appended, even with no additions, so it
+    // becomes the latest attempt and the previous attempt's grants expire.
+    additions.length ? { addedWrites: [...additions] } : {},
+  ];
+  return writesAcrossAttempts(task, attempts);
 }
 
 /**

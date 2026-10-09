@@ -175,7 +175,7 @@ JSON
 
 1. Wait until every task has explicitly reported and stopped. Do not infer completion from idle.
 2. Read every report and its check results.
-3. Review every attempt's \`grantedWrites\` and reasons. List granted paths and reasons in the finish summary.
+3. Review every attempt's \`addedWrites\` (paths the Conductor added) and \`grantedWrites\` (paths a task agent widened to), with their reasons. List those paths and reasons in the finish summary.
 4. Verify the integrated result if the plan asks for it.
 5. Run \`finish\` with \`{"symphonyId","summary"}\`. The summary states what changed, which checks passed or failed, what remains, and any granted paths with their reasons.
 

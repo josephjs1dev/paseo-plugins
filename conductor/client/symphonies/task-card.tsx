@@ -7,6 +7,7 @@ import {
 import type { PluginTheme } from "@getpaseo/plugin";
 import {
   latestAttempt,
+  taskAttempts,
   type GrantedWrite,
   type StoredSymphony,
   type TaskDefinition,
@@ -122,6 +123,7 @@ export function SymphonyTaskCard({
       ).length
     : 0;
   const grantedWrites = attempt?.grantedWrites ?? [];
+  const addedWrites = addedWritesFor(symphony, task.id);
   const canOpenAgent = Boolean(
     openAgent &&
       attempt &&
@@ -277,11 +279,21 @@ export function SymphonyTaskCard({
           onToggle={(selection) => onToggle?.(selection)}
         />
       )}
-      {grantedWrites.length > 0 && attempt && (
-        <GrantedWritesRow
+      {addedWrites.length > 0 && attempt && (
+        <WritesDisclosure
           theme={theme}
           taskId={task.id}
-          grantedWrites={grantedWrites}
+          kind="added"
+          grants={addedWrites}
+          compact={compact}
+        />
+      )}
+      {grantedWrites.length > 0 && attempt && (
+        <WritesDisclosure
+          theme={theme}
+          taskId={task.id}
+          kind="granted"
+          grants={grantedWrites}
           compact={compact}
         />
       )}
@@ -290,22 +302,49 @@ export function SymphonyTaskCard({
 }
 
 /**
- * Server-widened write paths recorded on the attempt, each with the reason the
- * task agent gave when it was granted. Visible with or without a report, because a
- * running attempt can already hold grants.
+ * Conductor write additions across every attempt of the task, deduped by path
+ * with each path's first reason kept: additions last for the task, not for one
+ * attempt.
  */
-function GrantedWritesRow({
+function addedWritesFor(
+  symphony: StoredSymphony,
+  taskId: string,
+): GrantedWrite[] {
+  const byPath = new Map<string, GrantedWrite>();
+  for (const grant of taskAttempts(symphony, taskId).flatMap(
+    (attempt) => attempt.addedWrites ?? [],
+  )) {
+    if (!byPath.has(grant.path)) {
+      byPath.set(grant.path, grant);
+    }
+  }
+  return [...byPath.values()];
+}
+
+/**
+ * Write paths recorded beyond the task's declared scope, each with its reason:
+ * "added" paths came from the Conductor and last for the task, "granted" paths
+ * came from the latest attempt's widen and last for that attempt. Visible with
+ * or without a report, because a running attempt can already hold grants.
+ */
+function WritesDisclosure({
   theme,
   taskId,
-  grantedWrites,
+  kind,
+  grants,
   compact,
 }: {
   theme: PluginTheme;
   taskId: string;
-  grantedWrites: GrantedWrite[];
+  kind: "added" | "granted";
+  grants: GrantedWrite[];
   compact: boolean;
 }) {
   const [expanded, setExpanded] = useState(false);
+  const label =
+    kind === "added"
+      ? `Added by Conductor ${grants.length}`
+      : `Granted writes ${grants.length}`;
   return (
     <View
       style={{
@@ -317,15 +356,15 @@ function GrantedWritesRow({
     >
       <Disclosure
         theme={theme}
-        label={`Granted writes ${grantedWrites.length}`}
+        label={label}
         expanded={expanded}
         onToggle={() => setExpanded((open) => !open)}
-        testID={`symphony-task-granted-${taskId}`}
+        testID={`symphony-task-${kind}-${taskId}`}
         dense={!compact}
       />
       {expanded && (
         <InsetPanel theme={theme}>
-          {grantedWrites.map((grant, index) => (
+          {grants.map((grant, index) => (
             <View
               key={`${grant.path}-${index}`}
               style={{

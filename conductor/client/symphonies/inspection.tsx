@@ -1,12 +1,14 @@
 import { useState } from "react";
 import { Text, View } from "react-native";
 import type { PluginTheme } from "@getpaseo/plugin";
-import type {
-  Attempt,
-  SymphonyContext,
-  Score,
-  StoredSymphony,
-  TaskDefinition,
+import {
+  attemptNumber,
+  taskAttempts,
+  type Attempt,
+  type SymphonyContext,
+  type Score,
+  type StoredSymphony,
+  type TaskDefinition,
 } from "../../shared/symphonies/models";
 import {
   taskState,
@@ -44,6 +46,7 @@ export function SymphonyInspection({
           >
             {context.plan}
           </Text>
+          <PlanLine theme={theme} symphony={symphony} />
           <Text
             selectable
             style={{ color: theme.colors.foregroundMuted, lineHeight: 21 }}
@@ -96,6 +99,66 @@ export function SymphonyInspection({
   );
 }
 
+/**
+ * The accepted plan as one line: when the first revision was accepted, its
+ * reason, and the task count. Older symphonies whose Conductor grew write
+ * scope through a new revision also name the affected tasks here, because
+ * their History rows cannot attribute those paths to one attempt.
+ */
+function PlanLine({
+  theme,
+  symphony,
+}: {
+  theme: PluginTheme;
+  symphony: StoredSymphony;
+}) {
+  const first = symphony.revisions[0];
+  if (!first) {
+    return null;
+  }
+  const latest = symphony.revisions.at(-1);
+  const grown = latest
+    ? latest.score.tasks.flatMap((task) => {
+        const original = first.score.tasks.find(
+          (entry) => entry.id === task.id,
+        );
+        return original &&
+          task.writes.some((path) => !original.writes.includes(path))
+          ? [task.id]
+          : [];
+      })
+    : [];
+  return (
+    <>
+      <Text
+        selectable
+        testID="symphony-plan"
+        style={{
+          color: theme.colors.foregroundMuted,
+          fontSize: 12,
+          lineHeight: 17,
+          fontVariant: ["tabular-nums"],
+        }}
+      >
+        {`Plan accepted ${shortTimestamp(first.acceptedAt)} · ${first.reason} · ${taskCountLabel(first.score.tasks.length)}`}
+      </Text>
+      {grown.length > 0 && (
+        <Text
+          selectable
+          testID="symphony-plan-added-writes"
+          style={{
+            color: theme.colors.foregroundMuted,
+            fontSize: 12,
+            lineHeight: 17,
+          }}
+        >
+          {`Write scope later added by the Conductor to: ${grown.join(", ")}`}
+        </Text>
+      )}
+    </>
+  );
+}
+
 /** State row color, matching the task card's status dot palette. */
 const HISTORY_STATE_COLORS: Record<TaskStateKey, StateColorName> = {
   ready: "foregroundMuted",
@@ -114,8 +177,6 @@ type StateColorName =
   | "statusSuccess"
   | "statusDanger";
 
-type SymphonyRevision = StoredSymphony["revisions"][number];
-
 const HISTORY_ROW_STYLE = {
   flexDirection: "row",
   flexWrap: "wrap",
@@ -127,9 +188,10 @@ const HISTORY_ROW_STYLE = {
 } as const;
 
 /**
- * Compact symphony history: one single-line row per attempt and per accepted
- * revision. Report summaries stay on the task cards and are never repeated
- * here; only a present blocker or failure message shows, clamped to two lines.
+ * Compact symphony history, one section per task in score order. Report
+ * summaries stay on the task cards and are never repeated here; only a present
+ * blocker or failure message shows, clamped to two lines. The accepted plan is
+ * not listed here; the Context tab shows it.
  */
 function HistoryView({
   theme,
@@ -140,103 +202,201 @@ function HistoryView({
   symphony: StoredSymphony;
   openAgent?: (id: string) => void;
 }) {
-  const [openRevisions, setOpenRevisions] = useState<Record<number, boolean>>(
-    {},
-  );
-  const toggleRevision = (number: number) =>
-    setOpenRevisions((prior) => ({ ...prior, [number]: !prior[number] }));
+  const tasks = symphony.revisions.at(-1)?.score.tasks ?? [];
   return (
-    <View style={{ gap: 16 }}>
-      {symphony.execution.attempts.length ? (
-        <View style={{ gap: 4 }}>
-          <Label theme={theme}>ATTEMPTS</Label>
-          <View>
-            {symphony.execution.attempts.map((attempt, index) => (
-              <AttemptRow
-                key={attempt.id}
-                theme={theme}
-                symphony={symphony}
-                attempt={attempt}
-                index={index}
-                {...(openAgent ? { openAgent } : {})}
-              />
-            ))}
-          </View>
+    <View style={{ gap: 4 }}>
+      <Label theme={theme}>HISTORY</Label>
+      {tasks.length ? (
+        <View>
+          {tasks.map((task) => (
+            <TaskHistory
+              key={task.id}
+              theme={theme}
+              symphony={symphony}
+              task={task}
+              {...(openAgent ? { openAgent } : {})}
+            />
+          ))}
         </View>
       ) : (
         <Notice theme={theme}>No task attempts yet.</Notice>
-      )}
-      {symphony.revisions.length ? (
-        <View style={{ gap: 4 }}>
-          <Label theme={theme}>REVISIONS</Label>
-          <View>
-            {symphony.revisions.map((revision) => (
-              <RevisionRow
-                key={revision.number}
-                theme={theme}
-                revision={revision}
-                expanded={Boolean(openRevisions[revision.number])}
-                onToggle={() => toggleRevision(revision.number)}
-              />
-            ))}
-          </View>
-        </View>
-      ) : (
-        <Notice theme={theme}>No accepted revisions yet.</Notice>
       )}
     </View>
   );
 }
 
-/** Attempt display state for a history row: a completed report with an unsettled agent launch reads as finishing. */
-function attemptState(
-  symphony: StoredSymphony,
-  attempt: Attempt,
-): TaskStateKey {
-  const task = symphony.revisions
-    .at(-1)
-    ?.score.tasks.find((entry) => entry.id === attempt.taskId);
-  if (!task) {
-    return attempt.state;
-  }
-  const state = taskState(symphony, task);
-  // Only keep the display state while it matches the attempt's own outcome;
-  // a later prerequisite-driven reading would mislabel this historical row.
-  if (
-    (state.key === "finishing" && attempt.state === "completed") ||
-    state.key === attempt.state
-  ) {
-    return state.key;
-  }
-  return attempt.state;
-}
-
-function AttemptRow({
+/** One task's history: its current state when idle, else its attempts oldest first. */
+function TaskHistory({
   theme,
   symphony,
-  attempt,
-  index,
+  task,
   openAgent,
 }: {
   theme: PluginTheme;
   symphony: StoredSymphony;
+  task: TaskDefinition;
+  openAgent?: (id: string) => void;
+}) {
+  const attempts = taskAttempts(symphony, task.id);
+  if (!attempts.length) {
+    const state = taskState(symphony, task);
+    const color = theme.colors[HISTORY_STATE_COLORS[state.key]];
+    return (
+      <View
+        testID={`history-task-${task.id}`}
+        style={{ ...HISTORY_ROW_STYLE, borderTopColor: theme.colors.border }}
+      >
+        <Text
+          selectable
+          style={{
+            color: theme.colors.foreground,
+            fontSize: 13,
+            lineHeight: 18,
+            fontWeight: "600",
+            flexShrink: 1,
+            minWidth: 0,
+          }}
+        >
+          {task.id}
+        </Text>
+        <View
+          aria-hidden
+          style={{
+            width: 6,
+            height: 6,
+            borderRadius: 3,
+            backgroundColor: color,
+          }}
+        />
+        <Text
+          style={{
+            color: color,
+            fontSize: 12,
+            lineHeight: 17,
+            fontWeight: "500",
+          }}
+        >
+          {ATTEMPT_STATE_LABELS[state.key]}
+        </Text>
+      </View>
+    );
+  }
+  const retried = attempts.length > 1;
+  const state = taskState(symphony, task);
+  const stateColor = theme.colors[HISTORY_STATE_COLORS[state.key]];
+  return (
+    <View
+      testID={`history-task-${task.id}`}
+      style={{
+        borderTopWidth: 1,
+        borderTopColor: theme.colors.border,
+        paddingVertical: 4,
+        gap: 2,
+      }}
+    >
+      {retried && (
+        <View style={{ ...rowStyle, gap: 6, minHeight: 20 }}>
+          <Text
+            selectable
+            style={{
+              color: theme.colors.foreground,
+              fontSize: 13,
+              lineHeight: 18,
+              fontWeight: "600",
+              flexShrink: 1,
+              minWidth: 0,
+            }}
+          >
+            {task.id}
+          </Text>
+          <View
+            aria-hidden
+            style={{
+              width: 6,
+              height: 6,
+              borderRadius: 3,
+              backgroundColor: stateColor,
+            }}
+          />
+          <Text
+            style={{
+              color: stateColor,
+              fontSize: 12,
+              lineHeight: 17,
+              fontWeight: "500",
+            }}
+          >
+            {ATTEMPT_STATE_LABELS[state.key]}
+          </Text>
+          <Text
+            style={{
+              color: theme.colors.foregroundMuted,
+              fontSize: 12,
+              lineHeight: 17,
+            }}
+          >
+            {attemptCountLabel(attempts.length)}
+          </Text>
+        </View>
+      )}
+      {attempts.map((attempt, index) => (
+        <AttemptRow
+          key={attempt.id}
+          theme={theme}
+          symphony={symphony}
+          task={task}
+          attempt={attempt}
+          number={attemptNumber(symphony, attempt)}
+          retried={retried}
+          previousAgentId={index > 0 ? attempts[index - 1]?.agentId : undefined}
+          {...(openAgent ? { openAgent } : {})}
+        />
+      ))}
+    </View>
+  );
+}
+
+/**
+ * One attempt row. A task's only attempt renders as the task row itself, so it
+ * carries the task ID instead of an attempt number; a retried task labels each
+ * row "Attempt N" and says how the retry ran ("retry · same agent" or
+ * "retry · new agent"). Scope changes and the diagnosis appear beneath.
+ */
+function AttemptRow({
+  theme,
+  symphony,
+  task,
+  attempt,
+  number,
+  retried,
+  previousAgentId,
+  openAgent,
+}: {
+  theme: PluginTheme;
+  symphony: StoredSymphony;
+  task: TaskDefinition;
   attempt: Attempt;
-  index: number;
+  number: number;
+  retried: boolean;
+  previousAgentId: string | undefined;
   openAgent?: (id: string) => void;
 }) {
   const stateKey = attemptState(symphony, attempt);
   const stateColor = theme.colors[HISTORY_STATE_COLORS[stateKey]];
-  const writesLabel = effectiveWritesLabel(symphony, attempt);
-  const grants = attempt.grantedWrites ?? [];
   const diagnosis = attempt.report?.diagnosis;
-  const [grantsOpen, setGrantsOpen] = useState(false);
   const [diagnosisOpen, setDiagnosisOpen] = useState(false);
+  const suffix = retried ? `-${number}` : "";
   return (
     <View
-      testID={`history-attempt-${index + 1}`}
+      testID={`history-attempt-${task.id}${suffix}`}
       style={{
-        ...HISTORY_ROW_STYLE,
-        borderTopColor: theme.colors.border,
+        flexDirection: "row",
+        flexWrap: "wrap",
+        alignItems: "center",
+        gap: 6,
+        minHeight: 32,
+        paddingVertical: 4,
+        paddingLeft: retried ? 12 : 0,
         flexShrink: 1,
         minWidth: 0,
       }}
@@ -244,25 +404,16 @@ function AttemptRow({
       <Text
         selectable
         style={{
-          color: theme.colors.foregroundMuted,
-          fontSize: 12,
-          lineHeight: 17,
-          fontVariant: ["tabular-nums"],
-        }}
-      >
-        #{index + 1}
-      </Text>
-      <Text
-        selectable
-        style={{
           color: theme.colors.foreground,
-          fontSize: 12,
-          lineHeight: 17,
+          fontSize: 13,
+          lineHeight: 18,
+          fontWeight: retried ? "400" : "600",
+          fontVariant: ["tabular-nums"],
           flexShrink: 1,
           minWidth: 0,
         }}
       >
-        {attempt.taskId}
+        {retried ? `Attempt ${number}` : task.id}
       </Text>
       <View
         aria-hidden
@@ -296,14 +447,29 @@ function AttemptRow({
       >
         {durationLabel(attempt)}
       </Text>
+      {number > 1 && (
+        <Text
+          style={{
+            color: theme.colors.foregroundMuted,
+            fontSize: 12,
+            lineHeight: 17,
+          }}
+        >
+          {retryLabel(attempt, previousAgentId)}
+        </Text>
+      )}
       {openAgent && attempt.launch?.state !== "failed" && (
         <Button
           theme={theme}
           variant="quiet"
           dense
           label="Open agent"
-          accessibilityLabel={`Open agent · attempt ${index + 1}`}
-          onPress={() => openAgent(attempt.agentId)}
+          accessibilityLabel={
+            retried
+              ? `Open agent · ${task.id} attempt ${number}`
+              : `Open agent · ${task.id}`
+          }
+          onPress={() => openAgent?.(attempt.agentId)}
         />
       )}
       {attempt.message && (
@@ -320,92 +486,116 @@ function AttemptRow({
           {attempt.message}
         </Text>
       )}
-      {writesLabel && (
+      <ScopeChanges theme={theme} attempt={attempt} indented={retried} />
+      {diagnosis && (
+        <Disclosure
+          theme={theme}
+          label="Diagnosis"
+          expanded={diagnosisOpen}
+          onToggle={() => setDiagnosisOpen((open) => !open)}
+          testID={`history-diagnosis-${task.id}${suffix}`}
+        >
+          <InsetPanel theme={theme}>
+            <DiagnosisPanel theme={theme} diagnosis={diagnosis} />
+          </InsetPanel>
+        </Disclosure>
+      )}
+    </View>
+  );
+}
+
+/**
+ * "retry · same agent" when the retry reused the previous attempt's agent,
+ * otherwise "retry · new agent".
+ */
+function retryLabel(
+  attempt: Attempt,
+  previousAgentId: string | undefined,
+): string {
+  return previousAgentId === attempt.agentId
+    ? "retry · same agent"
+    : "retry · new agent";
+}
+
+/**
+ * Write-scope changes recorded on the attempt: paths the Conductor added for
+ * this and later attempts, and paths a task agent's widen granted for the
+ * attempt. One muted line per path, each with the reason it was needed.
+ */
+function ScopeChanges({
+  theme,
+  attempt,
+  indented,
+}: {
+  theme: PluginTheme;
+  attempt: Attempt;
+  indented: boolean;
+}) {
+  const added = attempt.addedWrites ?? [];
+  const granted = attempt.grantedWrites ?? [];
+  if (!added.length && !granted.length) {
+    return null;
+  }
+  return (
+    <View style={{ width: "100%", gap: 2, paddingLeft: indented ? 12 : 0 }}>
+      {added.map((grant, index) => (
         <Text
+          key={`added-${grant.path}-${index}`}
           selectable
           numberOfLines={2}
           style={{
             color: theme.colors.foregroundMuted,
             fontSize: 12,
             lineHeight: 17,
-            width: "100%",
           }}
         >
-          {`Effective writes: ${writesLabel}`}
+          {`+ ${grant.path} added by Conductor — "${grant.reason}"`}
         </Text>
-      )}
-      {(grants.length > 0 || diagnosis) && (
-        <View
+      ))}
+      {granted.map((grant, index) => (
+        <Text
+          key={`granted-${grant.path}-${index}`}
+          selectable
+          numberOfLines={2}
           style={{
-            width: "100%",
-            flexDirection: "row",
-            flexWrap: "wrap",
-            alignItems: "center",
-            gap: 16,
+            color: theme.colors.foregroundMuted,
+            fontSize: 12,
+            lineHeight: 17,
           }}
         >
-          {grants.length > 0 && (
-            <Disclosure
-              theme={theme}
-              label={`Granted writes ${grants.length}`}
-              expanded={grantsOpen}
-              onToggle={() => setGrantsOpen((open) => !open)}
-              testID={`history-granted-${index + 1}`}
-            >
-              <InsetPanel theme={theme}>
-                {grants.map((grant, grantIndex) => (
-                  <View
-                    key={`${grant.path}-${grantIndex}`}
-                    style={{
-                      paddingVertical: 6,
-                      borderTopWidth: grantIndex > 0 ? 1 : 0,
-                      borderTopColor: theme.colors.border,
-                      gap: 2,
-                    }}
-                  >
-                    <Text
-                      selectable
-                      style={{
-                        color: theme.colors.foreground,
-                        fontSize: 13,
-                        lineHeight: 20,
-                        fontWeight: "600",
-                      }}
-                    >
-                      {grant.path}
-                    </Text>
-                    <Text
-                      selectable
-                      style={{
-                        color: theme.colors.foregroundMuted,
-                        fontSize: 13,
-                        lineHeight: 20,
-                      }}
-                    >
-                      {grant.reason}
-                    </Text>
-                  </View>
-                ))}
-              </InsetPanel>
-            </Disclosure>
-          )}
-          {diagnosis && (
-            <Disclosure
-              theme={theme}
-              label="Diagnosis"
-              expanded={diagnosisOpen}
-              onToggle={() => setDiagnosisOpen((open) => !open)}
-              testID={`history-diagnosis-${index + 1}`}
-            >
-              <InsetPanel theme={theme}>
-                <DiagnosisPanel theme={theme} diagnosis={diagnosis} />
-              </InsetPanel>
-            </Disclosure>
-          )}
-        </View>
-      )}
+          {`widened: ${grant.path} — "${grant.reason}"`}
+        </Text>
+      ))}
     </View>
   );
+}
+
+/** "2 attempts" for two tries, otherwise "N attempts". */
+function attemptCountLabel(count: number): string {
+  return `${count} attempts`;
+}
+
+/** Attempt display state for a history row: a completed report with an unsettled agent launch reads as finishing. */
+function attemptState(
+  symphony: StoredSymphony,
+  attempt: Attempt,
+): TaskStateKey {
+  const task = symphony.revisions
+    .at(-1)
+    ?.score.tasks.find((entry) => entry.id === attempt.taskId);
+  if (!task) {
+    return attempt.state;
+  }
+  const state = taskState(symphony, task);
+  // Only keep the display state while it matches the attempt's own outcome;
+  // a later prerequisite-driven reading would mislabel this historical row.
+  if (
+    (state.key === "finishing" && attempt.state === "completed") ||
+    state.key === attempt.state
+  ) {
+    return state.key;
+  }
+  return attempt.state;
 }
 
 const ATTEMPT_STATE_LABELS: Record<TaskStateKey, string> = {
@@ -418,162 +608,9 @@ const ATTEMPT_STATE_LABELS: Record<TaskStateKey, string> = {
   failed: "Failed",
 };
 
-/** One revision row: number, short timestamp, one-line reason, task count, and a local disclosure of task titles. */
-function RevisionRow({
-  theme,
-  revision,
-  expanded,
-  onToggle,
-}: {
-  theme: PluginTheme;
-  revision: SymphonyRevision;
-  expanded: boolean;
-  onToggle(this: void): void;
-}) {
-  return (
-    <View
-      testID={`history-revision-${revision.number}`}
-      style={{
-        borderTopWidth: 1,
-        borderTopColor: theme.colors.border,
-        paddingVertical: 4,
-      }}
-    >
-      <View style={{ ...rowStyle, gap: 6, minHeight: 32 }}>
-        <Text
-          selectable
-          style={{
-            color: theme.colors.foregroundMuted,
-            fontSize: 12,
-            lineHeight: 17,
-            fontVariant: ["tabular-nums"],
-          }}
-        >
-          R{revision.number}
-        </Text>
-        <Text
-          selectable
-          numberOfLines={1}
-          style={{
-            color: theme.colors.foregroundMuted,
-            fontSize: 12,
-            lineHeight: 17,
-          }}
-        >
-          {shortTimestamp(revision.acceptedAt)}
-        </Text>
-        <Text
-          selectable
-          numberOfLines={1}
-          style={{
-            color: theme.colors.foreground,
-            fontSize: 12,
-            lineHeight: 17,
-            flexShrink: 1,
-            minWidth: 0,
-          }}
-        >
-          {revision.reason}
-        </Text>
-        <Text
-          style={{
-            color: theme.colors.foregroundMuted,
-            fontSize: 12,
-            lineHeight: 17,
-          }}
-        >
-          · {taskCountLabel(revision.score.tasks.length)}
-        </Text>
-        <Disclosure
-          theme={theme}
-          label={`Tasks in revision ${revision.number}`}
-          expanded={expanded}
-          onToggle={onToggle}
-        />
-      </View>
-      {expanded && (
-        <View
-          style={{
-            backgroundColor: theme.colors.surface1,
-            borderColor: theme.colors.border,
-            borderWidth: 1,
-            borderRadius: 6,
-            padding: 12,
-            gap: 4,
-          }}
-        >
-          {revision.score.tasks.map((task) => (
-            <Text
-              key={task.id}
-              selectable
-              style={{
-                color: theme.colors.foreground,
-                fontSize: 13,
-                lineHeight: 20,
-              }}
-            >
-              {task.title}
-            </Text>
-          ))}
-        </View>
-      )}
-    </View>
-  );
-}
-
 /** "1 task" for a single task, otherwise "N tasks". */
 function taskCountLabel(count: number): string {
   return count === 1 ? "1 task" : `${count} tasks`;
-}
-
-/**
- * The task definition in effect when an attempt started: the last revision
- * accepted at or before its start. Using the latest revision here would project
- * a later `addWrites` growth onto an attempt that never saw it.
- */
-function taskForAttempt(
-  symphony: StoredSymphony,
-  attempt: Attempt,
-): TaskDefinition | undefined {
-  for (let index = symphony.revisions.length - 1; index >= 0; index -= 1) {
-    const revision = symphony.revisions[index];
-    if (revision && revision.acceptedAt <= attempt.startedAt) {
-      const task = revision.score.tasks.find(
-        (entry) => entry.id === attempt.taskId,
-      );
-      if (task) {
-        return task;
-      }
-    }
-  }
-  return symphony.revisions[0]?.score.tasks.find(
-    (entry) => entry.id === attempt.taskId,
-  );
-}
-
-/**
- * Effective write scope behind an attempt: the writes the task declared when
- * the attempt started plus the paths the server granted during the attempt.
- * Null when the task wrote nothing and nothing was granted, so silent tasks add
- * no history noise.
- */
-function effectiveWritesLabel(
-  symphony: StoredSymphony,
-  attempt: Attempt,
-): string | null {
-  const defined = taskForAttempt(symphony, attempt)?.writes ?? [];
-  const granted = (attempt.grantedWrites ?? []).map((grant) => grant.path);
-  if (!defined.length && !granted.length) {
-    return null;
-  }
-  const parts: string[] = [];
-  if (defined.length) {
-    parts.push(defined.join(", "));
-  }
-  if (granted.length) {
-    parts.push(`${granted.join(", ")} (granted)`);
-  }
-  return parts.join(" + ");
 }
 
 /** Short human timestamp like "Oct 6, 09:12". */

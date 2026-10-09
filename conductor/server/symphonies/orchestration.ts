@@ -7,12 +7,16 @@ import { symphonyConductor } from "./conductor";
 import { randomUUID } from "node:crypto";
 import {
   effectiveTask,
+  nextAttemptWrites,
   scopeConflictReason,
 } from "../../shared/symphonies/score";
 import {
+  attemptNumber,
   latestAttempt,
+  taskAttempts,
   SYMPHONY_LIMITS,
   type Attempt,
+  type GrantedWrite,
   type StoredSymphony,
   type TaskDefinition,
   type TaskReport,
@@ -57,9 +61,10 @@ function failureKind(attempt: Attempt): FailureKind {
 /**
  * A short, bounded summary of one blocked or failed attempt for the Conductor
  * notification. The Conductor should be able to choose `need` without reading
- * the attempt or its conversation.
+ * the attempt or its conversation. The attempt number is per task, so it agrees
+ * with the History tab.
  */
-function failureSummary(attempt: Attempt) {
+function failureSummary(symphony: StoredSymphony, attempt: Attempt) {
   const report = attempt.report;
   const failedChecks = (report?.checks ?? [])
     .filter((check) => check.status === "failed")
@@ -80,6 +85,8 @@ function failureSummary(attempt: Attempt) {
     : undefined;
   return {
     taskId: attempt.taskId,
+    attempt: attemptNumber(symphony, attempt),
+    attemptCount: taskAttempts(symphony, attempt.taskId).length,
     kind,
     failedChecks,
     message: clamp(report?.summary ?? attempt.message ?? "", 400),
@@ -158,6 +165,9 @@ export function orchestration(
         "Symphony coverage is incomplete; task agent ownership cannot be checked.",
       );
     }
+    // The candidate's own effective scope includes Conductor additions from its
+    // earlier attempts, so the retry conflict check cannot miss them.
+    const candidate = effectiveTask(current, task);
     for (const summary of list.symphonies) {
       if (summary.source.checkout !== current.source.checkout) {
         continue;
@@ -171,12 +181,13 @@ export function orchestration(
           continue;
         }
         const holding = latestAttempt(other, definition.id);
-        // Effective writes include grants from the attempt that still holds
-        // resources, so both conflict checks cannot drift apart.
-        const effective = effectiveTask(definition, holding);
+        // Effective writes union the task's declared scope, every Conductor
+        // addition, and the latest attempt's widen grants, so both conflict
+        // checks cannot drift apart.
+        const held = effectiveTask(other, definition);
         if (
           attemptHoldsResources(holding) &&
-          scopeConflictReason(task, effective)
+          scopeConflictReason(candidate, held)
         ) {
           return `task "${definition.id}" in "${other.title}" still holds its resources.`;
         }
@@ -195,6 +206,48 @@ export function orchestration(
     current: StoredSymphony,
     task: TaskDefinition,
   ): Promise<boolean> => (await reservationBlocker(current, task)) === null;
+  /**
+   * The write scope an attempt that reuses its existing attempt starts with:
+   * the task's effective scope plus the Conductor additions this attempt is
+   * about to record. A new attempt uses `nextAttemptWrites` instead, because
+   * the previous attempt's temporary grants expire when it becomes latest.
+   */
+  const attemptWrites = (
+    current: StoredSymphony,
+    task: TaskDefinition,
+    additions?: GrantedWrite[],
+  ): string[] => [
+    ...new Set([
+      ...effectiveTask(current, task).writes,
+      ...(additions?.map((grant) => grant.path) ?? []),
+    ]),
+  ];
+  /** The bounded per-task position a newly created attempt will occupy. */
+  const newAttemptPosition = (current: StoredSymphony, taskId: string) => {
+    const total = taskAttempts(current, taskId).length + 1;
+    return { taskId, number: total, total };
+  };
+  /**
+   * Merges Conductor additions into an attempt's recorded scope, deduplicating
+   * by path and refusing to exceed the per-attempt bound.
+   */
+  const mergeAddedWrites = (
+    existing: GrantedWrite[] | undefined,
+    additions: GrantedWrite[],
+  ): GrantedWrite[] => {
+    const merged = [...(existing ?? [])];
+    for (const grant of additions) {
+      if (!merged.some((entry) => entry.path === grant.path)) {
+        merged.push(grant);
+      }
+    }
+    if (merged.length > SYMPHONY_LIMITS.addedWritesPerAttempt) {
+      throw new SymphonyError(
+        `addWrites refused: this attempt may hold at most ${SYMPHONY_LIMITS.addedWritesPerAttempt} Conductor-added paths.`,
+      );
+    }
+    return merged;
+  };
   const reserve = async (
     symphonyId: string,
     task: TaskDefinition,
@@ -202,6 +255,7 @@ export function orchestration(
       retry?: boolean;
       replacement?: WorkerChoice;
       prior?: { report: TaskReport | null; note?: string };
+      additions?: GrantedWrite[];
     } = {},
   ) => {
     const override = workerChoice(options.replacement ?? {});
@@ -249,9 +303,14 @@ export function orchestration(
         };
       });
       const priorText = options.prior
-        ? `\n${retryInstructions(options.prior, false)}`
+        ? `\n${retryInstructions(
+            options.prior,
+            false,
+            newAttemptPosition(current, task.id),
+          )}`
         : "";
-      const prompt = `You are a task agent in Conductor symphony ${current.id}. Your assigned task is ${task.id}: ${task.title}.\nSymphony goal: ${context.plan}\nAssignment: ${task.outcome}\nRead scope: ${JSON.stringify(task.reads)}\nWrite scope: ${JSON.stringify(task.writes)}\nRequired checks: ${JSON.stringify(task.checks)}\nPrerequisite reports: ${JSON.stringify(prerequisiteReports)}${priorText}\nWork in the provided concert. Other agents may be reading it. Only edit the declared write scope; writes [] means read-only. Do not commit, push, reload plugins, launch extra agents, or expand this assignment. Respect repository instructions.\nYou are already assigned attempt ${attemptId}; do not start a new symphony or claim another task. ${workerInstructions(command, workerId, current.id, attemptId, task.checks)}\nYour Conductor agent is ${current.source.agentId}.`;
+      const writes = nextAttemptWrites(current, task, options.additions ?? []);
+      const prompt = `You are a task agent in Conductor symphony ${current.id}. Your assigned task is ${task.id}: ${task.title}.\nSymphony goal: ${context.plan}\nAssignment: ${task.outcome}\nRead scope: ${JSON.stringify(task.reads)}\nWrite scope: ${JSON.stringify(writes)}\nRequired checks: ${JSON.stringify(task.checks)}\nPrerequisite reports: ${JSON.stringify(prerequisiteReports)}${priorText}\nWork in the provided concert. Other agents may be reading it. Only edit the declared write scope; writes [] means read-only. Do not commit, push, reload plugins, launch extra agents, or expand this assignment. Respect repository instructions.\nYou are already assigned attempt ${attemptId}; do not start a new symphony or claim another task. ${workerInstructions(command, workerId, current.id, attemptId, task.checks)}\nYour Conductor agent is ${current.source.agentId}.`;
       execution.attempts.push({
         id: attemptId,
         taskId: task.id,
@@ -262,6 +321,9 @@ export function orchestration(
         message: "Starting task agent…",
         report: null,
         reportHash: null,
+        ...(options.additions?.length
+          ? { addedWrites: options.additions }
+          : {}),
         launch: {
           state: "pending",
           prompt,
@@ -290,10 +352,16 @@ export function orchestration(
     }
     let creationStarted = false;
     try {
-      await runtime().validate(
-        symphony.source,
-        symphony.revisions.at(-1)?.score ?? { tasks: [] },
-      );
+      const score = symphony.revisions.at(-1)?.score;
+      // Validate the scope this attempt can actually reach: the plan plus every
+      // Conductor addition and temporary grant, not just the newest revision, so
+      // persistent `addedWrites` still get placement and symlink validation at
+      // every launch.
+      await runtime().validate(symphony.source, {
+        tasks: (score?.tasks ?? []).map((entry) =>
+          effectiveTask(symphony, entry),
+        ),
+      });
       const input = {
         agentId: attempt.agentId,
         parentAgentId: symphony.source.agentId,
@@ -387,94 +455,88 @@ export function orchestration(
     );
   };
   /**
-   * Grows only one task's declared writes after the same conflict check
-   * `reserve` uses. `widen` grants are not revisions; this is, because the task
-   * itself changes. Readers use the latest revision already.
+   * Validates a Conductor scope addition for a retry and returns the grants to
+   * record on the attempt the retry creates or resumes. The plan never changes:
+   * the additions live on the attempt and survive every later attempt of the
+   * task. Returns undefined when every path is already in the task's effective
+   * scope. Runs the same placement/symlink and conflict checks `reserve` uses.
    */
-  const addTaskWrites = async (
-    symphonyId: string,
+  const taskWriteAdditions = async (
+    current: StoredSymphony,
     taskId: string,
     paths: string[],
-  ) => {
-    const initial = (await store.read(symphonyId)).symphony;
-    await store.update(symphonyId, initial.version, async (current) => {
-      const execution = current.execution;
-      const score = current.revisions.at(-1)?.score;
-      if (!execution.conducting || !score) {
-        throw new SymphonyError("This symphony is not ready to widen a task.");
+    note: string,
+  ): Promise<GrantedWrite[] | undefined> => {
+    const execution = current.execution;
+    const score = current.revisions.at(-1)?.score;
+    if (!execution.conducting || !score) {
+      throw new SymphonyError("This symphony is not ready to widen a task.");
+    }
+    const task = score.tasks.find((entry) => entry.id === taskId);
+    if (!task) {
+      throw new SymphonyError("Unknown task.");
+    }
+    const effective = effectiveTask(current, task);
+    // Dedupe only against the task's persistent scope: its declared writes plus
+    // the `addedWrites` of every attempt. The latest attempt's temporary
+    // `widen` grants are not persistent, so promoting one of those paths must
+    // still be recorded instead of dropped as already present.
+    const persistent = [
+      ...task.writes,
+      ...taskAttempts(current, task.id).flatMap(
+        (attempt) => attempt.addedWrites?.map((grant) => grant.path) ?? [],
+      ),
+    ];
+    const additions = [...new Set(paths)].filter(
+      (path) => !persistent.includes(path),
+    );
+    if (additions.length === 0) {
+      return undefined;
+    }
+    const writes = [...new Set([...effective.writes, ...additions])];
+    // A read-only task that gains writes is no longer exploration.
+    const grown: TaskDefinition = { ...effective, writes };
+    // The grown scope becomes task storage, so re-run the placement and symlink
+    // validation the initial define/launch used before persisting it.
+    await runtime().validate(current.source, {
+      tasks: score.tasks.map((entry) => (entry.id === task.id ? grown : entry)),
+    });
+    const list = await store.list();
+    if (list.incomplete || list.unavailable) {
+      throw new SymphonyError(
+        "Symphony coverage is incomplete; widen conflicts cannot be checked.",
+      );
+    }
+    for (const summary of list.symphonies) {
+      if (summary.source.checkout !== current.source.checkout) {
+        continue;
       }
-      const task = score.tasks.find((entry) => entry.id === taskId);
-      if (!task) {
-        throw new SymphonyError("Unknown task.");
-      }
-      const writes = [...new Set([...task.writes, ...paths])];
-      if (writes.length === task.writes.length) {
-        return current;
-      }
-      if (current.revisions.length >= SYMPHONY_LIMITS.revisions) {
-        throw new SymphonyError("Symphony revision limit reached.");
-      }
-      // A read-only task that gains writes is no longer exploration.
-      const grown: TaskDefinition = {
-        ...task,
-        writes,
-        worker: {
-          ...task.worker,
-          role: writes.length ? "implementation" : task.worker.role,
-        },
-      };
-      // The grown scope becomes task storage, so re-run the placement and
-      // symlink validation the initial define/launch used before persisting it.
-      await runtime().validate(current.source, {
-        tasks: score.tasks.map((entry) =>
-          entry.id === task.id ? grown : entry,
-        ),
-      });
-      const list = await store.list();
-      if (list.incomplete || list.unavailable) {
-        throw new SymphonyError(
-          "Symphony coverage is incomplete; widen conflicts cannot be checked.",
-        );
-      }
-      for (const summary of list.symphonies) {
-        if (summary.source.checkout !== current.source.checkout) {
+      const other =
+        summary.id === current.id
+          ? current
+          : (await store.read(summary.id)).symphony;
+      for (const definition of other.revisions.at(-1)?.score.tasks ?? []) {
+        if (other.id === current.id && definition.id === task.id) {
           continue;
         }
-        const other =
-          summary.id === current.id
-            ? current
-            : (await store.read(summary.id)).symphony;
-        for (const definition of other.revisions.at(-1)?.score.tasks ?? []) {
-          if (other.id === current.id && definition.id === task.id) {
-            continue;
-          }
-          const holding = latestAttempt(other, definition.id);
-          if (!attemptHoldsResources(holding)) {
-            continue;
-          }
-          const effective = effectiveTask(definition, holding);
-          const reason = scopeConflictReason(grown, effective);
-          if (reason) {
-            throw new SymphonyError(
-              `addWrites refused: ${paths.join(", ")} overlaps task "${definition.id}" in ${other.title} (${reason}).`,
-            );
-          }
+        const holding = latestAttempt(other, definition.id);
+        if (!attemptHoldsResources(holding)) {
+          continue;
+        }
+        const reason = scopeConflictReason(
+          grown,
+          effectiveTask(other, definition),
+        );
+        if (reason) {
+          throw new SymphonyError(
+            `addWrites refused: ${paths.join(", ")} overlaps task "${definition.id}" in ${other.title} (${reason}).`,
+          );
         }
       }
-      current.revisions.push({
-        number: current.revisions.length + 1,
-        parent:
-          current.revisions.length === 0 ? null : current.revisions.length,
-        reason: clamp(`Conductor added write scope: ${paths.join(", ")}`, 2000),
-        acceptedAt: Date.now(),
-        score: {
-          tasks: score.tasks.map((entry) =>
-            entry.id === task.id ? grown : entry,
-          ),
-        },
-      });
-      return current;
-    });
+    }
+    const at = Date.now();
+    const reason = clamp(note, 2000);
+    return additions.map((path) => ({ path, reason, at }));
   };
   /**
    * Sends an attempt's persisted `wake` and clears it only after the keyed send
@@ -518,9 +580,11 @@ export function orchestration(
     symphonyId: string,
     task: TaskDefinition,
     attempt: Attempt,
+    writes: string[],
+    position: { taskId: string; number: number; total: number },
     prior: { report: TaskReport | null; note?: string },
   ) =>
-    `Resume task ${task.id} in symphony ${symphonyId}, attempt ${attempt.id}. Resolve the blocker using the source conversation. Write scope: ${JSON.stringify(task.writes)}.\n${retryInstructions(prior, true)}\n${workerInstructions(command, attempt.agentId, symphonyId, attempt.id, task.checks)}`;
+    `Resume task ${task.id} in symphony ${symphonyId}, attempt ${attempt.id}. Resolve the blocker using the source conversation. Write scope: ${JSON.stringify(writes)}.\n${retryInstructions(prior, true, position)}\n${workerInstructions(command, attempt.agentId, symphonyId, attempt.id, task.checks)}`;
   /**
    * A failed task continues on its previous agent: a new attempt records the
    * work but the task agent keeps its conversation. The failed report stays
@@ -532,13 +596,14 @@ export function orchestration(
     previous: Attempt,
     launch: NonNullable<Attempt["launch"]>,
     prior: { report: TaskReport | null; note?: string },
+    additions?: GrantedWrite[],
   ) => {
     const attemptId = randomUUID();
     // The continuation keeps the failed attempt's worker choice.
     const choice = workerChoice(launch);
-    const prompt = `Continue task ${task.id} in symphony ${symphonyId} on attempt ${attemptId}. Your previous attempt failed; the server kept your conversation context. Write scope: ${JSON.stringify(task.writes)}.\n${retryInstructions(prior, true)}\n${workerInstructions(command, previous.agentId, symphonyId, attemptId, task.checks)}`;
-    let created = false;
     const initial = (await store.read(symphonyId)).symphony;
+    const prompt = `Continue task ${task.id} in symphony ${symphonyId} on attempt ${attemptId}. Your previous attempt failed; the server kept your conversation context. Write scope: ${JSON.stringify(nextAttemptWrites(initial, task, additions ?? []))}.\n${retryInstructions(prior, true, newAttemptPosition(initial, task.id))}\n${workerInstructions(command, previous.agentId, symphonyId, attemptId, task.checks)}`;
+    let created = false;
     await store.update(symphonyId, initial.version, async (current) => {
       const execution = current.execution;
       const latest = latestAttempt(current, task.id);
@@ -564,6 +629,7 @@ export function orchestration(
         message: "Continuing the assignment on the same task agent…",
         report: null,
         reportHash: null,
+        ...(additions?.length ? { addedWrites: additions } : {}),
         wake: { key: `continue:${attemptId}`, prompt },
         launch: {
           state: "started",
@@ -627,9 +693,16 @@ export function orchestration(
           `Retry cannot start now: ${blocker} Dispatch again after it settles.`,
         );
       }
-      if (addWrites?.length) {
-        await addTaskWrites(symphonyId, retryTaskId, addWrites);
-      }
+      // Validate the additions here, but record them on the attempt the retry
+      // creates or resumes rather than as a new plan revision.
+      const additions = addWrites?.length
+        ? await taskWriteAdditions(
+            symphony,
+            retryTaskId,
+            addWrites,
+            note ?? "Conductor added write scope",
+          )
+        : undefined;
       symphony = (await store.read(symphonyId)).symphony;
       const task = symphony.revisions
         .at(-1)
@@ -642,7 +715,18 @@ export function orchestration(
         ...(note ? { note } : {}),
       };
       if (attempt.state === "blocked" && attempt.launch.state === "started") {
-        const prompt = resumePrompt(symphonyId, task, attempt, prior);
+        const prompt = resumePrompt(
+          symphonyId,
+          task,
+          attempt,
+          attemptWrites(symphony, task, additions),
+          {
+            taskId: task.id,
+            number: attemptNumber(symphony, attempt),
+            total: taskAttempts(symphony, attempt.taskId).length,
+          },
+          prior,
+        );
         if (status.deliverable) {
           const wake = {
             key: `resume:${attempt.id}:${symphony.version}`,
@@ -656,6 +740,9 @@ export function orchestration(
               a.launch.settled = false;
               a.launch.generation += 1;
               a.wake = wake;
+              if (additions?.length) {
+                a.addedWrites = mergeAddedWrites(a.addedWrites, additions);
+              }
             }
           });
           await deliverPendingWake(symphonyId, attempt.id);
@@ -681,6 +768,9 @@ export function orchestration(
             a.launch.generation = 0;
             delete a.launch.config;
             Object.assign(a.launch, choice);
+            if (additions?.length) {
+              a.addedWrites = mergeAddedWrites(a.addedWrites, additions);
+            }
           });
         }
       } else if (attempt.state === "failed") {
@@ -694,12 +784,14 @@ export function orchestration(
             attempt,
             attempt.launch,
             prior,
+            additions,
           );
         } else {
           await reserve(symphonyId, task, {
             retry: true,
             ...(replacement ? { replacement } : {}),
             prior,
+            ...(additions ? { additions } : {}),
           });
         }
       }
@@ -890,7 +982,7 @@ export function orchestration(
                 ?.checks ?? [];
             const wake = {
               key: `nudge:${attempt.id}:${generation}`,
-              prompt: `Task agent for task ${attempt.taskId} stopped without a report. Report or block attempt ${attempt.id} now; do not end your turn without reporting.\n${workerInstructions(command, attempt.agentId, symphony.id, attempt.id, checks)}`,
+              prompt: `Task agent for task ${attempt.taskId} stopped without a report. Report or block attempt ${attempt.id} (attempt ${attemptNumber(symphony, attempt)} of ${taskAttempts(symphony, attempt.taskId).length}) now; do not end your turn without reporting.\n${workerInstructions(command, attempt.agentId, symphony.id, attempt.id, checks)}`,
             };
             symphony = await change(symphony.id, (current) => {
               const a = current.execution.attempts.find(
@@ -974,7 +1066,7 @@ export function orchestration(
             : `\n${clamp(
                 JSON.stringify(
                   blocked.map((attempt) =>
-                    attempt ? failureSummary(attempt) : null,
+                    attempt ? failureSummary(symphony, attempt) : null,
                   ),
                 ),
                 3500,

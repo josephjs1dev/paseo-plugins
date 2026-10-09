@@ -157,41 +157,42 @@ test("fixture scenarios render their documented task and graph states", async ({
   );
 
   // Finishing: a reported completion with an unsettled agent launch. History
-  // holds one compact row per attempt plus a per-revision task disclosure, and
-  // it never repeats the report summary that lives on the task card.
+  // holds one row per task, and a task with one attempt needs no attempt
+  // number; it never repeats the report summary that lives on the task card.
   await openSymphony(page, "finishing");
   await expect(page.getByTestId("symphony-task-deliver")).toContainText(
     "Finishing",
   );
   await detailButton(detail, "History").click();
-  await expect(detail).toContainText("ATTEMPTS");
-  await expect(detail).toContainText("REVISIONS");
-  const attemptRow = page.getByTestId("history-attempt-1");
-  await expect(attemptRow).toContainText("#1");
+  await expect(detail).toContainText("HISTORY");
+  await expect(detail).not.toContainText("REVISIONS");
+  const attemptRow = page.getByTestId("history-task-deliver");
   await expect(attemptRow).toContainText("deliver");
   await expect(attemptRow).toContainText("Finishing");
   await expect(attemptRow).toContainText("5m");
+  await expect(attemptRow).not.toContainText("Attempt 1");
   await expect(attemptRow).not.toContainText(
     "Delivery package handed to the source.",
   );
   await attemptRow
-    .getByRole("button", { name: "Open agent · attempt 1" })
+    .getByRole("button", { name: "Open agent · deliver" })
     .click();
   await expect(page.getByTestId("preview-status")).toContainText(
     "worker-deliver",
   );
-  const revisionRow = page.getByTestId("history-revision-1");
-  await expect(revisionRow).toContainText("R1");
-  await expect(revisionRow).toContainText("· 1 task");
-  await expect(revisionRow).not.toContainText("Investigate deliver");
-  await page.getByRole("button", { name: "Tasks in revision 1" }).click();
-  await expect(revisionRow).toContainText("Investigate deliver");
+  // The Context tab states the accepted plan once;
+  // nothing grew scope, so no Conductor addition line appears.
+  const finishPlan = page.getByTestId("symphony-plan");
+  await detailButton(detail, "Context").click();
+  await expect(finishPlan).toContainText("Plan accepted");
+  await expect(finishPlan).toContainText("1 task");
+  await expect(page.getByTestId("symphony-plan-added-writes")).toHaveCount(0);
 
   // Empty: no tasks recorded, so both surface and history say so.
   await openSymphony(page, "empty");
   await expect(detail).toContainText("No tasks were recorded.");
   await detailButton(detail, "History").click();
-  await expect(detail).toContainText("REVISIONS");
+  await expect(detail).not.toContainText("REVISIONS");
   await expect(detail).toContainText("No task attempts yet.");
   await detailButton(detail, "Graph").click();
   await expect(detail).toContainText(
@@ -233,16 +234,18 @@ test("failed reports show diagnosis, granted writes, and reused agents", async (
   await expect(repair).toContainText("Typecheck reads the exported schema");
   expect(await noPageOverflow(page)).toBe(true);
 
-  // The history lists the effective write scope behind the attempt: nothing
-  // defined, one granted path.
+  // The history shows the widened scope on the task's single attempt row.
   await detailButton(detail, "History").click();
-  await expect(page.getByTestId("history-attempt-1")).toContainText(
-    "Effective writes: shared/schema.ts (granted)",
+  const repairRow = page.getByTestId("history-task-repair");
+  await expect(repairRow).toContainText("widened: shared/schema.ts");
+  await expect(repairRow).toContainText(
+    '"Typecheck reads the exported schema"',
   );
+  await expect(repairRow).not.toContainText("Effective writes");
 
-  // Two failed attempts of one task sharing an agent: the card says so, and
-  // the earlier round shows no write line because nothing was defined or
-  // granted on it.
+  // Two failed attempts of one task sharing an agent: the task row counts the
+  // attempts, each attempt row says how the retry ran, and only the
+  // second attempt shows the widened path.
   await detailButton(detail, "Tasks").click();
   await openSymphony(page, "agent-reuse");
   await expect(page.getByTestId("symphony-task-repair")).toContainText(
@@ -250,31 +253,55 @@ test("failed reports show diagnosis, granted writes, and reused agents", async (
   );
   expect(await noPageOverflow(page)).toBe(true);
   await detailButton(detail, "History").click();
-  await expect(page.getByTestId("history-attempt-1")).not.toContainText(
-    "Effective writes",
-  );
-  await expect(page.getByTestId("history-attempt-2")).toContainText(
-    "Effective writes: shared/schema.ts (granted)",
-  );
+  const reuseRow = page.getByTestId("history-task-repair");
+  await expect(reuseRow).toContainText("2 attempts");
+  const reuseFirst = page.getByTestId("history-attempt-repair-1");
+  await expect(reuseFirst).toContainText("Attempt 1");
+  await expect(reuseFirst).not.toContainText("retry ·");
+  await expect(reuseFirst).not.toContainText("widened");
+  const reuseSecond = page.getByTestId("history-attempt-repair-2");
+  await expect(reuseSecond).toContainText("Attempt 2");
+  await expect(reuseSecond).toContainText("retry · same agent");
+  await expect(reuseSecond).toContainText("widened: shared/schema.ts");
 
-  // A widened attempt that failed, then a successful retry on a fresh agent:
-  // the history keeps the old grant reason and diagnosis, and the failed row's
-  // defined scope is the revision in effect then, not a later addWrites.
+  // A retried task whose Conductor `addWrites` is recorded on the retry
+  // attempt: the first attempt widened its scope, the fresh attempt on a new
+  // agent carries the path the Conductor added, with its reason.
+  await detailButton(detail, "Tasks").click();
+  await openSymphony(page, "retry-added");
+  await detailButton(detail, "History").click();
+  const addedRow = page.getByTestId("history-task-repair");
+  await expect(addedRow).toContainText("2 attempts");
+  const addedFirst = page.getByTestId("history-attempt-repair-1");
+  await expect(addedFirst).toContainText("widened: shared/schema.ts");
+  await expect(addedFirst).not.toContainText("shared/helper.ts");
+  const addedSecond = page.getByTestId("history-attempt-repair-2");
+  await expect(addedSecond).toContainText("retry · new agent");
+  await expect(addedSecond).toContainText(
+    '+ shared/helper.ts added by Conductor — "needs the exported type"',
+  );
+  expect(await noPageOverflow(page)).toBe(true);
+
+  // A legacy record with an addWrites revision: the Context tab names the
+  // grown task, and no History row can attribute the paths to an attempt.
   await detailButton(detail, "Tasks").click();
   await openSymphony(page, "recovery-retry");
+  await detailButton(detail, "Context").click();
+  await expect(page.getByTestId("symphony-plan")).toContainText(
+    "Plan accepted",
+  );
+  await expect(page.getByTestId("symphony-plan-added-writes")).toContainText(
+    "Write scope later added by the Conductor to: repair",
+  );
   await detailButton(detail, "History").click();
-  const widened = page.getByTestId("history-attempt-1");
-  await expect(widened).toContainText(
-    "Effective writes: shared/schema.ts (granted)",
-  );
+  const widened = page.getByTestId("history-attempt-repair-1");
+  await expect(widened).toContainText("widened: shared/schema.ts");
   await expect(widened).not.toContainText("shared/helper.ts");
-  await widened.getByTestId("history-granted-1").click();
-  await expect(widened).toContainText("Typecheck reads the exported schema");
-  await widened.getByTestId("history-diagnosis-1").click();
+  await widened.getByTestId("history-diagnosis-repair-1").click();
   await expect(widened).toContainText("Narrowed the input type");
-  await expect(page.getByTestId("history-attempt-2")).toContainText(
-    "Effective writes: shared/helper.ts",
-  );
+  const legacyRetry = page.getByTestId("history-attempt-repair-2");
+  await expect(legacyRetry).toContainText("retry · new agent");
+  await expect(legacyRetry).not.toContainText("shared/helper.ts");
   expect(await noPageOverflow(page)).toBe(true);
 
   // Compact layout: the opened panels stay inside a 390px viewport.
@@ -362,11 +389,11 @@ test("768px viewport keeps every tab reachable and the graph internally scrollab
     );
   }
 
-  // History stays compact at the mid viewport: one row per attempt, no
+  // History stays compact at the mid viewport: one section per task, no
   // repeated report summaries, and no horizontal page overflow.
   await detailButton(detail, "History").click();
-  await expect(detail).toContainText("ATTEMPTS");
-  await expect(page.getByTestId("history-attempt-1")).toContainText("api");
+  await expect(detail).toContainText("HISTORY");
+  await expect(page.getByTestId("history-task-api")).toContainText("api");
   await expect(detail).not.toContainText(
     "Collected both findings and recorded the uncertainty.",
   );

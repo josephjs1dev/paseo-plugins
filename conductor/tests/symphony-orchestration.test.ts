@@ -12,6 +12,7 @@ import {
   latestAttempt,
   type StoredSymphony,
 } from "../shared/symphonies/models";
+import { effectiveTask } from "../shared/symphonies/score";
 import { placement } from "./symphony-fixtures";
 import { testDirectory } from "./fixtures";
 
@@ -756,20 +757,260 @@ void test("dispatch addWrites grows only the retried task and refuses a path a r
     note: "Use the shared helper",
   });
   const grown = await f.read(plan.id);
-  assert.equal(grown.revisions.length, 2);
+  // The plan never changes: the addition lives on the retry attempt.
+  assert.equal(grown.revisions.length, 1);
   const tasks = grown.revisions.at(-1)?.score.tasks ?? [];
-  assert.deepEqual(tasks.find((t) => t.id === "a")?.writes, [
-    "src/a",
-    "shared/helper.ts",
-  ]);
+  assert.deepEqual(tasks.find((t) => t.id === "a")?.writes, ["src/a"]);
   const retry = latestAttempt(grown, "a");
   assert.equal(retry?.agentId, a.agentId);
+  assert.deepEqual(retry?.addedWrites, [
+    {
+      path: "shared/helper.ts",
+      reason: "Use the shared helper",
+      at: retry?.addedWrites?.[0]?.at,
+    },
+  ]);
   const continued = f.wakePrompts.find((w) =>
     w.key?.startsWith(`continue:${retry?.id}`),
   );
   assert.ok(continued);
   assert.match(continued.prompt, /shared\/helper\.ts/);
   assert.match(continued.prompt, /Use the shared helper/);
+});
+
+void test("Conductor-added writes last for the task and survive later retries", async () => {
+  const f = await fixture();
+  const plan = await f.start();
+  const symphony = await f.define(plan, [task("a", [], ["src/a"])]);
+  const first = latestAttempt(symphony, "a");
+  assert.ok(first && plan.source.agentId);
+  await f.report(plan.id, "a", "failed");
+  f.active.set(first.agentId, false);
+  await f.reconcile();
+  await f.send(plan.source.agentId, {
+    kind: "dispatch",
+    symphonyId: plan.id,
+    retryTaskId: "a",
+    addWrites: ["shared/helper.ts"],
+    note: "Needs the shared helper",
+  });
+  const second = latestAttempt(await f.read(plan.id), "a");
+  assert.ok(second && second.id !== first.id);
+  assert.deepEqual(
+    second.addedWrites?.map((grant) => grant.path),
+    ["shared/helper.ts"],
+  );
+  // The next retry needs no new addWrites: the effective scope already carries
+  // the addition recorded on the earlier attempt.
+  await f.report(plan.id, "a", "failed", {
+    checks: [{ name: "typecheck", status: "failed", detail: "TS2345" }],
+    diagnosis: {
+      tried: ["Retried with the shared helper"],
+      suspectedCause: "The helper still fails typecheck",
+      need: "none",
+    },
+  });
+  f.active.set(second.agentId, false);
+  await f.reconcile();
+  await f.send(plan.source.agentId, {
+    kind: "dispatch",
+    symphonyId: plan.id,
+    retryTaskId: "a",
+  });
+  const final = await f.read(plan.id);
+  assert.equal(final.revisions.length, 1);
+  const continued = f.wakePrompts.find((w) =>
+    w.key?.startsWith(`continue:${latestAttempt(final, "a")?.id}`),
+  );
+  assert.ok(continued);
+  assert.match(continued.prompt, /shared\/helper\.ts/);
+  const definition = final.revisions
+    .at(-1)
+    ?.score.tasks.find((t) => t.id === "a");
+  assert.ok(definition);
+  assert.deepEqual(definition.writes, ["src/a"]);
+  assert.deepEqual(effectiveTask(final, definition).writes, [
+    "src/a",
+    "shared/helper.ts",
+  ]);
+});
+
+void test("a retry prompt drops the failed attempt's temporary widen grants", async () => {
+  const f = await fixture();
+  const plan = await f.start();
+  const symphony = await f.define(plan, [task("a", [], ["src/a"])]);
+  const first = latestAttempt(symphony, "a");
+  assert.ok(first && plan.source.agentId);
+  // The task agent temporarily widens its first attempt beyond the plan.
+  await f.send(first.agentId, {
+    kind: "widen",
+    symphonyId: plan.id,
+    attemptId: first.id,
+    paths: ["shared/old.ts"],
+    reason: "Typecheck needs the shared type",
+  });
+  await f.report(plan.id, "a", "failed");
+  f.active.set(first.agentId, false);
+  await f.reconcile();
+  // A same-agent continuation becomes the latest attempt, so the widen grant
+  // expires and must not appear in the continuation prompt.
+  await f.send(plan.source.agentId, {
+    kind: "dispatch",
+    symphonyId: plan.id,
+    retryTaskId: "a",
+    note: "Retry without the shared file",
+  });
+  const continued = latestAttempt(await f.read(plan.id), "a");
+  assert.ok(continued && continued.id !== first.id);
+  const continuation = f.wakePrompts.find((w) =>
+    w.key?.startsWith(`continue:${continued.id}`),
+  );
+  assert.ok(continuation);
+  assert.match(continuation.prompt, /"src\/a"/);
+  assert.doesNotMatch(continuation.prompt, /shared\/old\.ts/);
+  // The same rule holds for a reserve that creates a fresh agent.
+  await f.send(continued.agentId, {
+    kind: "widen",
+    symphonyId: plan.id,
+    attemptId: continued.id,
+    paths: ["shared/new.ts"],
+    reason: "The retry needs the new shared type",
+  });
+  await f.report(plan.id, "a", "failed");
+  f.active.set(continued.agentId, false);
+  await f.reconcile();
+  await f.send(plan.source.agentId, {
+    kind: "dispatch",
+    symphonyId: plan.id,
+    retryTaskId: "a",
+    provider: "pi",
+    note: "Retry on a new agent",
+  });
+  const reserved = latestAttempt(await f.read(plan.id), "a");
+  assert.ok(reserved && reserved.id !== continued.id);
+  const launchPrompt = f.launches.get(reserved.agentId)?.prompt ?? "";
+  assert.match(launchPrompt, /"src\/a"/);
+  assert.doesNotMatch(launchPrompt, /shared\/new\.ts/);
+  const definition = (await f.read(plan.id)).revisions
+    .at(-1)
+    ?.score.tasks.find((t) => t.id === "a");
+  assert.ok(definition);
+  assert.deepEqual(effectiveTask(await f.read(plan.id), definition).writes, [
+    "src/a",
+  ]);
+});
+
+void test("a later launch validates the task's effective writes, not just the newest plan", async () => {
+  const f = await fixture();
+  const plan = await f.start();
+  const symphony = await f.define(plan, [task("a", [], ["src/a"])]);
+  const first = latestAttempt(symphony, "a");
+  assert.ok(first && plan.source.agentId);
+  await f.report(plan.id, "a", "failed");
+  f.active.set(first.agentId, false);
+  await f.reconcile();
+  // The Conductor records a persistent addition on the retry attempt; it never
+  // becomes a plan revision.
+  await f.send(plan.source.agentId, {
+    kind: "dispatch",
+    symphonyId: plan.id,
+    retryTaskId: "a",
+    addWrites: ["shared/helper.ts"],
+    note: "Needs the shared helper",
+  });
+  const added = latestAttempt(await f.read(plan.id), "a");
+  assert.ok(added && added.id !== first.id);
+  assert.deepEqual(
+    added.addedWrites?.map((grant) => grant.path),
+    ["shared/helper.ts"],
+  );
+  // A later launch re-validates the effective scope, so the rejection lands
+  // even though the plan never contains the added path.
+  f.setValidate((score) => {
+    if (
+      score.tasks.some((candidate) =>
+        candidate.writes.includes("shared/helper.ts"),
+      )
+    ) {
+      throw new SymphonyError("Task scopes cannot include symbolic links.");
+    }
+  });
+  await f.report(plan.id, "a", "failed");
+  f.active.set(added.agentId, false);
+  await f.reconcile();
+  await f.send(plan.source.agentId, {
+    kind: "dispatch",
+    symphonyId: plan.id,
+    retryTaskId: "a",
+    provider: "pi",
+    note: "Retry on a new agent",
+  });
+  const rejected = latestAttempt(await f.read(plan.id), "a");
+  assert.ok(rejected && rejected.id !== added.id);
+  assert.equal(rejected.state, "failed");
+  assert.equal(rejected.reportedBy, "launcher");
+  assert.match(
+    rejected.report?.summary ?? "",
+    /Task scopes cannot include symbolic links/,
+  );
+  assert.equal(f.launches.has(rejected.agentId), false);
+  assert.equal((await f.read(plan.id)).revisions.length, 1);
+});
+
+void test("addWrites promotes a path the latest attempt widened so it survives the next retry", async () => {
+  const f = await fixture();
+  const plan = await f.start();
+  const symphony = await f.define(plan, [task("a", [], ["src/a"])]);
+  const first = latestAttempt(symphony, "a");
+  assert.ok(first && plan.source.agentId);
+  await f.send(first.agentId, {
+    kind: "widen",
+    symphonyId: plan.id,
+    attemptId: first.id,
+    paths: ["shared/helper.ts"],
+    reason: "Trying the shared helper",
+  });
+  await f.report(plan.id, "a", "failed");
+  f.active.set(first.agentId, false);
+  await f.reconcile();
+  // The Conductor promotes the widened path so it lasts for the task.
+  await f.send(plan.source.agentId, {
+    kind: "dispatch",
+    symphonyId: plan.id,
+    retryTaskId: "a",
+    addWrites: ["shared/helper.ts"],
+    note: "Keep the shared helper",
+  });
+  const promoted = await f.read(plan.id);
+  assert.equal(promoted.revisions.length, 1);
+  const retry = latestAttempt(promoted, "a");
+  assert.ok(retry && retry.id !== first.id);
+  assert.deepEqual(
+    promoted.revisions.at(-1)?.score.tasks.find((t) => t.id === "a")?.writes,
+    ["src/a"],
+  );
+  assert.deepEqual(
+    retry.addedWrites?.map((grant) => grant.path),
+    ["shared/helper.ts"],
+  );
+  // The promotion now persists through a later retry without the grant.
+  await f.report(plan.id, "a", "failed");
+  f.active.set(retry.agentId, false);
+  await f.reconcile();
+  await f.send(plan.source.agentId, {
+    kind: "dispatch",
+    symphonyId: plan.id,
+    retryTaskId: "a",
+  });
+  const final = await f.read(plan.id);
+  const definition = final.revisions
+    .at(-1)
+    ?.score.tasks.find((t) => t.id === "a");
+  assert.ok(definition);
+  assert.deepEqual(effectiveTask(final, definition).writes, [
+    "src/a",
+    "shared/helper.ts",
+  ]);
 });
 
 void test("the conductor notification carries a bounded per-task failure summary", async () => {
@@ -798,12 +1039,17 @@ void test("the conductor notification carries a bounded per-task failure summary
   const payload = wake.prompt.split("\n").slice(1).join("\n");
   const summary = JSON.parse(payload) as Array<{
     taskId: string;
+    attempt: number;
+    attemptCount: number;
     kind: string;
     failedChecks: string[];
     message: string;
     diagnosis?: { need: string };
   }>;
   assert.equal(summary[0]?.taskId, "a");
+  // The notification numbers attempts per task, like the History tab.
+  assert.equal(summary[0]?.attempt, 1);
+  assert.equal(summary[0]?.attemptCount, 1);
   assert.equal(summary[0]?.kind, "checks-failed");
   assert.deepEqual(summary[0]?.failedChecks, ["typecheck", "lint"]);
   assert.equal(summary[0]?.diagnosis?.need, "scope");
@@ -1044,7 +1290,8 @@ void test("dispatch addWrites promotes a blocked reader but refuses while a writ
     }),
     /another writer holds resources/,
   );
-  // With the writer done, the promotion is safe and grows one revision.
+  // With the writer done, the promotion is safe and records the addition on the
+  // resumed attempt without changing the plan.
   await f.report(plan.id, "writer");
   f.active.set(writer.agentId, false);
   await f.reconcile();
@@ -1055,12 +1302,16 @@ void test("dispatch addWrites promotes a blocked reader but refuses while a writ
     addWrites: ["shared/helper.ts"],
   });
   const grown = await f.read(plan.id);
-  assert.equal(grown.revisions.length, 2);
+  assert.equal(grown.revisions.length, 1);
   assert.deepEqual(
     grown.revisions.at(-1)?.score.tasks.find((t) => t.id === "reader")?.writes,
-    ["shared/helper.ts"],
+    [],
   );
   assert.equal(latestAttempt(grown, "reader")?.id, reader.id);
+  assert.deepEqual(
+    latestAttempt(grown, "reader")?.addedWrites?.map((grant) => grant.path),
+    ["shared/helper.ts"],
+  );
 });
 
 void test("a failed continuation replays its saved wake after a failed send", async () => {

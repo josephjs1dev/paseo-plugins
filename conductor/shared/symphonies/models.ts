@@ -8,6 +8,8 @@ export const SYMPHONY_LIMITS = {
   snapshotBytes: 2_000_000,
   contextBytes: 128_000,
   attempts: 120,
+  /** Paths the Conductor may add to one task attempt with `addWrites`. */
+  addedWritesPerAttempt: 32,
   /** Paths a task agent may add in one `widen` call. */
   widenPathsPerCall: 5,
   /** `widen` calls a single attempt may make before it must report. */
@@ -160,6 +162,13 @@ export const attemptSchema = z
           SYMPHONY_LIMITS.widenCallsPerAttempt,
       )
       .optional(),
+    // Paths the Conductor added to this task's write scope for this attempt.
+    // Unlike `grantedWrites`, they last for the whole task: the effective scope
+    // unions the additions of every attempt of the task.
+    addedWrites: z
+      .array(grantedWriteSchema)
+      .max(SYMPHONY_LIMITS.addedWritesPerAttempt)
+      .optional(),
     nudgedAt: z.number().int().nonnegative().optional(),
     // Who made the attempt blocked: "worker" when the assigned agent called
     // `block`, "server" when reconciliation settled a stop with no report. The
@@ -296,6 +305,28 @@ export function latestAttempt(
     .slice()
     .reverse()
     .find((attempt) => attempt.taskId === taskId);
+}
+
+/** A task's attempts, oldest first. Derived from `taskId` and array order. */
+export function taskAttempts(
+  symphony: StoredSymphony,
+  taskId: string,
+): Attempt[] {
+  return symphony.execution.attempts.filter(
+    (attempt) => attempt.taskId === taskId,
+  );
+}
+
+/** 1-based position of an attempt among its task's attempts, oldest first. */
+export function attemptNumber(
+  symphony: StoredSymphony,
+  attempt: Attempt,
+): number {
+  return (
+    taskAttempts(symphony, attempt.taskId).findIndex(
+      (entry) => entry.id === attempt.id,
+    ) + 1
+  );
 }
 
 export function summarizeSymphony(symphony: StoredSymphony): SymphonySummary {

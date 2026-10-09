@@ -127,4 +127,12 @@ void test("retry instructions keep the note and only copy the report to a new ag
     false,
   );
   assert.ok(truncated.length < 4000);
+  // The optional position names the per-task retry for the Conductor and the UI.
+  const positioned = retryInstructions(
+    { report, note: "Use the shared schema" },
+    true,
+    { taskId: "api", number: 2, total: 3 },
+  );
+  assert.match(positioned, /Retry of `api`, attempt 2 of 3\./);
+  assert.match(positioned, /Use the shared schema/);
 });

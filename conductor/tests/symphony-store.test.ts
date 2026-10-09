@@ -14,9 +14,11 @@ import { validateSymphonyScopes } from "../server/symphonies/placement";
 import { SymphonyError } from "../server/symphonies/errors";
 import {
   SYMPHONY_LIMITS,
+  attemptNumber,
   type Attempt,
   type StoredSymphony,
 } from "../shared/symphonies/models";
+import { effectiveTask } from "../shared/symphonies/score";
 import {
   score,
   placement,
@@ -618,4 +620,61 @@ void test("attempts with the recovery fields load and keep their values", async 
   assert.equal(stored?.blockedBy, "worker");
   assert.equal(stored?.launch?.checks, 1);
   assert.equal(stored?.launch?.nextCheckAt, executionStart + 5_000);
+});
+
+void test("an older addWrites revision and attempt additions still load and work", async () => {
+  const directory = await testDirectory();
+  const store = fileSymphonyStore(directory);
+  const id = randomUUID();
+  const planned = task("work");
+  const grown = task("work", {
+    writes: ["src/api"],
+    worker: { role: "implementation", profile: "default" },
+  });
+  const base = executionSymphony(id, "blocked", [
+    {
+      ...blockedAttempt("work"),
+      addedWrites: [
+        {
+          path: "src/later",
+          reason: "Conductor added write scope",
+          at: executionStart + 5_000,
+        },
+      ],
+    },
+  ]);
+  // A record written before this change already carries a second revision from
+  // addWrites; it must load and its paths must stay effective.
+  const symphony: StoredSymphony = {
+    ...base,
+    revisions: [
+      {
+        number: 1,
+        parent: null,
+        reason: "Accepted the shared plan",
+        acceptedAt: executionStart,
+        score: { tasks: [planned] },
+      },
+      {
+        number: 2,
+        parent: 1,
+        reason: "Conductor added write scope: src/api",
+        acceptedAt: executionStart + 1_000,
+        score: { tasks: [grown] },
+      },
+    ],
+  };
+  await createSymphony(store, symphony);
+  const stored = (await store.read(id)).symphony;
+  assert.equal(stored.revisions.length, 2);
+  assert.deepEqual(stored.revisions.at(-1)?.score.tasks[0]?.writes, [
+    "src/api",
+  ]);
+  assert.deepEqual(effectiveTask(stored, grown).writes, [
+    "src/api",
+    "src/later",
+  ]);
+  const attempt = stored.execution.attempts[0];
+  assert.ok(attempt);
+  assert.equal(attemptNumber(stored, attempt), 1);
 });

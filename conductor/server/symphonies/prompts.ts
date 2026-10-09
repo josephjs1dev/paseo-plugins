@@ -102,16 +102,30 @@ export interface PriorAttempt {
   note?: string;
 }
 
+/** Per-task attempt position shared by prompts and notifications. */
+export interface AttemptPosition {
+  taskId: string;
+  number: number;
+  total: number;
+}
+
 /**
  * The failed report and Conductor note for a retry. A continuation on the same
  * agent omits the report copy because the agent still holds its conversation;
- * a replacement agent receives the truncated report and diagnosis.
+ * a replacement agent receives the truncated report and diagnosis. The optional
+ * `attempt` names the per-task retry position so the Conductor and the UI agree.
  */
 export function retryInstructions(
   prior: PriorAttempt,
   continuation: boolean,
+  attempt?: AttemptPosition,
 ): string {
   const parts: string[] = [];
+  if (attempt) {
+    parts.push(
+      `Retry of \`${attempt.taskId}\`, attempt ${attempt.number} of ${attempt.total}.`,
+    );
+  }
   if (prior.note) {
     parts.push(`Conductor note for this retry: ${clamp(prior.note, 2000)}`);
   }

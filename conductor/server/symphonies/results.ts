@@ -154,6 +154,14 @@ export function validateExecution(symphony: StoredSymphony): void {
         throw new SymphonyError("Symphony attempt grants are inconsistent.");
       }
     }
+    // Conductor-added scope lives on the attempt but lasts for the task. Only a
+    // conducted symphony has one; a tracked attempt never records it.
+    if (
+      attempt.addedWrites?.length &&
+      symphony.execution.origin !== "conducted"
+    ) {
+      throw new SymphonyError("Symphony attempt writes are inconsistent.");
+    }
     if (
       !terminal &&
       latestAttempt(symphony, attempt.taskId)?.id !== attempt.id

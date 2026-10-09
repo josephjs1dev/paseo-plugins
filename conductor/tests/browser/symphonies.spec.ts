@@ -68,15 +68,15 @@ test("Symphonies monitors start/claim progress and results without manual author
     "Reviewed the implementation and recorded the findings",
   );
   await instance("History").click();
-  // Compact History: one row per attempt with index, task ID, state, and a
-  // quiet Open agent action; the report summary is not repeated.
-  const firstAttempt = detail.getByTestId("history-attempt-1");
-  await expect(firstAttempt).toContainText("#1");
+  // Compact History: one section per task, and a task with one attempt is a
+  // single row without an attempt number; the report summary is not repeated.
+  const firstAttempt = detail.getByTestId("history-task-api");
   await expect(firstAttempt).toContainText("api");
   await expect(firstAttempt).toContainText("Completed");
+  await expect(firstAttempt).not.toContainText("Attempt 1");
   await expect(
     firstAttempt.getByRole("button", {
-      name: "Open agent · attempt 1",
+      name: "Open agent · api",
       exact: true,
     }),
   ).toBeVisible();
@@ -352,7 +352,10 @@ test("task and graph agent links open the actual task agent and retain the Condu
   const right = await collect.boundingBox();
   expect(right?.x ?? 0).toBeGreaterThan((left?.x ?? 0) + (left?.width ?? 0));
   await instance("History").click();
-  await instance("Open agent · attempt 1").click();
+  await detail
+    .getByTestId("history-task-api")
+    .getByRole("button", { name: "Open agent · api", exact: true })
+    .click();
   await expect(page.getByTestId("preview-status")).toContainText("worker-api");
 });
 
