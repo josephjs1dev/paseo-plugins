@@ -6,6 +6,7 @@ import {
   type SymphonyCommand,
 } from "../../shared/symphonies/commands";
 import {
+  attemptActive,
   effectiveTask,
   scoreIssues,
   overlap,
@@ -33,6 +34,9 @@ import {
   executionStatus,
   requirePassingReport,
   attemptHoldsResources,
+  launchUncertain,
+  symphonyHoldsResources,
+  unresolvedIssues,
   widenCalls,
 } from "./results";
 
@@ -77,8 +81,14 @@ export function symphonyExecution(
       }),
     ];
     const score = {
-      tasks: definitions.map(
-        (task): TaskDefinition => ({
+      tasks: definitions.map((task): TaskDefinition => {
+        let role: TaskDefinition["worker"]["role"] = "exploration";
+        if (task.review) {
+          role = "review";
+        } else if (task.writes.length) {
+          role = "implementation";
+        }
+        return {
           id: task.id,
           title: task.title,
           outcome: task.description,
@@ -87,16 +97,14 @@ export function symphonyExecution(
           reads: task.reads,
           writes: task.writes,
           resources: task.resources,
-          worker: {
-            role: task.writes.length ? "implementation" : "exploration",
-            profile: "tracked",
-          },
+          worker: { role, profile: "tracked" },
+          ...(task.review ? { review: true } : {}),
           criteria: ["Report the outcome, evidence and required checks."],
           checks: task.checks,
           stopWhen:
             "Report the assignment outcome without expanding the authorized scope.",
-        }),
-      ),
+        };
+      }),
     };
     const issues = scoreIssues(score);
     if (issues.length) {
@@ -171,6 +179,7 @@ export function symphonyExecution(
         }
         const attempt = latestAttempt(other, definition.id);
         if (
+          symphonyHoldsResources(other) &&
           attemptHoldsResources(attempt) &&
           scopeConflictReason(candidate, effectiveTask(other, definition))
         ) {
@@ -224,6 +233,7 @@ export function symphonyExecution(
           | "orchestrate"
           | "define"
           | "dispatch"
+          | "loop"
           | "profiles"
           | "models"
           | "widen";
@@ -280,6 +290,7 @@ export function symphonyExecution(
             return current;
           }
           if (
+            !command.unresolved?.length &&
             score.tasks.some(
               (task) =>
                 latestAttempt(current, task.id)?.state !== "completed" ||
@@ -288,11 +299,42 @@ export function symphonyExecution(
             )
           ) {
             throw new SymphonyError(
-              "Finish requires a completed report for every task and settled task agents.",
+              "Finish requires a completed report for every task and settled task agents, or an `unresolved` list covering everything still open.",
             );
+          }
+          // A finished symphony is never reconciled again and releases its
+          // scope, so an unconfirmed launch, which may still create an agent
+          // that writes, must be confirmed or rejected first.
+          const uncertain = score.tasks.find((task) =>
+            launchUncertain(latestAttempt(current, task.id)),
+          );
+          if (uncertain) {
+            throw new SymphonyError(
+              `Finish requires every task agent launch to be confirmed; task "${uncertain.id}" has an unconfirmed launch. Retry it with dispatch or wait for reconciliation, then finish.`,
+            );
+          }
+          if (command.unresolved?.length) {
+            // A stopped symphony is never reconciled again, so every task
+            // agent must have stopped and settled first; otherwise a running
+            // agent would keep editing with nobody tracking it.
+            const active = current.execution.attempts.find(attemptActive);
+            if (active) {
+              throw new SymphonyError(
+                `Finish with unresolved requires every task agent to stop and settle first; task "${active.taskId}" is still running. Stop it, wait for reconciliation, then finish.`,
+              );
+            }
+            const issues = unresolvedIssues(current, command.unresolved);
+            if (issues.length) {
+              throw new SymphonyError(
+                `Finish with unresolved must cover every open finding and non-completed task: ${issues.join(" ")}`,
+              );
+            }
           }
           execution.summary = command.summary;
           execution.finishedAt = Date.now();
+          execution.unresolved = command.unresolved?.length
+            ? command.unresolved
+            : undefined;
           execution.interruption = null;
         } else if (command.kind === "claim") {
           if (execution.finishedAt !== null) {
@@ -361,6 +403,20 @@ export function symphonyExecution(
               "The attempt is missing or has been superseded.",
             );
           }
+          // A finished symphony is never reconciled again and has released
+          // its scope, so a late report or block must not reopen settlement.
+          // Only an exact replay of the saved report is acknowledged.
+          if (execution.finishedAt !== null) {
+            if (
+              command.kind === "report" &&
+              attempt.reportHash === contentHash(JSON.stringify(command.report))
+            ) {
+              return current;
+            }
+            throw new SymphonyError(
+              "This symphony is finished; the attempt no longer accepts reports or blocks.",
+            );
+          }
           if (command.kind === "block") {
             if (attempt.report) {
               throw new SymphonyError("A reported attempt cannot be blocked.");
@@ -382,7 +438,9 @@ export function symphonyExecution(
             Object.assign(attempt, changed);
           } else {
             const digest = contentHash(JSON.stringify(command.report));
-            if (attempt.reportHash) {
+            // A late task agent report replaces the server's harness-failure
+            // report: the agent did run the work after all.
+            if (attempt.reportHash && attempt.reportedBy !== "server") {
               if (attempt.reportHash !== digest) {
                 throw new SymphonyError(
                   "This attempt already has a different report.",
@@ -593,6 +651,7 @@ export function symphonyExecution(
           for (const definition of other.revisions.at(-1)?.score.tasks ?? []) {
             const holding = latestAttempt(other, definition.id);
             if (
+              !symphonyHoldsResources(other) ||
               !attemptHoldsResources(holding) ||
               (other.id === current.id && holding?.id === attempt.id)
             ) {
@@ -657,6 +716,9 @@ export function symphonyExecution(
             command.note,
             command.addWrites,
           );
+        }
+        if (command.kind === "loop") {
+          return conductor.loop(agentId, command);
         }
         if (command.kind === "profiles") {
           if (!getWorkers) {

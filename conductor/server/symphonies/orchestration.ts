@@ -3,30 +3,52 @@ import {
   taskAssignmentPrompt,
   continuationPrompt,
   nudgePrompt,
+  prerequisiteResults,
   unionChangedPaths,
   type AttemptPosition,
   type CommandLine,
+  type PreviousFindingsInput,
+  type RecheckPromptInput,
 } from "./prompts";
-import { symphonyConductor } from "./conductor";
+import { commandTaskDefinition, symphonyConductor } from "./conductor";
 import { randomUUID } from "node:crypto";
 import {
+  attemptLoop,
+  currentLoop,
+  currentLoopRecord,
   effectiveTask,
+  loopPrerequisites,
+  loopSchedule,
+  loopVerdict,
   nextAttemptWrites,
+  pendingLoopEntry,
+  prerequisiteCycle,
+  prerequisiteReady,
   scopeConflictReason,
+  scoreIssues,
+  transitiveDependents,
+  type LoopScheduleEntry,
 } from "../../shared/symphonies/score";
 import {
   attemptNumber,
+  isReviewTask,
   latestAttempt,
   taskAttempts,
   SYMPHONY_LIMITS,
   type Attempt,
+  type AttemptReopen,
   type GrantedWrite,
+  type LoopRecord,
+  type LoopReopen,
+  type PreviousReport,
   type StoredSymphony,
   type TaskDefinition,
+  type TaskFinding,
   type TaskReport,
 } from "../../shared/symphonies/models";
 import {
   workerChoice,
+  type SymphonyCommand,
   type WorkerChoice,
 } from "../../shared/symphonies/commands";
 import { commandSymphonyId, type ExecutionRuntime } from "./identity";
@@ -37,14 +59,29 @@ import {
 } from "./changes";
 import { contentHash, type SymphonyStore } from "./store";
 import { SymphonyError, LaunchRejectedError } from "./errors";
-import { attemptHoldsResources, executionStatus } from "./results";
+import {
+  attemptHoldsResources,
+  executionStatus,
+  launchUncertain,
+  symphonyHoldsResources,
+} from "./results";
 import { nextLaunchCheckDelay, type WorkerRuntime } from "./workers";
 
 /** Truncates a field so a large symphony cannot flood the Conductor. */
 const clamp = (value: string, max: number) =>
   value.length > max ? value.slice(0, max) : value;
 
+/** Marks the interruption for a task whose prompt can't be saved. */
+const OVERSIZED_PROMPT = "cannot start: its prompt exceeds";
+
 /** The bounded per-task failure kind shown to the Conductor. */
+/** Why the current loop runs a task, as the prompt and attempt record it. */
+interface LoopPromptContext {
+  reopen?: AttemptReopen;
+  recheck?: RecheckPromptInput;
+  previous?: PreviousFindingsInput;
+}
+
 type FailureKind =
   | "no-report"
   | "launch"
@@ -55,6 +92,11 @@ type FailureKind =
 function failureKind(attempt: Attempt): FailureKind {
   if (attempt.reportedBy === "launcher") {
     return "launch";
+  }
+  // The server settles a harness failure (no report after the nudge, an
+  // unreachable agent, an unconfirmed launch) with its own failed report.
+  if (attempt.reportedBy === "server") {
+    return "no-report";
   }
   const report = attempt.report;
   if (!report) {
@@ -101,6 +143,88 @@ function failureSummary(symphony: StoredSymphony, attempt: Attempt) {
     message: clamp(report?.summary ?? attempt.message ?? "", 400),
     ...(diagnosis ? { diagnosis } : {}),
   };
+}
+
+/** A comparable identity for a finding, used to detect a repeated loop. */
+function findingSignature(finding: TaskFinding): string {
+  return [
+    (finding.taskId ?? "").toLowerCase(),
+    [...finding.paths].sort().join(","),
+    finding.summary.toLowerCase().replace(/\s+/g, " ").slice(0, 120),
+  ].join("|");
+}
+
+/**
+ * True when every blocking finding in the current loop also appeared in the
+ * previous loop (same owning task, same paths, similar summary). A repeat means
+ * the fix did not land, so the wake recommends asking the user.
+ */
+function repeatsPreviousLoop(
+  symphony: StoredSymphony,
+  verdict: ReturnType<typeof loopVerdict>,
+): boolean {
+  if (verdict.verdict !== "needs-changes" || verdict.findings.length === 0) {
+    return false;
+  }
+  const previous = new Set<string>();
+  for (const attempt of symphony.execution.attempts) {
+    if (
+      !attempt.report ||
+      attemptLoop(attempt) !== verdict.loop - 1 ||
+      attempt.state !== "needs-changes"
+    ) {
+      continue;
+    }
+    for (const finding of attempt.report.findings ?? []) {
+      if (finding.severity === "blocking") {
+        previous.add(findingSignature(finding));
+      }
+    }
+  }
+  // Findings carried from an earlier loop (deferred) are not a repeat.
+  const fresh = verdict.findings.filter((entry) => entry.loop === verdict.loop);
+  return (
+    fresh.length > 0 &&
+    fresh.every((entry) => previous.has(findingSignature(entry.finding)))
+  );
+}
+
+/** The per-loop wake text that states the verdict and the next step. */
+function loopEndMessage(
+  symphony: StoredSymphony,
+  verdict: ReturnType<typeof loopVerdict>,
+): string {
+  if (verdict.verdict === "succeeded") {
+    return `Loop ${verdict.loop} succeeded. Review the evidence, then finish the symphony with a summary.`;
+  }
+  const maxLoops =
+    symphony.execution.conducting?.maxLoops ?? SYMPHONY_LIMITS.defaultLoops;
+  const parts: string[] = [];
+  const findings = verdict.findings.map(
+    (entry) =>
+      `${entry.finding.id} (${entry.finding.taskId ?? entry.reporterTaskId})`,
+  );
+  if (findings.length) {
+    parts.push(
+      `${findings.length} blocking finding${findings.length === 1 ? "" : "s"} [${findings.join(", ")}]`,
+    );
+  }
+  const checks = verdict.failedChecks.map(
+    (entry) => `${entry.check.name} (${entry.reporterTaskId})`,
+  );
+  if (checks.length) {
+    parts.push(
+      `${checks.length} failed check${checks.length === 1 ? "" : "s"} [${checks.join(", ")}]`,
+    );
+  }
+  const detail = parts.length ? parts.join(" and ") : "no blocking findings";
+  if (verdict.loop >= maxLoops) {
+    return `Loop ${verdict.loop} needs changes: ${detail}. The loop budget (${maxLoops}) is used. Ask the user whether to continue (\`loop\` with \`approval\`) or finish with \`unresolved\`.`;
+  }
+  if (repeatsPreviousLoop(symphony, verdict)) {
+    return `Loop ${verdict.loop} needs changes: ${detail}. The blocking findings repeat the previous loop; ask the user before the budget runs out.`;
+  }
+  return `Loop ${verdict.loop} needs changes: ${detail}. Start loop ${verdict.loop + 1} with \`loop\`, reopening the owning tasks.`;
 }
 
 /** The worker choice a launch uses; "inherit" means no profile is passed. */
@@ -158,15 +282,19 @@ export function orchestration(
   const reservationBlocker = async (
     current: StoredSymphony,
     task: TaskDefinition,
+    additions: readonly GrantedWrite[] = [],
   ): Promise<string | null> => {
     const execution = current.execution;
     if (!execution.conducting || execution.finishedAt !== null) {
       return "this symphony is not ready to dispatch.";
     }
-    const unmet = task.prerequisites.find((id) => {
-      const a = latestAttempt(current, id);
-      return a?.state !== "completed" || !a.launch?.settled;
-    });
+    const review = isReviewTask(task);
+    // `after` prerequisites are loop-only: they hold for this loop without
+    // changing the task's declared `dependsOn`. A prerequisite scheduled to
+    // re-run this loop is not settled until its new attempt settles.
+    const unmet = loopPrerequisites(current, task).find(
+      (id) => !prerequisiteReady(current, id, review),
+    );
     if (unmet) {
       return `prerequisite task "${unmet}" has not completed and settled.`;
     }
@@ -187,8 +315,23 @@ export function orchestration(
       );
     }
     // The candidate's own effective scope includes Conductor additions from its
-    // earlier attempts, so the retry conflict check cannot miss them.
-    const candidate = effectiveTask(current, task);
+    // earlier attempts and the ones it is about to record, so the conflict
+    // check cannot miss them.
+    const effective = effectiveTask(current, task);
+    const grown = [
+      ...new Set([
+        ...effective.writes,
+        ...additions.map((grant) => grant.path),
+      ]),
+    ];
+    const candidate =
+      grown.length === effective.writes.length
+        ? effective
+        : {
+            ...effective,
+            writes: grown,
+            worker: { ...effective.worker, role: "implementation" as const },
+          };
     for (const summary of list.symphonies) {
       if (summary.source.checkout !== current.source.checkout) {
         continue;
@@ -197,6 +340,9 @@ export function orchestration(
         summary.id === current.id
           ? current
           : (await store.read(summary.id)).symphony;
+      if (!symphonyHoldsResources(other)) {
+        continue;
+      }
       for (const definition of other.revisions.at(-1)?.score.tasks ?? []) {
         if (other.id === current.id && definition.id === task.id) {
           continue;
@@ -226,7 +372,174 @@ export function orchestration(
   const canReserve = async (
     current: StoredSymphony,
     task: TaskDefinition,
-  ): Promise<boolean> => (await reservationBlocker(current, task)) === null;
+    additions?: readonly GrantedWrite[],
+  ): Promise<boolean> =>
+    (await reservationBlocker(current, task, additions)) === null;
+
+  /**
+   * Every finding the latest report of each task carries, whichever loop
+   * produced it, keyed by the canonical `reporter#id` reference. Finding ids
+   * are unique only within one report, so a bare id resolves only when exactly
+   * one reporter used it.
+   */
+  const openFindingMap = (
+    current: StoredSymphony,
+  ): Map<string, { reporterTaskId: string; finding: TaskFinding }> => {
+    const map = new Map<
+      string,
+      { reporterTaskId: string; finding: TaskFinding }
+    >();
+    for (const task of current.revisions.at(-1)?.score.tasks ?? []) {
+      const attempt = latestAttempt(current, task.id);
+      for (const finding of attempt?.report?.findings ?? []) {
+        map.set(`${task.id}#${finding.id}`, {
+          reporterTaskId: task.id,
+          finding,
+        });
+      }
+    }
+    return map;
+  };
+
+  /**
+   * The canonical `reporter#id` key a finding reference names, or an error
+   * message when the reference is unknown or a bare id is ambiguous.
+   */
+  const findingKey = (
+    map: ReturnType<typeof openFindingMap>,
+    reference: string,
+  ): { key: string } | { error: string } => {
+    if (map.has(reference)) {
+      return { key: reference };
+    }
+    const matches = [...map.keys()].filter((key) =>
+      key.endsWith(`#${reference}`),
+    );
+    if (matches.length === 1 && matches[0] !== undefined) {
+      return { key: matches[0] };
+    }
+    return {
+      error: matches.length
+        ? `Finding "${reference}" is ambiguous; name it as ${matches.join(" or ")}.`
+        : `Unknown finding "${reference}".`,
+    };
+  };
+
+  /**
+   * Why the current loop runs a task, as prompt context. Explicit reopens carry
+   * the finding objects captured when `loop` was accepted; a transitive
+   * dependent gets a short re-check. A review, explicitly reopened or not,
+   * also gets the open blocking findings captured then, so a later rerun of a
+   * reporter cannot hide them.
+   */
+  const loopContext = (
+    record: LoopRecord,
+    task: TaskDefinition,
+    scheduled: LoopScheduleEntry,
+  ): LoopPromptContext => {
+    const found = isReviewTask(task)
+      ? reviewPreviousFindings(record, task.id)
+      : { findings: [], omitted: 0 };
+    const previous =
+      found.findings.length || found.omitted ? { previous: found } : {};
+    if (scheduled.reopen) {
+      return {
+        reopen: {
+          reason: scheduled.reopen.note ?? record.reason,
+          findings: scheduled.reopen.resolved ?? [],
+        },
+        ...previous,
+      };
+    }
+    return {
+      recheck: { loop: record.number, changed: scheduled.changed },
+      ...previous,
+    };
+  };
+
+  /**
+   * The loop context for a task that the current loop scheduled and that has
+   * not run in it yet, or null otherwise.
+   */
+  const loopReopenContext = (
+    current: StoredSymphony,
+    task: TaskDefinition,
+  ): (LoopPromptContext & { entry?: LoopReopen }) | null => {
+    const record = currentLoopRecord(current);
+    const scheduled = pendingLoopEntry(current, task.id);
+    if (!record || !scheduled) {
+      return null;
+    }
+    return {
+      ...loopContext(record, task, scheduled),
+      ...(scheduled.reopen ? { entry: scheduled.reopen } : {}),
+    };
+  };
+
+  /**
+   * The loop context a retry or rebind of a task's current-loop attempt
+   * repeats, so a replacement agent still gets the reopen findings and a
+   * review's previous findings. Empty outside a loop the task was scheduled in.
+   */
+  const retryLoopContext = (
+    current: StoredSymphony,
+    task: TaskDefinition,
+  ): LoopPromptContext => {
+    const record = currentLoopRecord(current);
+    const score = current.revisions.at(-1)?.score;
+    const latest = latestAttempt(current, task.id);
+    if (!record || !score || !latest || attemptLoop(latest) !== record.number) {
+      return {};
+    }
+    const scheduled = loopSchedule(score, record).get(task.id);
+    return scheduled ? loopContext(record, task, scheduled) : {};
+  };
+
+  /**
+   * The previous loop's blocking findings a re-running review confirms, with
+   * reporter-qualified ids. The review always gets every finding it reported
+   * itself; other reporters' findings fill the list up to one report's bound,
+   * and the rest are counted so the prompt never truncates silently.
+   */
+  const reviewPreviousFindings = (
+    record: LoopRecord,
+    taskId: string,
+  ): { findings: TaskFinding[]; omitted: number } => {
+    if (!record.previousReports) {
+      return { findings: record.previousFindings ?? [], omitted: 0 };
+    }
+    const qualified = (entry: PreviousReport) =>
+      entry.findings.map((finding) => ({
+        ...finding,
+        id: `${entry.reporterTaskId}#${finding.id}`,
+      }));
+    const own = record.previousReports
+      .filter((entry) => entry.reporterTaskId === taskId)
+      .flatMap(qualified);
+    const others = record.previousReports
+      .filter((entry) => entry.reporterTaskId !== taskId)
+      .flatMap(qualified);
+    const room = Math.max(0, SYMPHONY_LIMITS.findingsPerReport - own.length);
+    return {
+      findings: [...own, ...others.slice(0, room)],
+      omitted: Math.max(0, others.length - room),
+    };
+  };
+
+  /** Failed attempts of one task in the current loop, for the retry limit. */
+  const failedRetriesInLoop = (
+    current: StoredSymphony,
+    taskId: string,
+  ): number =>
+    taskAttempts(current, taskId)
+      .filter((attempt) => attemptLoop(attempt) === currentLoop(current))
+      .reduce(
+        (count, attempt) =>
+          count +
+          (attempt.state === "failed" ? 1 : 0) +
+          (attempt.identityRetries ?? 0),
+        0,
+      );
   /**
    * The write scope an attempt that reuses its existing attempt starts with:
    * the task's effective scope plus the Conductor additions this attempt is
@@ -305,6 +618,15 @@ export function orchestration(
     [assignment, handoff]
       .filter((part): part is string => Boolean(part))
       .join("\n\n");
+  /** The characters an assignment may use next to `handoff` in one prompt. */
+  const assignmentBudget = (handoff: string | null): number =>
+    SYMPHONY_LIMITS.promptChars - (handoff ? handoff.length + 2 : 0);
+  /**
+   * The interruption for a task whose prompt cannot be saved even with
+   * shortened findings, so the loop does not stall silently.
+   */
+  const oversizedPrompt = (taskId: string): string =>
+    `Task "${taskId}" ${OVERSIZED_PROMPT} ${SYMPHONY_LIMITS.promptChars} characters even with shortened findings and checks. Ask the user, then finish with \`unresolved\` covering this task.`;
   /**
    * The handoff fields for a replacement agent: the union of every earlier
    * attempt's changed paths. Omits `changedPaths` entirely when no attempt was
@@ -328,6 +650,14 @@ export function orchestration(
       replacement?: WorkerChoice;
       prior?: { report: TaskReport | null; note?: string };
       additions?: GrantedWrite[];
+      /** The loop this attempt runs in; defaults to the current loop. */
+      loop?: number;
+      /** Findings a reopened task must address. */
+      reopen?: AttemptReopen;
+      /** A short dependent re-check after a prerequisite changed. */
+      recheck?: RecheckPromptInput;
+      /** A re-running review's previous-loop findings to confirm. */
+      previous?: PreviousFindingsInput;
     } = {},
   ) => {
     const override = workerChoice(options.replacement ?? {});
@@ -343,34 +673,42 @@ export function orchestration(
         return current;
       }
       const previous = latestAttempt(current, task.id);
-      if (
-        previous &&
-        !(
-          options.retry &&
-          previous.state === "failed" &&
-          previous.launch?.settled
-        )
-      ) {
+      if (previous) {
+        // A loop attempt supersedes a settled previous attempt from an earlier
+        // loop; a retry still only continues a failed attempt.
+        const looping =
+          options.loop !== undefined && attemptLoop(previous) < options.loop;
+        if (
+          !looping &&
+          !(
+            options.retry &&
+            previous.state === "failed" &&
+            previous.launch?.settled
+          )
+        ) {
+          return current;
+        }
+      }
+      if (!(await canReserve(current, task, options.additions))) {
         return current;
       }
-      if (!(await canReserve(current, task))) {
-        return current;
-      }
+      const loop = options.loop ?? currentLoop(current);
       const attemptId = randomUUID();
       const workerId = commandSymphonyId(current.id, attemptId);
       const { context } = await store.read(current.id);
       const writes = nextAttemptWrites(current, task, options.additions ?? []);
       // A replacement agent gets the full assignment plus a handoff; its own
       // conversation does not exist yet. Changed files are recorded later.
-      const handoff = options.retry
-        ? handoffInstructions({
-            attempt: newAttemptPosition(current, task.id),
-            previousWorker: workerLabel(previous?.launch),
-            report: options.prior?.report ?? null,
-            ...handoffPaths(current, task.id),
-            ...(options.prior?.note ? { note: options.prior.note } : {}),
-          })
-        : null;
+      const handoff =
+        options.retry || options.loop !== undefined
+          ? handoffInstructions({
+              attempt: newAttemptPosition(current, task.id),
+              previousWorker: workerLabel(previous?.launch),
+              report: options.prior?.report ?? null,
+              ...handoffPaths(current, task.id),
+              ...(options.prior?.note ? { note: options.prior.note } : {}),
+            })
+          : null;
       const prompt = agentPrompt(
         taskAssignmentPrompt({
           symphony: current,
@@ -378,9 +716,18 @@ export function orchestration(
           attemptId,
           plan: context.plan,
           writes,
+          ...(options.reopen ? { reopen: options.reopen } : {}),
+          ...(options.recheck ? { recheck: options.recheck } : {}),
+          ...(options.previous ? { previous: options.previous } : {}),
+          budget: assignmentBudget(handoff),
         }),
         handoff,
       );
+      if (prompt.length > SYMPHONY_LIMITS.promptChars) {
+        execution.interruption = oversizedPrompt(task.id);
+        current.status = executionStatus(current);
+        return current;
+      }
       execution.attempts.push({
         id: attemptId,
         taskId: task.id,
@@ -391,6 +738,9 @@ export function orchestration(
         message: "Starting task agent…",
         report: null,
         reportHash: null,
+        loop,
+        ...(options.reopen ? { reopen: options.reopen } : {}),
+        ...(options.recheck ? { recheck: true } : {}),
         ...(options.additions?.length
           ? { addedWrites: options.additions }
           : {}),
@@ -623,7 +973,7 @@ export function orchestration(
           continue;
         }
         const holding = latestAttempt(other, definition.id);
-        if (!attemptHoldsResources(holding)) {
+        if (!symphonyHoldsResources(other) || !attemptHoldsResources(holding)) {
           continue;
         }
         const reason = scopeConflictReason(
@@ -690,9 +1040,16 @@ export function orchestration(
     launch: NonNullable<Attempt["launch"]>,
     prior: { report: TaskReport | null; note?: string },
     additions?: GrantedWrite[],
-  ) => {
+    options: {
+      /** The loop this attempt runs in; defaults to the current loop. */
+      loop?: number;
+      reopen?: AttemptReopen;
+      recheck?: RecheckPromptInput;
+      previous?: PreviousFindingsInput;
+    } = {},
+  ): Promise<boolean> => {
     const attemptId = randomUUID();
-    // The continuation keeps the failed attempt's worker choice.
+    // The continuation keeps the previous attempt's worker choice.
     const choice = workerChoice(launch);
     const initial = (await store.read(symphonyId)).symphony;
     const writes = nextAttemptWrites(initial, task, additions ?? []);
@@ -713,21 +1070,41 @@ export function orchestration(
       ...(prior.note ? { note: prior.note } : {}),
       writes,
       added: additions?.map((grant) => grant.path) ?? [],
+      ...(options.reopen ? { reopen: options.reopen } : {}),
+      ...(options.recheck ? { recheck: options.recheck } : {}),
+      ...(options.previous ? { previous: options.previous } : {}),
+      // The agent's conversation holds only the results it started with, so
+      // the continuation carries each prerequisite's current result.
+      prerequisites: prerequisiteResults(initial, task),
     });
+    if (prompt.length > SYMPHONY_LIMITS.promptChars) {
+      await change(symphonyId, (current) => {
+        current.execution.interruption = oversizedPrompt(task.id);
+        current.status = executionStatus(current);
+      });
+      return false;
+    }
     let created = false;
     await store.update(symphonyId, initial.version, async (current) => {
       const execution = current.execution;
       const latest = latestAttempt(current, task.id);
+      const loop = options.loop ?? currentLoop(current);
+      // A loop continuation supersedes a settled completed or needs-changes
+      // attempt; a retry still only continues a failed one.
+      const allowed =
+        options.loop !== undefined
+          ? latest !== undefined && attemptLoop(latest) < options.loop
+          : latest?.state === "failed";
       if (
         !latest ||
         latest.id !== previous.id ||
-        latest.state !== "failed" ||
+        !allowed ||
         !latest.launch?.settled
       ) {
         return current;
       }
       // Keep writers serialized even though the agent is reused.
-      if (!(await canReserve(current, task))) {
+      if (!(await canReserve(current, task, additions))) {
         return current;
       }
       execution.attempts.push({
@@ -740,6 +1117,9 @@ export function orchestration(
         message: "Continuing the assignment on the same task agent…",
         report: null,
         reportHash: null,
+        loop,
+        ...(options.reopen ? { reopen: options.reopen } : {}),
+        ...(options.recheck ? { recheck: true } : {}),
         ...(additions?.length ? { addedWrites: additions } : {}),
         ...(baseline
           ? { writeFingerprint: baseline.paths }
@@ -762,7 +1142,87 @@ export function orchestration(
     if (created) {
       await deliverPendingWake(symphonyId, attemptId);
     }
+    return created;
   };
+
+  /**
+   * Starts the attempts the current loop scheduled and that can start now: the
+   * explicit reopens (with their recorded note, write additions and findings)
+   * and the transitive dependents of reopened tasks. A task waiting on a
+   * loop-only `after` prerequisite or a busy checkout starts on a later call.
+   * Idempotent: a task that already ran in the current loop is skipped, so
+   * `loop`, every dispatch and every reconcile can safely call it.
+   *
+   * A task continues on its previous agent with that agent's actual worker
+   * choice when the agent is idle and can receive a message. An agent that is
+   * still active is never replaced; otherwise a new agent starts with the
+   * previous report and the previous launch's worker choice.
+   */
+  const startLoopTasks = async (symphonyId: string): Promise<void> => {
+    let { symphony } = await store.read(symphonyId);
+    const meta = symphony.execution.conducting;
+    if (
+      !meta ||
+      meta.phase !== "working" ||
+      symphony.execution.finishedAt !== null ||
+      !currentLoopRecord(symphony)
+    ) {
+      return;
+    }
+    const loop = currentLoop(symphony);
+    for (const task of symphony.revisions.at(-1)?.score.tasks ?? []) {
+      const context = loopReopenContext(symphony, task);
+      if (!context) {
+        continue;
+      }
+      const { entry, ...prompt } = context;
+      const additions = entry?.addedWrites?.length
+        ? entry.addedWrites
+        : undefined;
+      if (await reservationBlocker(symphony, task, additions)) {
+        continue;
+      }
+      const previous = latestAttempt(symphony, task.id);
+      const prior: { report: TaskReport | null; note?: string } = {
+        report: previous?.report ?? null,
+        ...(entry?.note ? { note: entry.note } : {}),
+      };
+      let created = false;
+      if (previous?.launch) {
+        const status = await workers().inspect(previous.agentId);
+        if (status.active) {
+          continue;
+        }
+        if (status.deliverable) {
+          created = await continueFailedAttempt(
+            symphony.id,
+            task,
+            previous,
+            previous.launch,
+            prior,
+            additions,
+            { loop, ...prompt },
+          );
+        }
+      }
+      if (!created) {
+        created = await reserve(symphony.id, task, {
+          loop,
+          prior,
+          ...(previous?.launch
+            ? { replacement: launchChoice(previous.launch) }
+            : {}),
+          ...(additions ? { additions } : {}),
+          ...prompt,
+        });
+      }
+      if (created) {
+        await launchAttempt(symphony.id, task);
+      }
+      symphony = (await store.read(symphony.id)).symphony;
+    }
+  };
+
   const dispatch = async (
     agentId: string,
     symphonyId: string,
@@ -785,7 +1245,18 @@ export function orchestration(
         (attempt.state !== "failed" && attempt.state !== "blocked")
       ) {
         throw new SymphonyError(
-          "Retry requires a settled failed or blocked task agent.",
+          "Retry requires a settled failed or blocked task agent; a needs-changes task is resolved with `loop`, not a retry.",
+        );
+      }
+      // Failed retries are separate from loops: at most 2 retries (3 attempts)
+      // per task per loop, counted only from failed attempts in that loop.
+      if (
+        attempt.state === "failed" &&
+        failedRetriesInLoop(symphony, retryTaskId) >
+          SYMPHONY_LIMITS.failedRetriesPerLoop
+      ) {
+        throw new SymphonyError(
+          `Retry refused: task "${retryTaskId}" already used its ${SYMPHONY_LIMITS.failedRetriesPerLoop} failed retries in loop ${currentLoop(symphony)}. Ask the user how to proceed.`,
         );
       }
       const status = await workers().inspect(attempt.agentId);
@@ -804,7 +1275,6 @@ export function orchestration(
       // first. Dispatch without a replacement keeps reconciling as before.
       const requested = workerChoice(replacement ?? {});
       if (
-        attempt.state === "blocked" &&
         attempt.launch.state === "uncertain" &&
         Object.keys(requested).length > 0 &&
         !sameWorkerChoice(currentTask, attempt, replacement)
@@ -843,6 +1313,9 @@ export function orchestration(
         report: attempt.report,
         ...(note ? { note } : {}),
       };
+      // A replacement agent has none of the current loop's context, so it gets
+      // the reopen findings and a review's previous findings again.
+      const retryContext = retryLoopContext(symphony, task);
       if (attempt.state === "blocked" && attempt.launch.state === "started") {
         // A blocked attempt resumes on its agent only when the Conductor kept
         // the worker choice and that agent can still receive a message.
@@ -890,6 +1363,15 @@ export function orchestration(
             ? { profile: "inherit", ...workerChoice(replacement) }
             : workerChoice(attempt.launch);
           const { context } = await store.read(symphonyId);
+          const handoff = handoffInstructions({
+            attempt: position,
+            previousWorker: workerLabel(attempt.launch),
+            report: attempt.report,
+            ...handoffPaths(symphony, task.id),
+            ...(attempt.blockedBy ? { blockedBy: attempt.blockedBy } : {}),
+            ...(attempt.message ? { blockMessage: attempt.message } : {}),
+            ...(note ? { note } : {}),
+          });
           const prompt = agentPrompt(
             taskAssignmentPrompt({
               symphony,
@@ -897,17 +1379,14 @@ export function orchestration(
               attemptId: attempt.id,
               plan: context.plan,
               writes,
+              ...retryContext,
+              budget: assignmentBudget(handoff),
             }),
-            handoffInstructions({
-              attempt: position,
-              previousWorker: workerLabel(attempt.launch),
-              report: attempt.report,
-              ...handoffPaths(symphony, task.id),
-              ...(attempt.blockedBy ? { blockedBy: attempt.blockedBy } : {}),
-              ...(attempt.message ? { blockMessage: attempt.message } : {}),
-              ...(note ? { note } : {}),
-            }),
+            handoff,
           );
+          if (prompt.length > SYMPHONY_LIMITS.promptChars) {
+            throw new SymphonyError(oversizedPrompt(task.id));
+          }
           await change(symphonyId, (current) => {
             const a = latestAttempt(current, retryTaskId);
             if (!a?.launch) {
@@ -945,7 +1424,47 @@ export function orchestration(
             }
           });
         }
+      } else if (
+        attempt.state === "failed" &&
+        attempt.launch.state === "uncertain" &&
+        (!status.exists || status.deliverable)
+      ) {
+        // The launch was never confirmed. A new identity could duplicate a
+        // launch that lands late, and an agent that did appear already holds
+        // this attempt's assignment, so the retry replays the same keyed
+        // identity on this attempt. Only an archived or closed agent is
+        // replaced. The replay counts toward the retry limit like a new
+        // failed attempt.
+        await change(symphonyId, (current) => {
+          const a = latestAttempt(current, retryTaskId);
+          if (
+            !a?.launch ||
+            a.id !== attempt.id ||
+            a.state !== "failed" ||
+            a.reportedBy !== "server"
+          ) {
+            return;
+          }
+          reopenServerFailure(
+            a,
+            "Replaying the unconfirmed task agent launch with the same identity…",
+          );
+          a.identityRetries = (a.identityRetries ?? 0) + 1;
+          if (additions?.length) {
+            a.addedWrites = mergeAddedWrites(a.addedWrites, additions);
+          }
+        });
       } else if (attempt.state === "failed") {
+        if (launchUncertain(attempt) && status.exists) {
+          // The unconfirmed agent did appear and is now archived or closed, so
+          // the launch is resolved and no longer fences the replacement.
+          await change(symphonyId, (current) => {
+            const a = latestAttempt(current, retryTaskId);
+            if (a?.launch && a.id === attempt.id && launchUncertain(a)) {
+              a.launch.state = "started";
+            }
+          });
+        }
         if (
           sameWorkerChoice(task, attempt, replacement) &&
           status.deliverable
@@ -957,6 +1476,7 @@ export function orchestration(
             attempt.launch,
             prior,
             additions,
+            retryContext,
           );
         } else {
           await reserve(symphonyId, task, {
@@ -964,10 +1484,13 @@ export function orchestration(
             ...(replacement ? { replacement } : {}),
             prior,
             ...(additions ? { additions } : {}),
+            ...retryContext,
           });
         }
       }
     }
+    symphony = (await store.read(symphonyId)).symphony;
+    await startLoopTasks(symphony.id);
     symphony = (await store.read(symphonyId)).symphony;
     const tasks = symphony.revisions.at(-1)?.score.tasks ?? [];
     for (const task of tasks) {
@@ -977,6 +1500,380 @@ export function orchestration(
     symphony = (await store.read(symphonyId)).symphony;
     return { symphony };
   };
+  /**
+   * Starts loop N+1 after loop N ended needing changes. Reopens the owning
+   * tasks with their findings, optionally appends new tasks in a new score
+   * revision, and defers the rest with a reason. Dependents of a reopened task
+   * are re-run automatically by `startLoopTasks` once their prerequisites
+   * settle.
+   */
+  const loop = async (
+    agentId: string,
+    command: Extract<SymphonyCommand, { kind: "loop" }>,
+  ) => {
+    let symphony = await owner(agentId, command.symphonyId);
+    const meta = symphony.execution.conducting;
+    if (
+      !meta ||
+      meta.phase !== "working" ||
+      symphony.execution.finishedAt !== null
+    ) {
+      throw new SymphonyError("This symphony is not ready for another loop.");
+    }
+    const verdict = loopVerdict(symphony);
+    if (!verdict.ended || verdict.verdict !== "needs-changes") {
+      throw new SymphonyError(
+        "A loop starts only after the current loop ends needing changes with no failed, blocked or running tasks.",
+      );
+    }
+    const loop = verdict.loop;
+    const next = loop + 1;
+    const score = symphony.revisions.at(-1)?.score;
+    if (!score) {
+      throw new SymphonyError("Symphony score is missing.");
+    }
+    const existingIds = new Set(score.tasks.map((entry) => entry.id));
+    const findingMap = openFindingMap(symphony);
+
+    // Every named task and finding must exist before anything is mutated.
+    const reopenIds = new Set<string>();
+    const resolved = new Map<string, TaskFinding[]>();
+    const referencedKeys = new Set<string>();
+    for (const entry of command.reopen) {
+      if (!existingIds.has(entry.taskId)) {
+        throw new SymphonyError(`Unknown task "${entry.taskId}".`);
+      }
+      if (reopenIds.has(entry.taskId)) {
+        throw new SymphonyError(
+          `Task "${entry.taskId}" is reopened more than once.`,
+        );
+      }
+      reopenIds.add(entry.taskId);
+      const findings: TaskFinding[] = [];
+      const keys = new Set<string>();
+      for (const reference of entry.findings ?? []) {
+        const match = findingKey(findingMap, reference);
+        if ("error" in match) {
+          throw new SymphonyError(
+            `${match.error} (reopening task "${entry.taskId}")`,
+          );
+        }
+        const found = findingMap.get(match.key);
+        if (found && !keys.has(match.key)) {
+          keys.add(match.key);
+          referencedKeys.add(match.key);
+          // A self-reported finding names its owner, so the prompt shows it.
+          findings.push({
+            ...found.finding,
+            taskId: found.finding.taskId ?? found.reporterTaskId,
+          });
+        }
+      }
+      resolved.set(entry.taskId, findings);
+    }
+    const deferred = command.deferred ?? [];
+    const deferredKeys = new Set<string>();
+    for (const item of deferred) {
+      if (item.finding !== undefined) {
+        const match = findingKey(findingMap, item.finding);
+        if ("error" in match) {
+          throw new SymphonyError(`${match.error} (deferred)`);
+        }
+        deferredKeys.add(match.key);
+      }
+      if (item.taskId !== undefined && !existingIds.has(item.taskId)) {
+        throw new SymphonyError(`Unknown deferred task "${item.taskId}".`);
+      }
+    }
+    // Nothing open may be dropped silently: every open blocking finding,
+    // including one deferred in an earlier loop, and every needs-changes task
+    // is reopened or deferred again with a reason.
+    const uncovered: string[] = [];
+    for (const { reporterTaskId, finding } of verdict.findings) {
+      const owner = finding.taskId ?? reporterTaskId;
+      const key = `${reporterTaskId}#${finding.id}`;
+      if (
+        !reopenIds.has(owner) &&
+        !referencedKeys.has(key) &&
+        !deferredKeys.has(key)
+      ) {
+        uncovered.push(`finding ${key}`);
+      }
+    }
+    const reopenedDependents = new Set(
+      transitiveDependents(score, [...reopenIds]),
+    );
+    for (const task of score.tasks) {
+      if (latestAttempt(symphony, task.id)?.state !== "needs-changes") {
+        continue;
+      }
+      // A review is the messenger: its blocking findings are covered by
+      // reopening their owners, and it re-runs as their dependent. A review
+      // with no reopened ancestor still needs an explicit reopen or defer.
+      if (
+        reopenIds.has(task.id) ||
+        deferred.some((item) => item.taskId === task.id) ||
+        (isReviewTask(task) && reopenedDependents.has(task.id))
+      ) {
+        continue;
+      }
+      uncovered.push(`task ${task.id}`);
+    }
+    if (uncovered.length) {
+      throw new SymphonyError(
+        `Loop must reopen or defer every open item: ${uncovered.join(", ")}.`,
+      );
+    }
+
+    const newTasks = (command.tasks ?? []).map(commandTaskDefinition);
+    const newIds = new Set(newTasks.map((entry) => entry.id));
+    if (newIds.size !== newTasks.length) {
+      throw new SymphonyError("New task IDs must be unique.");
+    }
+    for (const id of newIds) {
+      if (existingIds.has(id)) {
+        throw new SymphonyError(`Task "${id}" already exists.`);
+      }
+    }
+    if (score.tasks.length + newTasks.length > SYMPHONY_LIMITS.tasks) {
+      throw new SymphonyError("Symphony task limit reached.");
+    }
+    const nextScore = { tasks: [...score.tasks, ...newTasks] };
+    if (newTasks.length) {
+      const issues = scoreIssues(nextScore);
+      if (issues.length) {
+        throw new SymphonyError(issues.slice(0, 5).join(" "));
+      }
+    }
+    const allIds = new Set([...existingIds, ...newIds]);
+    for (const entry of command.reopen) {
+      for (const after of entry.after ?? []) {
+        if (!allIds.has(after)) {
+          throw new SymphonyError(
+            `Unknown loop prerequisite "${after}" for task "${entry.taskId}".`,
+          );
+        }
+      }
+    }
+    // The loop graph adds every `after` edge to the declared prerequisites; a
+    // cycle there would leave its tasks waiting on each other forever.
+    if (
+      prerequisiteCycle(
+        nextScore.tasks.map((task) => ({
+          id: task.id,
+          prerequisites: [
+            ...task.prerequisites,
+            ...(command.reopen.find((entry) => entry.taskId === task.id)
+              ?.after ?? []),
+          ],
+        })),
+      )
+    ) {
+      throw new SymphonyError(
+        "Loop prerequisites (dependsOn plus after) must not contain a cycle.",
+      );
+    }
+
+    // Past the budget, only a recorded user approval starts the loop.
+    const maxLoops = meta.maxLoops ?? SYMPHONY_LIMITS.defaultLoops;
+    const approval = command.approval;
+    if (next > maxLoops && (!approval || approval.loops < next)) {
+      throw new SymphonyError(
+        `Loop ${next} exceeds the loop budget (${maxLoops}). Ask the user, then resend with approval {loops, userAnswer}.`,
+      );
+    }
+
+    // Every scheduled task and new task needs room for one more attempt.
+    const scheduledCount =
+      reopenIds.size + reopenedDependents.size + newTasks.length;
+    if (
+      symphony.execution.attempts.length + scheduledCount >
+      SYMPHONY_LIMITS.attempts
+    ) {
+      throw new SymphonyError(
+        "Symphony attempt limit reached; this loop cannot start every task it schedules.",
+      );
+    }
+
+    // Validate every scope addition, and the resulting placement, before the
+    // loop is saved, so a refused command leaves the symphony unchanged.
+    const additions = new Map<string, GrantedWrite[]>();
+    for (const entry of command.reopen) {
+      if (!entry.addWrites?.length) {
+        continue;
+      }
+      const grants = await taskWriteAdditions(
+        symphony,
+        entry.taskId,
+        entry.addWrites,
+        entry.note ?? command.reason,
+      );
+      if (grants?.length) {
+        additions.set(entry.taskId, grants);
+      }
+    }
+    await runtime().validate(symphony.source, {
+      tasks: nextScore.tasks.map((task) => {
+        const effective = effectiveTask(symphony, task);
+        const grants = additions.get(task.id);
+        if (!grants) {
+          return effective;
+        }
+        return {
+          ...effective,
+          writes: [
+            ...new Set([
+              ...effective.writes,
+              ...grants.map((grant) => grant.path),
+            ]),
+          ],
+          worker: { ...effective.worker, role: "implementation" as const },
+        };
+      }),
+    });
+
+    // Every open blocking finding, captured now per reporter for the
+    // re-running reviews. Each reporter's findings come from one report, so
+    // each snapshot stays within the per-report bound.
+    const previousReports: PreviousReport[] = [];
+    for (const { reporterTaskId, finding } of verdict.findings) {
+      const owned = { ...finding, taskId: finding.taskId ?? reporterTaskId };
+      const entry = previousReports.find(
+        (value) => value.reporterTaskId === reporterTaskId,
+      );
+      if (entry) {
+        entry.findings.push(owned);
+      } else {
+        previousReports.push({ reporterTaskId, findings: [owned] });
+      }
+    }
+    const startedAt = Date.now();
+    await change(symphony.id, (current) => {
+      const conducting = current.execution.conducting;
+      // Another loop command won the race; refuse instead of applying twice.
+      if (!conducting || currentLoop(current) !== loop) {
+        throw new SymphonyError("This symphony already started another loop.");
+      }
+      if (newTasks.length) {
+        current.revisions.push({
+          number: current.revisions.length + 1,
+          parent: current.revisions.length,
+          reason: `Loop ${next}: ${command.reason}`,
+          acceptedAt: Date.now(),
+          score: { tasks: [...score.tasks, ...newTasks] },
+        });
+      }
+      conducting.loops = [
+        ...(conducting.loops ?? []),
+        {
+          number: next,
+          reason: command.reason,
+          startedAt,
+          reopened: command.reopen.map((entry) => {
+            const grants = additions.get(entry.taskId);
+            return {
+              taskId: entry.taskId,
+              findings: entry.findings ?? [],
+              ...(entry.after ? { after: entry.after } : {}),
+              ...(entry.note ? { note: entry.note } : {}),
+              ...(grants ? { addedWrites: grants } : {}),
+              resolved: resolved.get(entry.taskId) ?? [],
+            };
+          }),
+          added: newTasks.map((task) => task.id),
+          deferred,
+          ...(approval ? { approval } : {}),
+          ...(previousReports.length ? { previousReports } : {}),
+        },
+      ];
+      current.execution.interruption = null;
+    });
+
+    // Reopens, their dependents and new tasks start as soon as they can; the
+    // rest start on a later dispatch or reconcile.
+    await startLoopTasks(symphony.id);
+    symphony = (await store.read(symphony.id)).symphony;
+    for (const task of symphony.revisions.at(-1)?.score.tasks ?? []) {
+      await reserve(symphony.id, task);
+      await launchAttempt(symphony.id, task);
+    }
+    symphony = (await store.read(symphony.id)).symphony;
+    return { symphony };
+  };
+
+  /**
+   * Settles an attempt the harness could not run as `failed` with a server
+   * report and a `harness` diagnosis, so the Conductor retries it within the
+   * loop under the failed-retry limit. `blocked` stays reserved for a task
+   * agent that asked to pause.
+   */
+  const settleHarnessFailure = (
+    current: StoredSymphony,
+    a: Attempt,
+    message: string,
+    tried: string,
+    fields: Partial<ChangedPaths>,
+  ) => {
+    const task = current.revisions
+      .at(-1)
+      ?.score.tasks.find((entry) => entry.id === a.taskId);
+    if (a.launch) {
+      a.launch.settled = true;
+    }
+    a.state = "failed";
+    a.reportedBy = "server";
+    a.report = {
+      outcome: "failed",
+      summary: message,
+      evidence: [message],
+      checks: (task?.checks ?? []).map((name) => ({
+        name,
+        status: "not-run",
+        detail: "The task agent did not report this check.",
+      })),
+      diagnosis: { tried: [tried], suspectedCause: message, need: "harness" },
+    };
+    a.reportHash = contentHash(JSON.stringify(a.report));
+    a.endedAt = Date.now();
+    a.message = null;
+    a.wake = undefined;
+    Object.assign(a, fields);
+  };
+
+  /**
+   * Returns a server-settled failed attempt to running with an unsettled
+   * launch, so reconciliation observes it again. The server report goes away;
+   * the write baseline stays, so changed paths remain cumulative.
+   */
+  const reopenServerFailure = (a: Attempt, message: string | null) => {
+    a.state = "running";
+    a.report = null;
+    a.reportHash = null;
+    a.endedAt = null;
+    delete a.reportedBy;
+    delete a.changedPaths;
+    delete a.changedPathsTruncated;
+    a.message = message;
+    if (a.launch) {
+      a.launch.settled = false;
+      delete a.launch.checks;
+      delete a.launch.nextCheckAt;
+    }
+  };
+
+  /**
+   * The agent of a launch settled as unconfirmed appeared after all: it holds
+   * this attempt's assignment, so the attempt runs again on it and settles
+   * through the usual nudge and no-report path.
+   */
+  const adoptLateLaunch = (a: Attempt) => {
+    reopenServerFailure(a, null);
+    if (a.launch) {
+      a.launch.state = "started";
+      a.launch.generation += 1;
+    }
+  };
+
   const reconcile = async () => {
     const list = await store.list();
     for (const summary of list.symphonies) {
@@ -1006,7 +1903,29 @@ export function orchestration(
           continue;
         }
         for (const attempt of symphony.execution.attempts) {
-          if (!attempt.launch || attempt.launch.settled) {
+          if (!attempt.launch) {
+            continue;
+          }
+          if (attempt.launch.settled) {
+            // A failed attempt whose launch is still unconfirmed keeps its
+            // fence, and its saved identity is observed until the agent
+            // appears. Then the attempt runs again under normal settlement.
+            if (
+              launchUncertain(attempt) &&
+              latestAttempt(symphony, attempt.taskId)?.id === attempt.id
+            ) {
+              const status = await workers().inspect(attempt.agentId);
+              if (status.exists) {
+                symphony = await change(symphony.id, (current) => {
+                  const a = current.execution.attempts.find(
+                    (value) => value.id === attempt.id,
+                  );
+                  if (a?.launch?.settled && launchUncertain(a)) {
+                    adoptLateLaunch(a);
+                  }
+                });
+              }
+            }
             continue;
           }
           if (attempt.launch.state === "uncertain") {
@@ -1050,12 +1969,13 @@ export function orchestration(
                   a.launch.nextCheckAt = Date.now() + delay;
                   return;
                 }
-                a.launch.settled = true;
-                a.state = "blocked";
-                a.blockedBy = "server";
-                a.message =
-                  "Task agent launch could not be confirmed after repeated identity checks. Dispatch again to reconcile the same agent; no replacement has been created.";
-                Object.assign(a, fields);
+                settleHarnessFailure(
+                  current,
+                  a,
+                  "Task agent launch could not be confirmed after repeated identity checks. Retry with dispatch to replay the same agent identity; no replacement has been created.",
+                  "Re-checked the saved task agent identity on the bounded schedule.",
+                  fields,
+                );
               }
             });
             continue;
@@ -1100,11 +2020,13 @@ export function orchestration(
                 }
                 a.launch.settled = true;
                 if (!a.report) {
-                  a.state = "blocked";
-                  a.blockedBy = "server";
-                  a.message =
-                    "Task agent became unavailable before its saved wake could be delivered. Dispatch again to reconcile or replace it.";
-                  Object.assign(a, fields);
+                  settleHarnessFailure(
+                    current,
+                    a,
+                    "Task agent became unavailable before its saved wake could be delivered. Retry with dispatch to replace it.",
+                    "Tried to deliver the saved wake to the task agent.",
+                    fields,
+                  );
                 }
               });
               continue;
@@ -1125,11 +2047,13 @@ export function orchestration(
               }
               a.launch.settled = true;
               if (!a.report) {
-                a.state = "blocked";
-                a.blockedBy = "server";
-                a.message =
-                  "Task agent stopped or was removed without a report. Dispatch again to reconcile or replace it.";
-                Object.assign(a, fields);
+                settleHarnessFailure(
+                  current,
+                  a,
+                  "Task agent stopped or was removed without a report. Retry with dispatch to replace it.",
+                  "Looked up the task agent after it stopped.",
+                  fields,
+                );
               }
             });
             continue;
@@ -1144,12 +2068,13 @@ export function orchestration(
                 if (!a?.launch || a.launch.settled) {
                   return;
                 }
-                a.launch.settled = true;
-                a.state = "blocked";
-                a.blockedBy = "server";
-                a.message =
-                  "Task agent stopped but can no longer receive a nudge. Dispatch again to reconcile or replace it.";
-                Object.assign(a, fields);
+                settleHarnessFailure(
+                  current,
+                  a,
+                  "Task agent stopped but can no longer receive a nudge. Retry with dispatch to replace it.",
+                  "Tried to nudge the stopped task agent for a report.",
+                  fields,
+                );
               });
               continue;
             }
@@ -1191,14 +2116,18 @@ export function orchestration(
             }
             a.launch.settled = true;
             if (!a.report) {
-              a.state = "blocked";
-              a.blockedBy = "server";
-              a.message =
-                "Task agent stopped without a report after a nudge. Open its conversation and resume the existing assignment.";
-              Object.assign(a, fields);
+              settleHarnessFailure(
+                current,
+                a,
+                "Task agent stopped without a report after a nudge. Retry with dispatch to continue the assignment.",
+                "Nudged the task agent once to report or block.",
+                fields,
+              );
             }
           });
         }
+        await startLoopTasks(symphony.id);
+        symphony = (await store.read(symphony.id)).symphony;
         const tasks = symphony.revisions.at(-1)?.score.tasks ?? [];
         for (const task of tasks) {
           const reserved = await reserve(symphony.id, task);
@@ -1211,17 +2140,19 @@ export function orchestration(
           }
         }
         symphony = (await store.read(symphony.id)).symphony;
-        const allDone = tasks.every((task) => {
-          const a = latestAttempt(symphony, task.id);
-          return a?.state === "completed" && a.launch?.settled;
-        });
+        const verdict = loopVerdict(symphony);
         const blocked = tasks
           .map((task) => latestAttempt(symphony, task.id))
           .filter((a) => a?.state === "blocked" || a?.state === "failed");
+        // A loop only ends once every launch has settled; an unsettled launch
+        // may still be running even when its attempt already reported.
+        const settled = tasks.every((task) => {
+          const a = latestAttempt(symphony, task.id);
+          return !a?.launch || a.launch.settled;
+        });
         let notification: string | null = null;
-        if (allDone) {
-          notification = "all-reported";
-        } else if (blocked.length) {
+        let message: string | null = null;
+        if (blocked.length) {
           notification = contentHash(
             JSON.stringify(
               blocked.map((a) => [
@@ -1234,29 +2165,40 @@ export function orchestration(
               ]),
             ),
           );
+          message = `Task agents need attention. Act on each summary with dispatch (retryTaskId plus note/addWrites) or ask the user; open a conversation only when the summary is unclear.\n${clamp(
+            JSON.stringify(
+              blocked.map((attempt) =>
+                attempt ? failureSummary(symphony, attempt) : null,
+              ),
+            ),
+            3500,
+          )}`;
+        } else if (
+          symphony.execution.interruption?.includes(OVERSIZED_PROMPT)
+        ) {
+          // The task never gets an attempt, so the loop can't end on its own;
+          // without this wake the Conductor would wait forever.
+          notification = `interruption:${contentHash(symphony.execution.interruption)}`;
+          message = `A task cannot start. ${symphony.execution.interruption}`;
+        } else if (
+          settled &&
+          verdict.ended &&
+          (verdict.verdict === "succeeded" ||
+            verdict.verdict === "needs-changes")
+        ) {
+          notification = `loop-end:${verdict.loop}`;
+          message = loopEndMessage(symphony, verdict);
         }
         if (
           notification &&
+          message &&
           notification !== symphony.execution.conducting?.notification &&
           symphony.source.agentId
         ) {
-          const detail = allDone
-            ? ""
-            : `\n${clamp(
-                JSON.stringify(
-                  blocked.map((attempt) =>
-                    attempt ? failureSummary(symphony, attempt) : null,
-                  ),
-                ),
-                3500,
-              )}`;
-          const instruction = allDone
-            ? "All task agents reported completion and stopped. Review the evidence, then finish the symphony with a summary."
-            : "Task agents need attention. Act on each summary with dispatch (retryTaskId plus note/addWrites) or ask the user; open a conversation only when the summary is unclear.";
           // Stable message identity makes uncertain notification retries harmless.
           await workers().wake(
             symphony.source.agentId,
-            `Conductor symphony ${symphony.id}: ${instruction}${detail}`,
+            `Conductor symphony ${symphony.id}: ${message}`,
             `${symphony.id}:${notification}`,
           );
           await change(symphony.id, (current) => {
@@ -1280,5 +2222,5 @@ export function orchestration(
       }
     }
   };
-  return { start, define, dispatch, reconcile };
+  return { start, define, dispatch, loop, reconcile };
 }

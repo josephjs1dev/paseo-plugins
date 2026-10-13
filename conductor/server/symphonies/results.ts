@@ -1,25 +1,50 @@
 import { createHash } from "node:crypto";
 import {
   SYMPHONY_LIMITS,
+  isReviewTask,
   latestAttempt,
   type Attempt,
   type GrantedWrite,
   type StoredSymphony,
   type TaskDefinition,
+  type TaskFinding,
   type TaskReport,
+  type UnresolvedItem,
 } from "../../shared/symphonies/models";
 import { SymphonyError } from "./errors";
 
 /**
+ * True while an attempt's launch is unconfirmed: the creation request may still
+ * land, so its agent may appear and start writing later. A server failure
+ * report does not resolve this; only an observed agent or a definitive
+ * rejection does.
+ */
+export function launchUncertain(attempt: Attempt | undefined): boolean {
+  return attempt?.launch?.state === "uncertain";
+}
+
+/**
  * True while an attempt still owns its task's resources: it has not reported,
- * or its launch has not settled. Write grants and writer conflicts last only
- * while this holds, so the same predicate decides when a granted path stops
- * counting.
+ * its launch has not settled, or its launch is still unconfirmed. Write grants
+ * and writer conflicts last only while this holds, so the same predicate
+ * decides when a granted path stops counting.
  */
 export function attemptHoldsResources(attempt: Attempt | undefined): boolean {
   return Boolean(
-    attempt && (!attempt.report || (attempt.launch && !attempt.launch.settled)),
+    attempt &&
+      (!attempt.report ||
+        (attempt.launch && !attempt.launch.settled) ||
+        launchUncertain(attempt)),
   );
+}
+
+/**
+ * True while a symphony's attempts can still own resources. A finished
+ * symphony never resumes any attempt, so a report-less attempt left by a
+ * `finish` with `unresolved` releases its scope instead of holding it forever.
+ */
+export function symphonyHoldsResources(symphony: StoredSymphony): boolean {
+  return symphony.execution.finishedAt === null;
 }
 
 /**
@@ -53,16 +78,96 @@ export function requirePassingReport(
       ))
   ) {
     throw new SymphonyError(
-      "Completion requires passed evidence for every declared check. Report failure or a blocker otherwise.",
+      "Completion requires passed evidence for every declared check. Report needs-changes, failure or a blocker otherwise.",
     );
   }
+  // Only a review task may point a finding at another task's code. A finding
+  // about the reporting task's own work omits `taskId` or names itself.
+  if (!isReviewTask(task)) {
+    const foreign = report.findings?.find(
+      (finding) => finding.taskId !== undefined && finding.taskId !== task.id,
+    );
+    if (foreign) {
+      throw new SymphonyError(
+        "Only a review task may report findings against another task.",
+      );
+    }
+  }
+}
+
+/** A blocking finding with the task whose latest report produced it. */
+export interface OpenFinding {
+  /** `reporterTaskId#findingId`, the reference `loop` and `finish` use. */
+  key: string;
+  reporterTaskId: string;
+  finding: TaskFinding;
+}
+
+/**
+ * The open work `finish`'s `unresolved` list must cover: every task whose
+ * latest attempt is not completed and every blocking finding a latest report
+ * still carries. Derived only from latest attempts, so a superseded loop's
+ * findings never count.
+ */
+export function openWork(symphony: StoredSymphony): {
+  tasks: TaskDefinition[];
+  findings: OpenFinding[];
+} {
+  const tasks = symphony.revisions.at(-1)?.score.tasks ?? [];
+  const openTasks: TaskDefinition[] = [];
+  const findings: OpenFinding[] = [];
+  for (const task of tasks) {
+    const attempt = latestAttempt(symphony, task.id);
+    if (attempt?.state !== "completed") {
+      openTasks.push(task);
+    }
+    for (const finding of attempt?.report?.findings ?? []) {
+      if (finding.severity === "blocking") {
+        findings.push({
+          key: `${task.id}#${finding.id}`,
+          reporterTaskId: task.id,
+          finding,
+        });
+      }
+    }
+  }
+  return { tasks: openTasks, findings };
+}
+
+/**
+ * The reasons a `loop.deferred` or `finish.unresolved` list does not cover the
+ * open work, or an empty list when it covers everything. Covers by task id and
+ * by finding reference (`reporter#id` or a bare finding id).
+ */
+export function unresolvedIssues(
+  symphony: StoredSymphony,
+  unresolved: readonly UnresolvedItem[],
+): string[] {
+  const open = openWork(symphony);
+  const issues: string[] = [];
+  for (const finding of open.findings) {
+    const covered = unresolved.some(
+      (item) =>
+        item.finding === finding.key || item.finding === finding.finding.id,
+    );
+    if (!covered) {
+      issues.push(`finding ${finding.key} is not listed.`);
+    }
+  }
+  for (const task of open.tasks) {
+    if (!unresolved.some((item) => item.taskId === task.id)) {
+      issues.push(`task ${task.id} has no completed report and is not listed.`);
+    }
+  }
+  return issues;
 }
 
 export function executionStatus(
   symphony: StoredSymphony,
 ): StoredSymphony["status"] {
   if (symphony.execution.finishedAt !== null) {
-    return "completed";
+    // A symphony the user stopped with open work ends failed, not complete.
+    return symphony.execution.unresolved?.length ? "failed" : "completed";
   }
   if (symphony.execution.conducting?.phase === "planning") {
     return symphony.execution.interruption ? "blocked" : "planning";
@@ -126,7 +231,9 @@ export function validateExecution(symphony: StoredSymphony): void {
   for (const attempt of symphony.execution.attempts) {
     const task = score.tasks.find((entry) => entry.id === attempt.taskId);
     const terminal =
-      attempt.state === "completed" || attempt.state === "failed";
+      attempt.state === "completed" ||
+      attempt.state === "failed" ||
+      attempt.state === "needs-changes";
     if (
       !task ||
       ids.has(attempt.id) ||
@@ -218,15 +325,33 @@ export function validateExecution(symphony: StoredSymphony): void {
       requirePassingReport(task, attempt.report);
     }
   }
+  if (symphony.execution.finishedAt === null) {
+    if (symphony.execution.unresolved?.length) {
+      throw new SymphonyError(
+        "Unresolved items are only recorded when a symphony finishes.",
+      );
+    }
+    return;
+  }
+  if (!symphony.execution.summary) {
+    throw new SymphonyError("Symphony completion lacks task reports.");
+  }
+  if (symphony.execution.unresolved?.length) {
+    const issues = unresolvedIssues(symphony, symphony.execution.unresolved);
+    if (issues.length) {
+      throw new SymphonyError(
+        `Symphony unresolved items are inconsistent: ${issues.join(" ")}`,
+      );
+    }
+    return;
+  }
   if (
-    symphony.execution.finishedAt !== null &&
-    (!symphony.execution.summary ||
-      score.tasks.some(
-        (task) =>
-          latestAttempt(symphony, task.id)?.state !== "completed" ||
-          (symphony.execution.origin === "conducted" &&
-            !latestAttempt(symphony, task.id)?.launch?.settled),
-      ))
+    score.tasks.some(
+      (task) =>
+        latestAttempt(symphony, task.id)?.state !== "completed" ||
+        (symphony.execution.origin === "conducted" &&
+          !latestAttempt(symphony, task.id)?.launch?.settled),
+    )
   ) {
     throw new SymphonyError("Symphony completion lacks task reports.");
   }

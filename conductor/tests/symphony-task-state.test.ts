@@ -210,6 +210,71 @@ void test("a failed latest attempt reads as failed even while its launch settles
   });
 });
 
+void test("a needs-changes latest attempt reads as needs-changes with its own label", () => {
+  const api = task("api");
+  const symphony = symphonyWith(
+    [api],
+    [
+      attempt("api", {
+        state: "needs-changes",
+        report: {
+          outcome: "needs-changes",
+          summary: "Blocking findings remain.",
+          evidence: ["Reviewed the endpoint path"],
+          checks: [],
+          findings: [
+            {
+              id: "F1",
+              severity: "blocking",
+              taskId: "api",
+              paths: ["src/api.ts:41"],
+              summary: "Ordering bug.",
+            },
+          ],
+        },
+        launch: launch(true),
+      }),
+    ],
+  );
+  assert.deepEqual(taskState(symphony, api), {
+    key: "needs-changes",
+    label: "Needs changes",
+    waitingFor: [],
+  });
+});
+
+void test("a review task starts on needs-changes prerequisites; other tasks wait", () => {
+  const api = task("api");
+  const review = task("review", {
+    prerequisites: ["api"],
+    worker: { role: "review", profile: "default" },
+  });
+  const collect = task("collect", { prerequisites: ["api"] });
+  const open = attempt("api", {
+    state: "needs-changes",
+    report: {
+      outcome: "needs-changes",
+      summary: "Blocking findings remain.",
+      evidence: ["Reviewed"],
+      checks: [{ name: "Regression", status: "failed", detail: "Red." }],
+    },
+    launch: launch(true),
+  });
+  const symphony = symphonyWith([api, review, collect], [open]);
+  // The review may pass over the unfinished work.
+  assert.deepEqual(taskState(symphony, review), {
+    key: "ready",
+    label: "Ready",
+    waitingFor: [],
+  });
+  // An implementer still waits for a completed prerequisite.
+  assert.deepEqual(taskState(symphony, collect), {
+    key: "waiting",
+    label: "Waiting",
+    waitingFor: ["api"],
+  });
+});
+
 void test("several attempts sharing one agent derive state from the latest attempt", () => {
   const api = task("api");
   const first = attempt("api", {

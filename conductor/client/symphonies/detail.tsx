@@ -2,11 +2,20 @@ import { useState } from "react";
 import { ScrollView, Text, View } from "react-native";
 import type { PluginTheme } from "@getpaseo/plugin";
 import {
+  SYMPHONY_LIMITS,
   latestAttempt,
   symphonyStatusLabel,
   type SymphonyContext,
   type StoredSymphony,
 } from "../../shared/symphonies/models";
+import { currentLoop } from "../../shared/symphonies/score";
+import {
+  historyLoops,
+  scoreAtLoop,
+  symphonyAtLoop,
+  unresolvedItemLabel,
+} from "./history";
+import { LoopSelector } from "./loop-selector";
 import { Button, Label, Notice } from "../ui/controls";
 import { SymphonyDeleteAction } from "./delete-action";
 import { SymphonyInspection } from "./inspection";
@@ -37,7 +46,17 @@ export function SymphonyDetail({
     "tasks",
   );
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
+  // null follows the latest loop as new loops start.
+  const [pickedLoop, setPickedLoop] = useState<number | null>(null);
   const score = symphony.revisions.at(-1)?.score ?? { tasks: [] };
+  const loops = historyLoops(symphony);
+  const latestLoop = loops.at(-1)?.loop ?? 1;
+  const shownLoop =
+    pickedLoop !== null && pickedLoop < latestLoop ? pickedLoop : latestLoop;
+  const multiLoop = loops.length > 1;
+  // Tasks, Graph and Context show the chosen loop; History always shows all.
+  const loopSymphony = symphonyAtLoop(symphony, shownLoop);
+  const loopScore = multiLoop ? scoreAtLoop(symphony, shownLoop) : score;
   const conducting = symphony.execution.conducting;
   const planning = conducting?.phase === "planning";
   const completed = score.tasks.filter(
@@ -47,9 +66,15 @@ export function SymphonyDetail({
     symphony.execution.origin === "conducted"
       ? "RESULT · REPORTED BY THE CONDUCTOR AGENT"
       : "RESULT · REPORTED BY THE SOURCE AGENT";
+  // A conducted symphony shows its loop against the budget chosen at
+  // `orchestrate`; records without one use the default budget.
+  const loopNote =
+    conducting && !planning
+      ? ` · Loop ${currentLoop(symphony)} of ${conducting.maxLoops ?? SYMPHONY_LIMITS.defaultLoops}`
+      : "";
   const progressNote = planning
     ? " · Conductor agent is splitting the goal into tasks"
-    : ` · ${completed} of ${score.tasks.length} tasks reported complete`;
+    : ` · ${completed} of ${score.tasks.length} tasks reported complete${loopNote}`;
   const toggle = (key: string) =>
     setExpanded((prior) => ({ ...prior, [key]: !prior[key] }));
   const isOpen = (key: string) => Boolean(expanded[key]);
@@ -130,6 +155,18 @@ export function SymphonyDetail({
           {symphony.execution.summary}
         </ResultSummary>
       )}
+      {(symphony.execution.unresolved?.length ?? 0) > 0 && (
+        <View testID="symphony-unresolved" style={{ gap: 8 }}>
+          <Label theme={theme}>UNRESOLVED</Label>
+          <Notice theme={theme} warning>
+            The symphony ended with open work the user chose not to fix:
+            {"\n"}
+            {symphony.execution.unresolved
+              ?.map((item) => unresolvedItemLabel(item))
+              .join("\n")}
+          </Notice>
+        </View>
+      )}
       <View
         style={{
           flexDirection: "row",
@@ -189,13 +226,22 @@ export function SymphonyDetail({
           </View>
         ) : null}
       </View>
+      {multiLoop && view !== "history" && (
+        <LoopSelector
+          theme={theme}
+          loops={loops}
+          shown={shownLoop}
+          onSelect={setPickedLoop}
+        />
+      )}
       <SymphonyInspection
         view={view}
         theme={theme}
-        symphony={symphony}
+        symphony={view === "history" ? symphony : loopSymphony}
         context={context}
-        score={score}
+        score={view === "history" ? score : loopScore}
         compact={compact}
+        {...(multiLoop ? { loop: shownLoop } : {})}
         {...(openAgent ? { openAgent } : {})}
       />
       {view === "tasks" && (
@@ -203,13 +249,14 @@ export function SymphonyDetail({
           {!score.tasks.length && !planning && (
             <Notice theme={theme}>No tasks were recorded.</Notice>
           )}
-          {score.tasks.map((task) => (
+          {loopScore.tasks.map((task) => (
             <SymphonyTaskCard
               key={task.id}
               theme={theme}
-              symphony={symphony}
+              symphony={loopSymphony}
               task={task}
               compact={compact}
+              {...(multiLoop ? { loop: shownLoop } : {})}
               disclosures={taskDisclosures(task.id)}
               onToggle={(selection) => toggleTask(task.id, selection)}
               {...(openAgent ? { openAgent } : {})}

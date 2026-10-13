@@ -6,6 +6,8 @@ import {
   scopeSchema,
   taskIdSchema,
   taskReportSchema,
+  unresolvedItemSchema,
+  loopApprovalSchema,
 } from "./models";
 
 const text = (max: number) => z.string().trim().min(1).max(max);
@@ -58,6 +60,8 @@ export const commandTaskSchema = z
     writes: z.array(scopeSchema).max(32).default(["."]),
     resources: z.array(taskIdSchema).max(16).default([]),
     checks: z.array(text(1000)).max(16).default([]),
+    /** A read-only review of the other tasks' work; sets `role: "review"`. */
+    review: z.boolean().optional(),
     ...workerChoiceFields,
   })
   .strict()
@@ -70,6 +74,12 @@ export const symphonyCommandSchema = z.discriminatedUnion("kind", [
       title: text(160),
       goal: text(16000),
       concurrency: z.number().int().min(1).max(4).default(3),
+      maxLoops: z
+        .number()
+        .int()
+        .min(1)
+        .max(SYMPHONY_LIMITS.maxLoops)
+        .optional(),
       conductor: z.enum(["self", "agent"]).optional(),
       conductorProfile: text(160).optional(),
     })
@@ -79,6 +89,49 @@ export const symphonyCommandSchema = z.discriminatedUnion("kind", [
       kind: z.literal("define"),
       symphonyId: uuidSchema,
       tasks: z.array(commandTaskSchema).min(1).max(12),
+    })
+    .strict(),
+  // Starts loop N+1 after loop N ended needing changes: reopen the owning tasks
+  // with their findings, optionally append new tasks, and defer the rest.
+  z
+    .object({
+      kind: z.literal("loop"),
+      symphonyId: uuidSchema,
+      reason: text(2000),
+      reopen: z
+        .array(
+          z
+            .object({
+              taskId: taskIdSchema,
+              /** Finding ids from the previous loop, such as `review#F1`. */
+              findings: z
+                .array(text(300))
+                .max(SYMPHONY_LIMITS.findingsPerReport)
+                .optional(),
+              note: text(2000).optional(),
+              addWrites: z
+                .array(scopeSchema)
+                .min(1)
+                .max(SYMPHONY_LIMITS.addedWritesPerAttempt)
+                .optional(),
+              /** Loop-only prerequisites; do not change the declared score. */
+              after: z
+                .array(taskIdSchema)
+                .max(SYMPHONY_LIMITS.tasks)
+                .optional(),
+            })
+            .strict(),
+        )
+        .max(SYMPHONY_LIMITS.tasks)
+        .default([]),
+      tasks: z
+        .array(commandTaskSchema)
+        .min(1)
+        .max(SYMPHONY_LIMITS.tasks)
+        .optional(),
+      deferred: z.array(unresolvedItemSchema).max(24).optional(),
+      /** Required to pass the loop budget; recorded and shown in History. */
+      approval: loopApprovalSchema.optional(),
     })
     .strict(),
   z
@@ -140,6 +193,8 @@ export const symphonyCommandSchema = z.discriminatedUnion("kind", [
       kind: z.literal("finish"),
       symphonyId: uuidSchema,
       summary: text(8000),
+      /** Open findings or non-completed tasks the user chose to stop on. */
+      unresolved: z.array(unresolvedItemSchema).max(64).optional(),
     })
     .strict(),
   // The assigned task agent widens its own attempt's write scope.

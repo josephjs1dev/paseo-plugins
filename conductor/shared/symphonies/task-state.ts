@@ -1,5 +1,5 @@
 import type { Attempt, StoredSymphony, TaskDefinition } from "./models";
-import { latestAttempt } from "./models";
+import { isReviewTask, latestAttempt } from "./models";
 
 /**
  * Display states for a single task. These are render-only projections; they
@@ -12,6 +12,7 @@ export type TaskStateKey =
   | "blocked"
   | "finishing"
   | "completed"
+  | "needs-changes"
   | "failed";
 
 export interface TaskDisplayState {
@@ -28,6 +29,7 @@ const LABELS: Record<TaskStateKey, string> = {
   blocked: "Blocked",
   finishing: "Finishing",
   completed: "Completed",
+  "needs-changes": "Needs changes",
   failed: "Failed",
 };
 
@@ -41,11 +43,12 @@ function unsettled(attempt: Attempt | undefined): boolean {
 
 /**
  * Derive the display state of one task from a stored symphony. Latest-attempt
- * outcome wins for running/blocked/failed; a completed attempt whose agent
- * launch is still settling reads as "finishing"; completed attempts without
- * launch metadata read as "completed". With no attempt, the task
- * waits on every prerequisite that lacks a completed report or still has an
- * unsettled launch, otherwise it is ready. Idle is never treated as completion.
+ * outcome wins for running/blocked/needs-changes/failed; a completed attempt
+ * whose agent launch is still settling reads as "finishing"; completed attempts
+ * without launch metadata read as "completed". With no attempt, the task
+ * waits on every prerequisite that lacks a completed report (a review task also
+ * accepts needs-changes) or still has an unsettled launch, otherwise it is
+ * ready. Idle is never treated as completion.
  */
 export function taskState(
   symphony: StoredSymphony,
@@ -56,6 +59,7 @@ export function taskState(
     if (
       attempt.state === "running" ||
       attempt.state === "blocked" ||
+      attempt.state === "needs-changes" ||
       attempt.state === "failed"
     ) {
       return {
@@ -70,9 +74,17 @@ export function taskState(
         : { key: "completed", label: LABELS.completed, waitingFor: [] };
     }
   }
+  const review = isReviewTask(task);
   const waitingFor = task.prerequisites.filter((id) => {
     const prerequisite = latestAttempt(symphony, id);
-    return prerequisite?.state !== "completed" || unsettled(prerequisite);
+    if (unsettled(prerequisite)) {
+      return true;
+    }
+    if (prerequisite?.state === "completed") {
+      return false;
+    }
+    // A review starts on unfinished-but-settled work; every other task waits.
+    return !(review && prerequisite?.state === "needs-changes");
   });
   return waitingFor.length
     ? { key: "waiting", label: LABELS.waiting, waitingFor }

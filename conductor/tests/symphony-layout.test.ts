@@ -3,7 +3,23 @@ import test from "node:test";
 import { conflictReason } from "../shared/symphonies/score";
 import { graphGeometry, layoutGraph } from "../shared/symphonies/layout";
 import type { TaskDefinition } from "../shared/symphonies/models";
-import { score, task } from "./symphony-fixtures";
+import {
+  groupedTaskState,
+  hasLoopGroups,
+  historyLoops,
+  loopRecord,
+  scoreAtLoop,
+  symphonyAtLoop,
+  unresolvedItemLabel,
+} from "../client/symphonies/history";
+import { latestAttempt } from "../shared/symphonies/models";
+import {
+  fixtureAttempt,
+  fixtureLaunch,
+  score,
+  storedSymphony,
+  task,
+} from "./symphony-fixtures";
 
 /** Sixteen-word title that must truncate inside the graph node. */
 function longTask(): TaskDefinition {
@@ -178,4 +194,331 @@ void test("node padding is shared with the renderer through geometry", () => {
       (node) => node.height >= 96 && node.width >= 220,
     ),
   );
+});
+
+// === Loop-grouped History ===
+
+/**
+ * A two-loop symphony: loop 1's review reported blocking findings, loop 2
+ * reopened the owners and the review succeeded.
+ */
+function twoLoopSymphony() {
+  const symphony = storedSymphony();
+  const attempts = [
+    fixtureAttempt("api", "completed", "b410f767-1197-469b-8b89-af35338a4ea1"),
+    fixtureAttempt("ui", "completed", "b410f767-1197-469b-8b89-af35338a4ea2"),
+    fixtureAttempt(
+      "review",
+      "needs-changes",
+      "b410f767-1197-469b-8b89-af35338a4ea3",
+      {
+        report: {
+          outcome: "needs-changes",
+          summary: "Fix the api offset handling.",
+          evidence: ["read the diff"],
+          checks: [],
+          findings: [
+            {
+              id: "F1",
+              severity: "blocking",
+              taskId: "api",
+              paths: ["server/rpc.ts:41"],
+              summary: "The offset branch rethrows instead of returning 400.",
+            },
+            {
+              id: "F2",
+              severity: "minor",
+              taskId: "ui",
+              paths: ["client/pagination.tsx:12"],
+              summary: "Label is truncated one character early.",
+            },
+          ],
+        },
+        reportHash: "c".repeat(64),
+        launch: fixtureLaunch(true),
+      },
+    ),
+    {
+      ...fixtureAttempt(
+        "api",
+        "completed",
+        "b410f767-1197-469b-8b89-af35338a4ea4",
+        { launch: fixtureLaunch(true) },
+      ),
+      loop: 2,
+      reopen: {
+        reason: "Fix review finding F1 — stop rethrowing in the offset branch.",
+        findings: [],
+      },
+      report: {
+        outcome: "completed" as const,
+        summary: "Offset branch returns 400 now.",
+        evidence: ["contract test green"],
+        checks: [{ name: "contract", status: "passed" as const, detail: "ok" }],
+      },
+      reportHash: "c".repeat(64),
+    },
+    {
+      ...fixtureAttempt(
+        "review",
+        "completed",
+        "b410f767-1197-469b-8b89-af35338a4ea5",
+        { launch: fixtureLaunch(true), recheck: true },
+      ),
+      loop: 2,
+      reopen: {
+        reason: "Confirm F1 is fixed.",
+        findings: [],
+      },
+      report: {
+        outcome: "completed" as const,
+        summary: "No blocking finding remains.",
+        evidence: ["re-read the diff"],
+        checks: [],
+      },
+      reportHash: "c".repeat(64),
+    },
+  ];
+  return {
+    ...symphony,
+    execution: {
+      ...symphony.execution,
+      attempts: [...symphony.execution.attempts, ...attempts],
+      conducting: {
+        phase: "working" as const,
+        concurrency: 2,
+        requestedBy: null,
+        conductor: "agent" as const,
+        conductorLaunch: "started" as const,
+        prompt: "Coordinate",
+        notification: "loop-end:2",
+        loops: [
+          {
+            number: 2,
+            reason: "Fix review findings F1-F2",
+            startedAt: attempts[3] ? 0 : 0,
+            reopened: [{ taskId: "api", findings: ["F1"] }],
+            added: [],
+            deferred: [
+              { finding: "review#F1", reason: "Needs a product decision." },
+            ],
+          },
+        ],
+      },
+    },
+    revisions: [
+      {
+        number: 1,
+        parent: null,
+        reason: "Breakdown",
+        acceptedAt: 0,
+        score: {
+          tasks: [
+            task("api"),
+            task("ui"),
+            task("review", { prerequisites: ["api", "ui"] }),
+          ],
+        },
+      },
+    ],
+  };
+}
+
+void test("a single-loop symphony keeps its ungrouped history", () => {
+  const symphony = storedSymphony();
+  assert.equal(hasLoopGroups(symphony), false);
+  assert.deepEqual(historyLoops(symphony), []);
+});
+
+void test("records stored before loops count as loop 1", () => {
+  const symphony = twoLoopSymphony();
+  const conducting = symphony.execution.conducting;
+  if (!conducting) {
+    throw new Error("fixture must carry conducting metadata");
+  }
+  // Old records never carried loop records or a per-loop wake identity.
+  const legacyConducting = {
+    phase: conducting.phase,
+    concurrency: conducting.concurrency,
+    requestedBy: conducting.requestedBy,
+    conductor: conducting.conductor,
+    conductorLaunch: conducting.conductorLaunch,
+    prompt: conducting.prompt,
+    notification: "all-reported",
+  } as const;
+  const withoutLoopMarkers = {
+    ...symphony,
+    execution: {
+      ...symphony.execution,
+      conducting: {
+        ...legacyConducting,
+        // Old records kept the constant wake identity and no loop records.
+        notification: "all-reported" as const,
+      },
+      // Only the pre-loop attempts exist, and none of them carries loop,
+      // reopen, or recheck markers.
+      attempts: symphony.execution.attempts
+        .filter((attempt) => attempt.loop === undefined || attempt.loop === 1)
+        // The stripped markers are exactly the backwards-compat feature under
+        // test, so their unused destructuring is intentional here.
+        .map(
+          // eslint-disable-next-line @typescript-eslint/no-unused-vars
+          ({ loop, reopen, recheck, ...attempt }) => attempt,
+        ),
+    },
+  };
+  assert.equal(hasLoopGroups(withoutLoopMarkers), false);
+  const [only] = historyLoops(withoutLoopMarkers);
+  assert.equal(only?.verdict, "needs-changes");
+  assert.equal(only?.blocking, 1);
+});
+
+void test("loop groups carry verdict, blocking count, and the loop record", () => {
+  const groups = historyLoops(twoLoopSymphony());
+  assert.equal(groups.length, 2);
+  const first = groups[0];
+  assert.equal(first?.loop, 1);
+  assert.equal(first?.verdict, "needs-changes");
+  assert.equal(first?.blocking, 1);
+  assert.equal(first?.reason, undefined);
+  assert.equal(first?.running, false);
+  const second = groups[1];
+  assert.equal(second?.loop, 2);
+  assert.equal(second?.verdict, "succeeded");
+  assert.equal(second?.blocking, 0);
+  assert.equal(second?.reason, "Fix review findings F1-F2");
+  assert.deepEqual(second?.deferred, [
+    { label: "review#F1", reason: "Needs a product decision." },
+  ]);
+  assert.equal(second?.attempts.length, 2);
+});
+
+void test("an unfinished loop reads as attention, not a verdict", () => {
+  const symphony = twoLoopSymphony();
+  const running = {
+    ...fixtureAttempt("ui", "running", "b410f767-1197-469b-8b89-af35338a4ea6", {
+      launch: fixtureLaunch(false),
+    }),
+    loop: 3,
+  };
+  const groups = historyLoops({
+    ...symphony,
+    execution: {
+      ...symphony.execution,
+      attempts: [...symphony.execution.attempts, running],
+    },
+  });
+  const third = groups.at(-1);
+  assert.equal(third?.verdict, "attention");
+  assert.equal(third?.running, true);
+});
+
+void test("the current loop group agrees with the server verdict", () => {
+  const symphony = twoLoopSymphony();
+  // A failed task in the current loop needs attention, not "needs changes".
+  const failedApi = symphony.execution.attempts.map((attempt) =>
+    attempt.taskId === "api" && attempt.loop === 2
+      ? {
+          ...attempt,
+          state: "failed" as const,
+          report: {
+            outcome: "failed" as const,
+            summary: "The agent could not run its checks.",
+            evidence: ["sandbox denied the test runner"],
+            checks: [],
+          },
+        }
+      : attempt,
+  );
+  const failed = historyLoops({
+    ...symphony,
+    execution: { ...symphony.execution, attempts: failedApi },
+  }).at(-1);
+  assert.equal(failed?.verdict, "attention");
+  assert.equal(failed?.running, false);
+  // A loop whose reopened owner has not started yet is still in progress,
+  // never "succeeded" because nothing ran in it so far.
+  const pending = historyLoops({
+    ...symphony,
+    execution: {
+      ...symphony.execution,
+      attempts: symphony.execution.attempts.filter(
+        (attempt) => attempt.loop !== 2,
+      ),
+    },
+  }).at(-1);
+  assert.equal(pending?.loop, 2);
+  assert.equal(pending?.running, true);
+  assert.notEqual(pending?.verdict, "succeeded");
+});
+
+void test("a loop group states its own last attempt, not the task's newer state", () => {
+  const groups = historyLoops(twoLoopSymphony());
+  const firstReview = groups[0]?.attempts.find(
+    (attempt) => attempt.taskId === "review",
+  );
+  assert.ok(firstReview);
+  assert.equal(groupedTaskState(firstReview), "needs-changes");
+  const lastApi = groups.at(-1)?.attempts.at(-1);
+  assert.ok(lastApi);
+  assert.equal(groupedTaskState(lastApi), "completed");
+});
+
+void test("unresolved items label the finding or the owning task", () => {
+  assert.equal(
+    unresolvedItemLabel({ finding: "api#F1", reason: "User stopped." }),
+    "api#F1 — User stopped.",
+  );
+  assert.equal(
+    unresolvedItemLabel({ taskId: "ui", reason: "User stopped." }),
+    "ui — User stopped.",
+  );
+});
+
+void test("a past loop shows the symphony as that loop ended", () => {
+  const symphony = twoLoopSymphony();
+  // The latest loop is the stored symphony itself.
+  assert.equal(symphonyAtLoop(symphony, 2), symphony);
+  const loop1 = symphonyAtLoop(symphony, 1);
+  assert.equal(latestAttempt(loop1, "review")?.state, "needs-changes");
+  assert.equal(latestAttempt(loop1, "api")?.report?.summary, undefined);
+  assert.deepEqual(loop1.execution.conducting?.loops, []);
+  assert.equal(loopRecord(loop1, 2), undefined);
+  // A task that did not re-run in loop 2 keeps its loop 1 result there.
+  assert.equal(latestAttempt(symphony, "ui")?.loop, undefined);
+  assert.equal(loopRecord(symphony, 2)?.reason, "Fix review findings F1-F2");
+});
+
+void test("a past loop leaves out tasks a later loop appended", () => {
+  const base = twoLoopSymphony();
+  const conducting = base.execution.conducting;
+  assert.ok(conducting);
+  const revision = base.revisions[0];
+  assert.ok(revision);
+  const symphony = {
+    ...base,
+    execution: {
+      ...base.execution,
+      conducting: {
+        ...conducting,
+        loops: (conducting.loops ?? []).map((record) => ({
+          ...record,
+          added: ["plan-2"],
+        })),
+      },
+    },
+    revisions: [
+      ...base.revisions,
+      {
+        ...revision,
+        number: 2,
+        parent: 1,
+        score: { tasks: [...revision.score.tasks, task("plan-2")] },
+      },
+    ],
+  };
+  const ids = (loop: number) =>
+    scoreAtLoop(symphony, loop).tasks.map((entry) => entry.id);
+  assert.deepEqual(ids(1), ["api", "ui", "review"]);
+  assert.deepEqual(ids(2), ["api", "ui", "review", "plan-2"]);
 });

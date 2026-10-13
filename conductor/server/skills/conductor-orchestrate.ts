@@ -15,7 +15,10 @@ This session is the Conductor. You plan, dispatch, review and finish. Task agent
 | Symphony | One task orchestration: this Conductor session plus its task agents, as shown in the Podium. |
 | \`symphonyId\` | The symphony ID: a UUID that \`orchestrate\` returns. |
 | Task | One bounded assignment for one task agent. |
-| Attempt | One task agent's try at a task. A retry of a failed task creates a new attempt. |
+| Attempt | One task agent's try at a task. A retry of a failed task or a reopened task creates a new attempt. |
+| Loop | One pass over the score, numbered from 1. A loop ends when nothing runs and nothing more can start. It *succeeded* when every task's latest attempt is \`completed\`; otherwise it *needs changes*. Fixes run in the next loop of the same symphony. |
+| Outcome | A report's result. \`completed\`: done, every check passed, no blocking findings. \`needs-changes\`: the work ran, but checks still fail or a review found blocking findings; the next loop resolves it. \`failed\`: the harness could not run the work (launch, unreachable agent, permissions, sandbox, refused scope, unavailable model); retried in the same loop. |
+| Finding | A defect in a report: \`{id, severity: blocking or minor, taskId, paths, summary, suggestedFix}\`. \`loop\`, \`deferred\` and \`unresolved\` name it as \`<reporter task>#<id>\`, such as \`review#F1\`. |
 | Task agent | A child agent that the Conductor creates for a task. Commands and profiles call this role \`worker\`. |
 
 ## Find the helper
@@ -50,6 +53,7 @@ Every successful command prints a JSON acknowledgement. Empty output is a failur
 - \`title\`: 160 characters or fewer.
 - \`goal\`: 16000 characters or fewer. Include the plan, the constraints and the acceptance criteria.
 - \`concurrency\`: optional, 1–4, default 3.
+- \`maxLoops\`: optional loop budget, 1–5, default 3. Past it, \`loop\` needs the user's approval.
 - Do not set \`conductor\` or \`conductorProfile\`.
 
 Keep the returned \`symphonyId\`. Read the returned \`instructions\`. If they differ from this skill, follow the instructions.
@@ -87,7 +91,7 @@ Then build the score:
 5. Put exclusive non-file items in \`resources\`, such as a lockfile install, a port, a database or a plugin reload.
 6. Add \`dependsOn\` only for a real data flow or write order.
 7. Add a read-only planning task when the design is open or 3 or more writers share a contract.
-8. Add a read-only review task after risky writers. Set its \`reads\` to their \`writes\`.
+8. End a writing score with a read-only review task: set \`review: true\`, \`writes: []\`, and its \`reads\` to the writers' \`writes\`. A review task starts once each prerequisite is \`completed\` or \`needs-changes\`, and receives their open findings and failed checks, so one loop collects every defect. Other tasks wait for \`completed\` prerequisites.
 9. Add an integration task when 2 or more writers change adjacent layers. It owns the glue files and runs the full checks.
 
 Fields:
@@ -98,6 +102,7 @@ Fields:
 - \`reads\` and \`writes\`: real checkout-relative paths, such as \`server\` or \`client/symphonies/task-card.tsx\`. Do not use \`..\`, wildcards or symbolic links. \`writes: []\` makes a read-only task.
 - \`resources\`: names for exclusive non-file items, such as \`npm-install\` or \`port-8080\`. Names use the \`id\` format. Tasks that share a resource run one at a time.
 - \`checks\`: the exact commands or checks the task agent must run and report, such as \`npm run check\`.
+- \`review\`: \`true\` for a read-only review task. Only a review task may report findings against other tasks.
 
 Description contract:
 
@@ -144,12 +149,12 @@ Fallback: if a worker choice fails with \`Unknown worker profile\`, \`Ambiguous 
 node '<helper>' define <<'JSON'
 {"symphonyId":"<symphonyId>","tasks":[
   {"id":"schema","title":"Add a task priority field","description":"Add an optional priority from 1 to 3 to the task schema. Acceptance: define accepts priorities 1–3 and rejects other values.","dependsOn":[],"reads":["shared"],"writes":["shared/symphonies/commands.ts","shared/symphonies/models.ts"],"checks":["npm run typecheck"]},
-  {"id":"review","title":"Review the schema change","description":"Review the schema task for validation gaps and missing tests. Report findings only.","dependsOn":["schema"],"reads":["shared/symphonies/commands.ts","shared/symphonies/models.ts"],"writes":[],"checks":[],"profile":"<profile id from profiles>"}
+  {"id":"review","title":"Review the schema change","description":"Review the schema task for validation gaps and missing tests. Report each blocking defect as a finding with taskId schema and path:line.","dependsOn":["schema"],"reads":["shared/symphonies/commands.ts","shared/symphonies/models.ts"],"writes":[],"checks":[],"review":true,"profile":"<profile id from profiles>"}
 ]}
 JSON
 \`\`\`
 
-\`define\` runs once per symphony. A second \`define\` with a different score fails with \`This symphony already has a different score.\`
+\`define\` runs once per symphony. A second \`define\` with a different score fails with \`This symphony already has a different score.\` Add tasks in a later loop with \`loop\` \`tasks\` (step 8b).
 
 ### 7. Dispatch the tasks and wait
 
@@ -166,8 +171,11 @@ JSON
 
 ### 8. Handle blocked and failed tasks
 
+This step covers only \`failed\` (a harness problem) and \`blocked\` tasks. A \`needs-changes\` task is not retried; it is resolved by the next loop (step 8b).
+
 - Act on the per-task notification summary first. Run \`get\` or open a task agent's conversation only when the summary does not explain the failure. Task agents diagnose and fix their own changes for up to 3 rounds; do not fix the cause yourself.
-- Choose the retry action from \`diagnosis.need\`. For \`scope\`, dispatch with \`retryTaskId\` and \`addWrites\` set to \`requestedWrites\`, or ask the user if those paths exceed the goal. For \`input\`, ask the user, then include the answer in \`note\`. For \`model\`, choose a different \`profile\` or \`provider\`/\`model\`/\`thinkingOptionId\`. For \`none\`, include a specific direction in \`note\`.
+- Choose the retry action from \`diagnosis.need\`. For \`scope\`, dispatch with \`retryTaskId\` and \`addWrites\` set to \`requestedWrites\`, or ask the user if those paths exceed the goal. For \`input\`, ask the user, then include the answer in \`note\`. For \`model\`, choose a different \`profile\` or \`provider\`/\`model\`/\`thinkingOptionId\`. For \`harness\` (or the older \`none\`), include a specific direction in \`note\`.
+- A failed task gets at most 2 retries per loop (3 attempts), counted only from \`failed\` attempts in that loop. Blocker resumes and nudges do not count, and failed retries never use the loop budget. A task agent that stops without reporting after the nudge, becomes unreachable, or whose launch stays unconfirmed is \`failed\` with \`need: "harness"\`; retrying an unconfirmed launch replays the same agent identity and counts. At the limit, \`dispatch\` refuses the retry; ask the user how to proceed.
 - Retry on the same worker choice first. Switch to a different \`profile\` or
   \`provider\`/\`model\` when \`need\` is \`"model"\`, or when the task's second
   attempt on the same worker choice also fails or stops without reporting. Never
@@ -181,13 +189,39 @@ JSON
   an active task agent.
 - Task agents can request extra write paths with \`widen\`. A refusal leaves scope unchanged; use \`need: "scope"\` and \`requestedWrites\` so you can retry with \`addWrites\` or ask the user.
 
+### 8b. Loops
+
+A loop ends when nothing runs and nothing more can start. Its wake states the verdict once per loop. Resolve \`failed\` and \`blocked\` tasks with step 8 first; \`loop\` is refused while any remain.
+
+- *Succeeded*: go to step 9.
+- *Needs changes*: the wake lists the blocking findings and failed checks with their owning tasks. Do not fix them yourself, and never start a new symphony for them.
+  1. Group the findings by owning task: the finding's \`taskId\`, or the reporting task when it has none.
+  2. Send \`loop\` with \`reopen\` for each owning task and its findings. Each reopened task continues on its existing agent when that agent can receive a message; otherwise a new agent starts with the previous report. Use \`note\` for direction, \`addWrites\` for missing scope, and \`after\` for loop-only prerequisites.
+  3. Add a planning task through \`tasks\` only when the fix needs a design decision, and put it in the reopened task's \`after\`.
+  4. Defer a finding or task in \`deferred\` only with a concrete reason. Every blocking finding and every \`needs-changes\` task must be reopened or deferred. A deferred item stays open: later wakes list it again, and every later \`loop\` must reopen or defer it again. Name a finding as \`<reporter task>#<id>\` when two reports use the same id.
+  5. End your turn. Transitive dependents of reopened tasks, including the review, re-run automatically in the new loop; the review receives the previous findings and confirms each fix.
+- *Repeated findings*: when the wake says the findings repeat the previous loop, ask the user before you start another loop.
+- *Budget used*: when the wake says the loop budget is used, ask the user whether to continue or stop. Send \`loop\` with \`approval: {"loops": <next loop number>, "userAnswer": "<the user's words>"}\` only after the user answered in this conversation. If the user chooses to stop, finish with \`unresolved\` (step 9).
+
+\`\`\`bash
+node '<helper>' loop <<'JSON'
+{"symphonyId":"<symphonyId>","reason":"Fix review findings F1-F3",
+ "reopen":[
+  {"taskId":"api","findings":["review#F1","review#F2"],"note":"Validate concertId before lookup.","after":["plan-2"]},
+  {"taskId":"ui","findings":["review#F3"]}],
+ "tasks":[{"id":"plan-2","title":"Plan the concertId validation","description":"...","dependsOn":[],"reads":["server","shared"],"writes":[],"checks":[]}],
+ "deferred":[{"finding":"review#F4","reason":"Needs a user decision on the API shape"}]}
+JSON
+\`\`\`
+
 ### 9. Finish the symphony
 
 1. Wait until every task has explicitly reported and stopped. Do not infer completion from idle.
 2. Read every report and its check results.
 3. Review every attempt's \`addedWrites\` (paths the Conductor added) and \`grantedWrites\` (paths a task agent widened to), with their reasons. List those paths and reasons in the finish summary.
 4. Verify the integrated result if the plan asks for it.
-5. Run \`finish\` with \`{"symphonyId","summary"}\`. The summary states what changed, which checks passed or failed, what remains, and any granted paths with their reasons.
+5. Run \`finish\` with \`{"symphonyId","summary"}\` after a loop succeeded. The summary states what changed, which checks passed or failed, the number of loops, minor findings, deferred items with their reasons, what remains, and any granted paths with their reasons.
+6. Only when the user chose to stop with open work, wait until every task agent has stopped and settled, then add \`unresolved: [{"finding" or "taskId", "reason"}]\` covering every open blocking finding and every task without a completed report. The symphony then ends as failed; list each unresolved item in the summary.
 
 ## Troubleshooting
 
@@ -201,6 +235,14 @@ JSON
 | \`Ambiguous worker profile: <name>\` | Two profiles share the name. | Use the profile \`id\`. |
 | \`Task agent model is unavailable: <provider>/<model>\` | \`models\` does not list that model. | Run \`models\` and choose a listed ID. |
 | \`Worker profile requests elevated permission mode: <mode>\` | The profile asks for more access than this session has. | Choose another profile, or an inline choice. |
+| \`\`Retry requires a settled failed or blocked task agent; a needs-changes task is resolved with \`loop\`, not a retry.\`\` | The task reported \`needs-changes\`, or its agent has not settled. | Wait for the loop to end, then reopen the task with \`loop\` (step 8b). |
+| \`Retry refused: task "<id>" already used its 2 failed retries in loop <N>. Ask the user how to proceed.\` | The task reached the failed-retry limit for this loop. | Ask the user. Do not start a new symphony. |
+| \`A loop starts only after the current loop ends needing changes with no failed, blocked or running tasks.\` | Tasks still run or can start, a task is \`failed\` or \`blocked\`, or the loop succeeded. | Wait for the loop-end wake, resolve failed and blocked tasks with step 8, or finish a succeeded loop. |
+| \`Loop must reopen or defer every open item: ...\` | A blocking finding or \`needs-changes\` task is in neither \`reopen\` nor \`deferred\`. | Reopen each owning task, or defer the listed items with a reason. |
+| \`Loop <N> exceeds the loop budget (<max>). Ask the user, then resend with approval {loops, userAnswer}.\` | The next loop is past \`maxLoops\`. | Ask the user. Resend with \`approval\` only with the user's answer, or finish with \`unresolved\`. |
+| \`Unknown finding "<ref>" for task "<id>".\` | \`findings\` names a finding the previous loop did not report. | Use \`<reporter task>#<finding id>\` from the wake or \`get\`. |
+| \`\`Finish requires a completed report for every task and settled task agents, or an \`unresolved\` list covering everything still open.\`\` | A task's latest attempt is not \`completed\`, or an agent has not settled. | Start the next loop, or ask the user and finish with \`unresolved\`. |
+| \`Finish with unresolved must cover every open finding and non-completed task: ...\` | \`unresolved\` misses an open item. | Add each listed finding or task with a reason. |
 | \`Task scope leaves the selected checkout.\` | A \`reads\` or \`writes\` path is outside the checkout. | Use checkout-relative paths. |
 | A blocked retry with a new worker choice succeeds | The changed choice starts a new agent on the attempt. | Check the dispatch acknowledgement for the new agent ID. |
 | \`Widen refused: this attempt has used its 2 widen calls.\` | The attempt reached its widen-call limit. | Report \`need: "scope"\` and \`requestedWrites\`; retry with \`addWrites\` or ask the user. |
@@ -213,5 +255,8 @@ JSON
 - Do not commit or push unless the user authorized it.
 - Do not expand the authorized scope.
 - Do not start a second symphony for the same request. Reuse the \`key\`.
+- Fixes for review findings always stay in the same symphony: use \`loop\`. Never start a symphony to fix another symphony's findings.
+- Never \`finish\` while a review has open blocking findings, except with \`unresolved\` after the user chose to stop.
+- Never send \`approval\` unless the user answered in this conversation.
 - A task agent must not use this skill. A task agent reports on its own attempt only.
 `;

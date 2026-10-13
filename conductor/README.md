@@ -18,6 +18,25 @@ technical names for units of work.
 | Task                | Task           | One unit of work in the score                                   |
 | Worker agent        | Task agent     | The agent assigned to one task                                  |
 | Attempt / retry     | Attempt        | One try at a task; numbered per task, and attempt 2+ is a retry |
+| Iteration           | Loop           | One pass over the score; fixes run in the next loop             |
+| Outcome             | Outcome        | A report's result: completed, needs changes, or failed          |
+
+A report has one of three outcomes:
+
+- **completed**: the work is done, every required check passed and, for a
+  review, there are no blocking findings. Dependents start.
+- **needs changes** (`needs-changes`): the work ran, but required checks still
+  fail after the task agent's own fix rounds, or a review found blocking
+  findings. The next loop resolves it; it is not retried within the loop.
+- **failed**: the harness could not run the work: the launch failed or is
+  unconfirmed, the agent is unreachable or stopped without reporting after the
+  nudge, or it cannot edit, read, or run what the task needs. Retried within the
+  same loop.
+
+A **loop** is one pass over the score, numbered from 1. It ends when no attempt
+is running and nothing more can start. It _succeeded_ when every task's latest
+attempt is completed; otherwise it _needs changes_, and the Conductor starts the
+next loop in the same symphony.
 
 A symphony is split into tasks; do not call tasks pieces or parts. A concert
 has symphonies. Use _workspace_ only when describing Paseo itself.
@@ -65,8 +84,10 @@ permissions. Small edits need no symphony unless requested.
 A report alone does not release an orchestrated task agent's resources. Dependencies
 wait for an explicit completed report with all required checks passed **and** an
 observed end to the task agent's turn. A task agent that stops without reporting is
-nudged once to report or block; a second stop becomes a blocker. An uncertain
-launch is checked again with backoff before it is blocked. The Conductor agent
+nudged once to report or block; a second stop, an unreachable agent, or a launch
+that stays unconfirmed after backoff re-checks fails the attempt with a server
+report and `need: "harness"`. `blocked` only means the task agent asked to
+pause. The Conductor agent
 acts on bounded per-task failure summaries, reviews all results, and finishes
 the symphony with a summary.
 
@@ -95,9 +116,15 @@ before this change keep their existing MCP configuration, including on refresh
 or resume, and can continue using the command-line helper. An MCP error or an
 ended turn alone never counts as an accepted task report.
 
-Task agents diagnose and fix their own changes before reporting failure, with up to
+Task agents diagnose and fix their own changes before reporting, with up to
 3 fix rounds and an early stop for repeated errors, refused scope requests, or
-needs for input or another model. They report a structured diagnosis. A task agent
+needs for input or another model. Checks that still fail are reported as
+`needs-changes` with the failing checks; `failed` reports carry a structured
+diagnosis with `need` `scope`, `input`, `model`, or `harness` (stored `none`
+reports remain readable). Reports may list up to 24 findings
+(`{id, severity: blocking|minor, taskId?, paths, summary, suggestedFix?}`);
+`needs-changes` needs a blocking finding or a failed check, `completed` allows
+only minor findings, and only a review task may name another task in `taskId`. A task agent
 can request up to 5 extra write paths per `widen` call and 2 calls per attempt;
 the server refuses paths owned by unfinished tasks or overlapping resources
 held by another attempt. Each grant records its reason on the attempt.
@@ -108,7 +135,7 @@ Agents start orchestration with:
 
 ```bash
 node "$CONDUCTOR_COMMAND" orchestrate <<'JSON'
-{"key":"feature-request-1","title":"Implement the feature","goal":"Inspect the repository, split the requested feature into tasks, implement and verify it","concurrency":3}
+{"key":"feature-request-1","title":"Implement the feature","goal":"Inspect the repository, split the requested feature into tasks, implement and verify it","concurrency":3,"maxLoops":3}
 JSON
 ```
 
@@ -136,7 +163,10 @@ JSON
 ```
 
 Each task may select `profile` by configured id or name, or `provider`, `model`,
-and an optional `thinkingOptionId` from `models`; never both. Without either, the task agent
+and an optional `thinkingOptionId` from `models`; never both. `review: true` marks a
+read-only review task. A review task starts once each prerequisite is completed
+or needs changes and receives their open findings and failed checks; other tasks
+wait for completed prerequisites. Without a worker choice, the task agent
 inherits the Conductor's provider, model, thinking option, and mode. The permission
 mode is never selected inline: a task agent on the same provider copies the Conductor's
 mode, and another provider starts in its default mode. Assignments carry the goal,
@@ -147,7 +177,13 @@ settlement, starts dependents, and notifies the Conductor agent of blockers or t
 completed score. Notifications wait until the Conductor can receive them.
 
 `dispatch` with `retryTaskId` resumes a settled blocked task or retries a failed
-task. Optional `note` adds retry guidance; `addWrites` adds paths to that task's
+task; a `needs-changes` task is resolved with `loop` instead. A failed task gets
+at most 2 retries per loop (3 attempts), counted only from failed attempts in
+that loop; then `dispatch` refuses and the Conductor asks the user. Blocker
+resumes and nudges do not count, and failed retries do not use the loop budget.
+Retrying an unconfirmed launch replays the same agent identity on the same
+attempt and counts as a retry. A late report from the task agent replaces the
+server's harness-failure report. Optional `note` adds retry guidance; `addWrites` adds paths to that task's
 write scope for this and later attempts, subject to conflict checks. An unchanged
 worker choice continues on the same agent when it can receive a message. For a
 blocked attempt, a changed `profile` or inline
@@ -170,10 +206,60 @@ than replacing them.
 
 For a `need: "scope"` diagnosis, retry with `addWrites` set to the requested paths,
 or ask the user if they exceed the goal. For `input`, ask the user and put the
-answer in `note`; for `model`, choose a different task agent; for `none`, give a
-specific direction in `note`. Read `get` or open a task agent conversation only when
+answer in `note`; for `model`, choose a different task agent; for `harness` (or
+the older `none`), give a specific direction in `note`. Read `get` or open a task agent conversation only when
 the notification summary does not explain the failure. Review granted paths and
 their reasons in the attempts, and include them in the finish summary.
+
+#### Loops
+
+Each loop wakes the Conductor once (`loop-end:<N>`) with its verdict: it
+succeeded, it needs changes with the blocking findings and failed checks, the
+loop budget is used, or the blocking findings repeat the previous loop. Failed
+and blocked tasks keep their per-task wake and are handled first. After a loop
+needs changes, the Conductor reopens the owning tasks in the same symphony:
+
+```bash
+node "$CONDUCTOR_COMMAND" loop <<'JSON'
+{"symphonyId":"<symphony UUID>","reason":"Fix review findings F1-F3","reopen":[{"taskId":"api","findings":["review#F1","review#F2"],"note":"Validate concertId before lookup.","after":["plan-2"]},{"taskId":"ui","findings":["review#F3"]}],"tasks":[{"id":"plan-2","title":"Plan the concertId validation","description":"...","dependsOn":[],"reads":["server","shared"],"writes":[],"checks":[]}],"deferred":[{"finding":"review#F4","reason":"Needs a user decision on the API shape"}]}
+JSON
+```
+
+Findings are named `<reporter task>#<finding id>`; a bare id is accepted only
+when one reporter used it. A reopened task continues on its agent, with that
+agent's worker choice, when the agent is idle and can receive a message;
+otherwise a new agent starts with the previous report and the same worker
+choice. An active agent is never replaced. Its prompt carries the full finding
+objects, captured when `loop` is accepted. `note` and `addWrites` work as on a
+retry and are kept with the loop until the task starts, and `after` adds
+prerequisites for this loop only; `after` edges must not form a cycle with
+`dependsOn`. `tasks` appends new tasks in a new score revision. Every transitive
+dependent of a reopened task, including the review, re-runs in the new loop with
+a short re-check prompt. A re-running review, including an explicitly reopened
+one and a replacement agent on a retry, receives the previous findings. When the
+findings or failed checks would exceed the saved prompt limit, the prompt keeps
+each finding's id, owner and first path, shortens each failed check name, and
+points to the saved reports for the rest. If a prompt still doesn't fit, the
+task doesn't start and the Conductor is woken to ask the user and finish with
+`unresolved`.
+
+`loop` is accepted only from the symphony's Conductor, after the current loop
+ended needing changes with no failed, blocked, or running tasks, when every
+blocking finding and `needs-changes` task is reopened or listed in `deferred`
+with a reason, and when the new score, the added write scopes, and the attempt
+limit pass validation. A refused `loop` changes nothing. A deferred item stays
+open: later loop wakes list it again, and each later `loop` must reopen or defer
+it again.
+`orchestrate` accepts `maxLoops` from 1 to 5 (default 3). A loop past the budget
+needs `approval: {loops, userAnswer}` with the user's own words; the approval is
+recorded and shown in History. The server cannot verify it; the budget makes the
+Conductor stop and ask.
+
+`finish` requires every task's latest attempt to be completed and settled. If
+the user chooses to stop with open work, `finish` accepts
+`unresolved: [{finding | taskId, reason}]` covering every open blocking finding
+and non-completed task once every task agent has stopped and settled; the
+symphony then ends as failed, lists them, and releases the stopped tasks' scope.
 
 Task agents request scope while their attempt is running:
 
@@ -251,15 +337,15 @@ Multi-task starts supply `tasks` with `id`, `title`, `description`, and optional
 `dependsOn`, `reads`, `writes`, `resources`, and `checks`. Paths are literal and
 checkout-relative. Prerequisites need completed reports before a task is claimed.
 Every declared check must appear by its exact name in the report with
-`status: "passed"` and nonempty `detail` before completion. Otherwise report failed
-or block the task; never invent a pass. Retrying failure requires `claim` with
+`status: "passed"` and nonempty `detail` before completion. Otherwise report
+needs-changes, failed, or block the task; never invent a pass. Retrying failure requires `claim` with
 `retry: true`, creates a new attempt, and preserves the old report.
 
 `block` takes `symphonyId`, `attemptId`, and `message`; ask any question in the
 source conversation. Reclaim resumes a blocked attempt. `get` takes `symphonyId`;
 `list` needs no input and returns that source's symphonies. Exact report/finish retries are idempotent;
 changed terminal reports and superseded attempt IDs are rejected. Finish requires
-completed reports for every task. Run help for complete examples.
+completed reports for every task, or `unresolved` covering everything open. Run help for complete examples.
 
 The transport trusts the daemon OS account through a private directory and
 mode-0600 Unix socket; it does not isolate agents sharing that account. Declared
@@ -458,11 +544,14 @@ blockers, report hashes, and final summaries are stored together. After upgradin
 delete `runs/`, `run-write-lock`, and `artifacts/` under the Conductor plugin data
 directory, then run **Install conductor skills** again. Upgrade while no Podium answer is being sent: request keys changed, so a
 native-answer receipt recorded before the upgrade no longer blocks a repeated send. Git metadata and the
-tracked-diff/status fingerprint are context, not settlement proof.
+tracked-diff/status fingerprint are context, not settlement proof. Attempts stored before
+loops existed load as loop 1, and their reports keep their original meaning.
 
 Bounds are 200 symphonies and 200 context artifacts (including orphans), 40 tasks,
-120 attempts per symphony, 24 plan revisions (one per plan; reserved for review rounds), a 2,000,000-byte envelope, and
-128,000-byte context. Field/command bounds also apply. Limits refuse new history
+120 attempts per symphony, 24 plan revisions (one per plan, plus one per loop
+that appends tasks), 1–5 loops (default 3; more only with recorded user
+approval), 2 failed retries per task per loop, 24 findings per report, a
+2,000,000-byte envelope, and 128,000-byte context. Field/command bounds also apply. Limits refuse new history
 instead of pruning evidence. Corrupt records are isolated from healthy reads and
 the Symphonies view. Incomplete coverage blocks resource claims because existing
 ownership cannot be established.

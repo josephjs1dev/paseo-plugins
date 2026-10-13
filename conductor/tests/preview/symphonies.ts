@@ -5,12 +5,15 @@ import {
   summarizeSymphony,
   type StoredSymphony,
   type SymphonyContext,
+  type TaskFinding,
 } from "../../shared/symphonies/models";
 import {
+  fixtureLaunch,
   fixtureSymphonies,
   planContext,
   recoverySymphony,
   storedSymphony,
+  task,
 } from "../symphony-fixtures";
 
 /**
@@ -193,6 +196,384 @@ function fixtureSymphonyByName(
 ): (() => StoredSymphony) | undefined {
   return extendedFixtureSymphonies[fixture] ?? fixtureSymphonies[fixture];
 }
+
+const LOOP_T0 = 1791201600000;
+const LOOP_MINUTE = 60_000;
+
+/** A reviewed defect; the reviewer `` `review` `` reports it against `taskId`. */
+function loopFinding(
+  id: string,
+  severity: TaskFinding["severity"],
+  taskId: string,
+  paths: string[],
+  summary: string,
+  suggestedFix?: string,
+): TaskFinding {
+  return {
+    id,
+    severity,
+    ...(taskId ? { taskId } : {}),
+    paths,
+    summary,
+    ...(suggestedFix ? { suggestedFix } : {}),
+  };
+}
+
+/** One settled attempt, printable in History rows and task cards. */
+function loopAttempt(
+  taskId: string,
+  state: StoredSymphony["execution"]["attempts"][number]["state"],
+  index: number,
+  loop: number,
+  minutes: number,
+  extra: Partial<
+    NonNullable<StoredSymphony["execution"]["attempts"][number]>
+  > = {},
+): NonNullable<StoredSymphony["execution"]["attempts"][number]> {
+  return {
+    id: `b410f767-1197-469b-8b89-af35338a4ec${index}`,
+    taskId,
+    agentId: `worker-${taskId}`,
+    state,
+    startedAt: LOOP_T0 + (minutes - 10) * LOOP_MINUTE,
+    endedAt: LOOP_T0 + minutes * LOOP_MINUTE,
+    message: null,
+    report: null,
+    reportHash: "c".repeat(64),
+    loop,
+    launch: fixtureLaunch(true),
+    ...extra,
+  };
+}
+
+/**
+ * A needs-changes implementation task: the work ran and the agent's own fix
+ * rounds exhausted, so a required check still fails and a blocking finding is
+ * attached. Its label and amber state must stay distinct from failed.
+ */
+const needsChangesSymphony = (): StoredSymphony => {
+  const api = task("api", {
+    worker: { role: "implementation", profile: "default" },
+    writes: ["server/symphonies"],
+  });
+  const base = storedSymphony();
+  return {
+    ...base,
+    id: "f1151538-5302-4fbf-b50b-f6a55f2a5c21",
+    title: "Contract validation rewrite",
+    status: "running",
+    revisions: [
+      {
+        number: 1,
+        parent: null,
+        reason: "Conductor task breakdown",
+        acceptedAt: LOOP_T0,
+        score: { tasks: [api] },
+      },
+    ],
+    execution: {
+      origin: "conducted",
+      attempts: [
+        loopAttempt("api", "needs-changes", 1, 1, 25, {
+          report: {
+            outcome: "needs-changes",
+            summary:
+              "Implemented the validation rewrite, but the focused contract test still fails after three fix rounds.",
+            evidence: ["npm test -- contract: 1 red on the 400 path"],
+            checks: [
+              {
+                name: "contract test",
+                status: "failed",
+                detail: "expected 400 for an unknown concert, received 500",
+              },
+            ],
+            findings: [
+              loopFinding(
+                "F1",
+                "blocking",
+                "api",
+                ["server/symphonies/execution.ts:112"],
+                "The unknown-concert branch rethrows instead of returning the 400 contract shape.",
+                "Map SymphonyError 404 cases to the 400 payload with the stable code.",
+              ),
+            ],
+          },
+        }),
+      ],
+      summary: null,
+      finishedAt: null,
+      interruption: null,
+    },
+  };
+};
+
+/**
+ * The full loop flow: loop 1's review reports blocking findings, loop 2
+ * reopens the owning tasks and the review re-checks them, a follow-up finding
+ * from that re-check drives loop 3, which the user approved past the budget.
+ * Loop 3 succeeds and the symphony finishes.
+ */
+const loopsSymphony = (): StoredSymphony => {
+  const api = task("api", {
+    worker: { role: "implementation", profile: "default" },
+  });
+  const ui = task("ui", {
+    worker: { role: "implementation", profile: "default" },
+  });
+  const review = task("review", {
+    prerequisites: ["api", "ui"],
+    worker: { role: "review", profile: "default" },
+    review: true,
+  });
+  const findingF1 = loopFinding(
+    "F1",
+    "blocking",
+    "api",
+    ["conductor/server/symphonies/orchestration.ts:789"],
+    "A completed task cannot get another attempt, so review defects are unfixable.",
+    "Accept needs-changes latest attempts in the reopen path.",
+  );
+  const findingF2 = loopFinding(
+    "F2",
+    "blocking",
+    "ui",
+    ["conductor/client/symphonies/task-card.tsx:41"],
+    "The task card state palette lacks a needs-changes entry, so the type check fails.",
+    "Extend the record and reuse the warning hue.",
+  );
+  const findingF3 = loopFinding(
+    "F3",
+    "blocking",
+    "api",
+    ["conductor/server/symphonies/orchestration.ts:1223"],
+    "The constant wake identity means the second clean pass cannot wake the Conductor.",
+  );
+  const base = storedSymphony();
+  return {
+    ...base,
+    id: "f1151538-5302-4fbf-b50b-f6a55f2a5c22",
+    title: "Review loop fix campaign",
+    status: "completed",
+    revisions: [
+      {
+        number: 1,
+        parent: null,
+        reason: "Conductor task breakdown",
+        acceptedAt: LOOP_T0,
+        score: { tasks: [api, ui, review] },
+      },
+    ],
+    execution: {
+      origin: "conducted",
+      conducting: {
+        phase: "working",
+        concurrency: 2,
+        requestedBy: null,
+        conductor: "agent",
+        conductorLaunch: "started",
+        prompt: "Coordinate the pagination fix campaign",
+        notification: "loop-end:3",
+        maxLoops: 2,
+        loops: [
+          {
+            number: 2,
+            reason: "Fix review findings F1 and F2",
+            startedAt: LOOP_T0 + 45 * LOOP_MINUTE,
+            reopened: [
+              { taskId: "api", findings: ["F1"] },
+              { taskId: "ui", findings: ["F2"] },
+            ],
+            added: [],
+            deferred: [],
+          },
+          {
+            number: 3,
+            reason: "Fix the follow-up finding F3 found while re-checking",
+            startedAt: LOOP_T0 + 120 * LOOP_MINUTE,
+            reopened: [{ taskId: "api", findings: ["F3"] }],
+            added: [],
+            deferred: [],
+            approval: {
+              loops: 3,
+              userAnswer: "Yes, run one more loop to fix F3.",
+            },
+          },
+        ],
+      },
+      attempts: [
+        loopAttempt("api", "completed", 1, 1, 55, {
+          report: {
+            outcome: "completed",
+            summary: "Hooked the pagination contract up to the export API.",
+            evidence: ["contract tests pass"],
+            checks: [
+              { name: "contract test", status: "passed", detail: "green" },
+            ],
+          },
+        }),
+        loopAttempt("ui", "completed", 2, 1, 50, {
+          report: {
+            outcome: "completed",
+            summary: "Rendered the pagination controls with fixtures.",
+            evidence: ["focused UI suite passes"],
+            checks: [{ name: "UI suite", status: "passed", detail: "green" }],
+          },
+        }),
+        loopAttempt("review", "needs-changes", 3, 1, 40, {
+          report: {
+            outcome: "needs-changes",
+            summary: "Both findings from the first code review remain.",
+            evidence: ["Read the diff against the task scope"],
+            checks: [],
+            findings: [findingF1, findingF2],
+          },
+        }),
+        loopAttempt("api", "completed", 4, 2, 100, {
+          reopen: {
+            reason:
+              "Fix review finding F1 — accept needs-changes latest attempts.",
+            findings: [findingF1],
+          },
+          report: {
+            outcome: "completed",
+            summary: "Reopened tasks now report needs-changes attempts.",
+            evidence: ["re-open contract test passes"],
+            checks: [
+              { name: "reopen path", status: "passed", detail: "green" },
+            ],
+          },
+        }),
+        loopAttempt("ui", "completed", 5, 2, 95, {
+          reopen: {
+            reason:
+              "Fix review finding F2 — add the needs-changes palette entry.",
+            findings: [findingF2],
+          },
+          report: {
+            outcome: "completed",
+            summary: "The task card renders the amber needs-changes state.",
+            evidence: ["typecheck passes"],
+            checks: [{ name: "typecheck", status: "passed", detail: "green" }],
+          },
+        }),
+        loopAttempt("review", "needs-changes", 6, 2, 115, {
+          reopen: {
+            reason:
+              "Confirm F1 and F2 are fixed and re-check against the new code.",
+            findings: [findingF1, findingF2],
+          },
+          recheck: true,
+          report: {
+            outcome: "needs-changes",
+            summary:
+              "F1 and F2 are fixed, but the re-check found a follow-up defect.",
+            evidence: ["Read the loop 2 diff"],
+            checks: [],
+            findings: [findingF3],
+          },
+        }),
+        loopAttempt("api", "completed", 7, 3, 175, {
+          reopen: {
+            reason:
+              "Fix the follow-up finding F3 — use a per-loop wake identity.",
+            findings: [findingF3],
+          },
+          report: {
+            outcome: "completed",
+            summary: "The wake identity is now per loop.",
+            evidence: ["wake loop test passes"],
+            checks: [{ name: "wake test", status: "passed", detail: "green" }],
+          },
+        }),
+        loopAttempt("review", "completed", 8, 3, 190, {
+          reopen: {
+            reason: "Confirm F3 is fixed and re-check the final state.",
+            findings: [findingF3],
+          },
+          recheck: true,
+          report: {
+            outcome: "completed",
+            summary:
+              "All three findings are fixed; no blocking defect remains.",
+            evidence: ["Re-read the loop 3 diff"],
+            checks: [],
+          },
+        }),
+      ],
+      summary:
+        "Loops 1 and 2 needed changes; the user approved loop 3 past the budget and the review finished without blocking findings.",
+      finishedAt: LOOP_T0 + 300 * LOOP_MINUTE,
+      interruption: null,
+    },
+  };
+};
+
+/** A symphony the user stopped with open findings and a non-completed task. */
+const unresolvedSymphony = (): StoredSymphony => {
+  const api = task("api", {
+    worker: { role: "implementation", profile: "default" },
+  });
+  const base = storedSymphony();
+  return {
+    ...base,
+    id: "f1151538-5302-4fbf-b50b-f6a55f2a5c23",
+    title: "Pagination stop decision",
+    status: "failed",
+    revisions: [
+      {
+        number: 1,
+        parent: null,
+        reason: "Conductor task breakdown",
+        acceptedAt: LOOP_T0,
+        score: { tasks: [api] },
+      },
+    ],
+    execution: {
+      origin: "conducted",
+      attempts: [
+        loopAttempt("api", "needs-changes", 1, 1, 30, {
+          report: {
+            outcome: "needs-changes",
+            summary: "One contract check still fails after the fix rounds.",
+            evidence: ["npm test -- contract: 1 red"],
+            checks: [
+              {
+                name: "contract test",
+                status: "failed",
+                detail: "red on the 400 path",
+              },
+            ],
+            findings: [
+              loopFinding(
+                "F1",
+                "blocking",
+                "api",
+                ["conductor/server/symphonies/execution.ts:282"],
+                "Finish still requires every latest attempt to be completed.",
+              ),
+            ],
+          },
+        }),
+      ],
+      summary: "Stopped by the user with one open finding and one open task.",
+      finishedAt: LOOP_T0 + 120 * LOOP_MINUTE,
+      interruption: null,
+      unresolved: [
+        {
+          finding: "api#F1",
+          reason: "Needs a product decision on the 400 shape.",
+        },
+        { taskId: "api", reason: "User chose to stop instead of looping." },
+      ],
+    },
+  };
+};
+
+Object.assign(extendedFixtureSymphonies, {
+  "needs-changes": needsChangesSymphony,
+  loops: loopsSymphony,
+  unresolved: unresolvedSymphony,
+});
 
 /** Orchestrated symphonies record the goal as both plan and expected outcome. */
 const goalEchoContext = {

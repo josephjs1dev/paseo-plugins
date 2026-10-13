@@ -17,8 +17,13 @@ import {
   attemptNumber,
   type Attempt,
   type StoredSymphony,
+  type TaskReport,
 } from "../shared/symphonies/models";
-import { effectiveTask } from "../shared/symphonies/score";
+import {
+  attemptLoop,
+  currentLoop,
+  effectiveTask,
+} from "../shared/symphonies/score";
 import {
   score,
   placement,
@@ -557,6 +562,55 @@ void test("deleting a missing symphony reports the documented error", async () =
     store.remove(randomUUID(), 0),
     /This symphony no longer exists\. Refresh the symphony list\./,
   );
+});
+
+void test("records stored before loops parse as loop 1 and keep need: none", async () => {
+  const directory = await testDirectory();
+  const store = fileSymphonyStore(directory);
+  const base = plannedSymphony();
+  const report: TaskReport = {
+    outcome: "failed",
+    summary: "Checks failed before needs-changes existed.",
+    evidence: ["Regression suite red."],
+    checks: [
+      { name: "Regression", status: "failed", detail: "Offset test red." },
+    ],
+    diagnosis: {
+      tried: ["Narrowed the fixture"],
+      suspectedCause: "Stale offset expectation",
+      need: "none",
+    },
+  };
+  const oldAttempt: Attempt = {
+    id: randomUUID(),
+    taskId: "api",
+    // The tracked origin's records come from the source agent.
+    agentId: "agent-1",
+    state: "failed",
+    startedAt: 1791201600000,
+    endedAt: 1791201600060,
+    message: null,
+    report,
+    reportHash: contentHash(JSON.stringify(report)),
+  };
+  const symphony: StoredSymphony = {
+    ...base,
+    status: "failed",
+    execution: { ...base.execution, attempts: [oldAttempt] },
+  };
+  await createSymphony(store, symphony);
+  const stored = (await store.read(symphony.id)).symphony;
+  const attempt = stored.execution.attempts[0];
+  if (!attempt) {
+    throw new Error("expected the stored attempt");
+  }
+  // Absent loop and reopen fields read as loop 1 with no findings context.
+  assert.equal(attemptLoop(attempt), 1);
+  assert.equal(currentLoop(stored), 1);
+  assert.equal(attempt?.reopen, undefined);
+  assert.equal(attempt?.recheck, undefined);
+  // need: "none" stays readable and keeps its meaning.
+  assert.equal(attempt?.report?.diagnosis?.need, "none");
 });
 
 void test("attempts and reports stored before the recovery fields remain readable", async () => {

@@ -6,6 +6,7 @@ import { promisify } from "node:util";
 import test from "node:test";
 import { symphonyExecution } from "../server/symphonies/execution";
 import { fileSymphonyStore } from "../server/symphonies/store";
+import { executionStatus } from "../server/symphonies/results";
 import {
   SymphonyError,
   LaunchRejectedError,
@@ -18,9 +19,11 @@ import {
 } from "../server/symphonies/changes";
 import {
   latestAttempt,
+  SYMPHONY_LIMITS,
   type StoredSymphony,
 } from "../shared/symphonies/models";
-import { effectiveTask } from "../shared/symphonies/score";
+import { currentLoop, effectiveTask } from "../shared/symphonies/score";
+import { historyLoops } from "../client/symphonies/history";
 import { placement } from "./symphony-fixtures";
 import { testDirectory } from "./fixtures";
 
@@ -201,6 +204,31 @@ const task = (id: string, dependsOn: string[] = [], writes: string[] = []) => ({
   profile: "Small",
 });
 
+/** A read-only review task, which the server marks with the `review` role. */
+const reviewTask = (id: string, dependsOn: string[] = []) => ({
+  ...task(id, dependsOn),
+  review: true,
+});
+
+/** The blocking finding the loop tests use. */
+const blockingFinding = {
+  id: "F1",
+  severity: "blocking" as const,
+  taskId: "api",
+  paths: ["src/api.ts:41"],
+  summary: "concertId is validated after its lookup.",
+  suggestedFix: "Validate before the lookup.",
+};
+
+/** A `needs-changes` report with one blocking finding against `api`. */
+const needsChangesReport = (finding = blockingFinding) => ({
+  outcome: "needs-changes" as const,
+  summary: "The work ran but is not acceptable yet.",
+  evidence: ["Read the endpoint path"],
+  checks: [],
+  findings: [finding],
+});
+
 const execute = promisify(execFile);
 
 /** A committed Git checkout with one tracked file under `src`. */
@@ -247,6 +275,7 @@ function notificationSummary(
     kind: string;
     failedChecks: string[];
     message: string;
+    diagnosis?: { need: string };
   }>;
 }
 
@@ -390,7 +419,7 @@ void test("uncertain launch retries reuse durable task agent and attempt identit
   assert.equal(f.launches.size, 2);
 });
 
-void test("a stopped task agent is nudged once, then blocked, and a failed retry continues on the same agent", async () => {
+void test("a stopped task agent is nudged once, then failed as a harness failure, and each retry continues on the same agent", async () => {
   const f = await fixture();
   const plan = await f.start();
   const symphony = await f.define(plan, [task("a", [], ["src"])]);
@@ -414,26 +443,32 @@ void test("a stopped task agent is nudged once, then blocked, and a failed retry
     f.wakes.filter((w) => w.startsWith(`${a.agentId}:nudge:${a.id}:`)).length,
     1,
   );
-  // The second stop blocks.
+  // The second stop is a harness failure, not a worker blocker: the server
+  // settles it failed with its own report and a harness diagnosis.
   f.active.set(a.agentId, false);
   await f.reconcile();
-  assert.equal(latestAttempt(await f.read(plan.id), "a")?.state, "blocked");
-  assert.equal((await f.read(plan.id)).status, "blocked");
-  // Resume keeps the attempt identity and carries the note.
+  const failed = latestAttempt(await f.read(plan.id), "a");
+  assert.equal(failed?.state, "failed");
+  assert.equal(failed?.reportedBy, "server");
+  assert.equal(failed?.blockedBy, undefined);
+  assert.equal(failed?.report?.diagnosis?.need, "harness");
+  assert.equal((await f.read(plan.id)).status, "failed");
+  // The retry continues on the same agent in a new attempt with the note.
   await f.send(plan.source.agentId, {
     kind: "dispatch",
     symphonyId: plan.id,
     retryTaskId: "a",
     note: "Check the shared schema",
   });
-  assert.equal(latestAttempt(await f.read(plan.id), "a")?.id, a.id);
+  const second = latestAttempt(await f.read(plan.id), "a");
+  assert.ok(second && second.id !== a.id);
+  assert.equal(second.agentId, a.agentId);
   assert.equal(f.launches.size, 2);
-  // The same worker choice resumes the same agent with a short continuation.
   const resumed = f.wakePrompts.find((w) =>
-    w.key?.startsWith(`resume:${a.id}:`),
+    w.key?.startsWith(`continue:${second.id}`),
   );
   assert.ok(resumed);
-  assert.match(resumed.prompt, /Continue task a, now attempt/);
+  assert.match(resumed.prompt, /Continue task a, now attempt .* \(2 of 2\)/);
   assert.match(resumed.prompt, /Conductor note: Check the shared schema/);
   assert.equal(resumed.prompt.includes("CONDUCTOR_JSON"), false);
   assert.equal(resumed.prompt.includes("--socket"), false);
@@ -455,7 +490,7 @@ void test("a stopped task agent is nudged once, then blocked, and a failed retry
     note: "Widen to the schema file",
   });
   const retry = latestAttempt(await f.read(plan.id), "a");
-  assert.ok(retry && retry.id !== a.id);
+  assert.ok(retry && retry.id !== a.id && retry.id !== second.id);
   assert.equal(retry.agentId, a.agentId);
   assert.equal(retry.state, "running");
   assert.equal(f.launches.size, 2);
@@ -610,13 +645,13 @@ void test("busy conductor notifications do not starve another symphony", async (
   );
 });
 
-void test("the same blocker after resume wakes the conductor once in each generation", async () => {
+void test("a repeated harness failure after a retry wakes the conductor once per attempt", async () => {
   const f = await fixture();
   const plan = await f.start();
   const symphony = await f.define(plan, [task("a")]);
   const a = latestAttempt(symphony, "a");
   assert.ok(a && plan.source.agentId);
-  // The first stop nudges; the second blocks and wakes the conductor once.
+  // The first stop nudges; the second fails and wakes the conductor once.
   f.active.set(a.agentId, false);
   await f.reconcile();
   assert.equal(
@@ -634,6 +669,9 @@ void test("the same blocker after resume wakes the conductor once in each genera
     symphonyId: plan.id,
     retryTaskId: "a",
   });
+  // The retry is a new attempt on the same agent with its own nudge.
+  f.active.set(a.agentId, false);
+  await f.reconcile();
   f.active.set(a.agentId, false);
   await f.reconcile();
   await f.reconcile();
@@ -666,7 +704,7 @@ void test("a requesting agent coordinates its own symphony without creating a Co
   await f.report(symphony.id, "a");
   f.active.set(a.agentId, false);
   await f.reconcile();
-  assert.deepEqual(f.wakes, [`requester:${symphony.id}:all-reported`]);
+  assert.deepEqual(f.wakes, [`requester:${symphony.id}:loop-end:1`]);
   await f.send("requester", {
     kind: "finish",
     symphonyId: symphony.id,
@@ -1139,7 +1177,7 @@ void test("an uncertain launch is re-checked with bounded backoff before it is a
   assert.equal(adopted?.state, "running");
 });
 
-void test("an uncertain launch that never appears is blocked after the bounded re-checks", async () => {
+void test("an uncertain launch that never appears fails after the bounded re-checks", async () => {
   const f = await fixture();
   const plan = await f.start();
   f.loseAck();
@@ -1156,13 +1194,15 @@ void test("an uncertain launch that never appears is blocked after the bounded r
   await f.reconcile();
   await f.reconcile();
   assert.equal(lookups, 3);
-  const blocked = latestAttempt(await f.read(plan.id), "a");
-  assert.equal(blocked?.id, a.id);
-  assert.equal(blocked?.state, "blocked");
-  assert.equal(blocked?.launch?.settled, true);
+  const failed = latestAttempt(await f.read(plan.id), "a");
+  assert.equal(failed?.id, a.id);
+  assert.equal(failed?.state, "failed");
+  assert.equal(failed?.reportedBy, "server");
+  assert.equal(failed?.report?.diagnosis?.need, "harness");
+  assert.equal(failed?.launch?.settled, true);
 });
 
-void test("a retry of a blocked uncertain launch re-opens reconciliation", async () => {
+void test("a retry of a failed uncertain launch replays the same identity and counts", async () => {
   const f = await fixture();
   const plan = await f.start();
   f.loseAck();
@@ -1170,8 +1210,8 @@ void test("a retry of a blocked uncertain launch re-opens reconciliation", async
   const a = latestAttempt(symphony, "a");
   assert.ok(a && plan.source.agentId);
   // The acknowledgement was lost and the identity never appears, so the
-  // bounded re-checks settle the attempt as blocked while the launch is still
-  // uncertain and settled.
+  // bounded re-checks settle the attempt as a harness failure while the
+  // launch is still uncertain and settled.
   f.workers.launchCheckDelaysMs = [0, 0];
   f.workers.inspect = async () => ({
     exists: false,
@@ -1181,10 +1221,10 @@ void test("a retry of a blocked uncertain launch re-opens reconciliation", async
   await f.reconcile();
   await f.reconcile();
   await f.reconcile();
-  const blocked = latestAttempt(await f.read(plan.id), "a");
-  assert.equal(blocked?.state, "blocked");
-  assert.equal(blocked?.launch?.state, "uncertain");
-  assert.equal(blocked?.launch?.settled, true);
+  const failed = latestAttempt(await f.read(plan.id), "a");
+  assert.equal(failed?.state, "failed");
+  assert.equal(failed?.launch?.state, "uncertain");
+  assert.equal(failed?.launch?.settled, true);
   // The child agent does exist but is inactive; a retry must reuse that same
   // identity, leave the attempt unsettled, and restart its check schedule.
   f.active.set(a.agentId, false);
@@ -1207,6 +1247,8 @@ void test("a retry of a blocked uncertain launch re-opens reconciliation", async
   assert.equal(retried?.launch?.settled, false);
   assert.equal(retried?.launch?.checks, undefined);
   assert.equal(retried?.launch?.nextCheckAt, undefined);
+  assert.equal(retried?.report, null);
+  assert.equal(retried?.identityRetries, 1);
   assert.equal(f.launches.size, 2, "no replacement agent is created");
   // The task agent is inactive, so reconcile nudges it instead of skipping the
   // settled launch forever.
@@ -1222,9 +1264,33 @@ void test("a retry of a blocked uncertain launch re-opens reconciliation", async
   f.reload();
   await f.reconcile();
   const settled = latestAttempt(await f.read(plan.id), "a");
-  assert.equal(settled?.state, "blocked");
-  assert.equal(settled?.blockedBy, "server");
+  assert.equal(settled?.state, "failed");
+  assert.equal(settled?.reportedBy, "server");
   assert.equal(settled?.launch?.settled, true);
+  // The original failure and the identity replay both count: one retry left.
+  f.active.set(a.agentId, false);
+  await f.send(plan.source.agentId, {
+    kind: "dispatch",
+    symphonyId: plan.id,
+    retryTaskId: "a",
+  });
+  const third = latestAttempt(await f.read(plan.id), "a");
+  assert.ok(third && third.id !== a.id);
+  assert.equal(third.agentId, a.agentId);
+  // The continuation stops twice without a report: nudge, then failure.
+  f.active.set(a.agentId, false);
+  await f.reconcile();
+  f.active.set(a.agentId, false);
+  await f.reconcile();
+  assert.equal(latestAttempt(await f.read(plan.id), "a")?.state, "failed");
+  await assert.rejects(
+    f.send(plan.source.agentId, {
+      kind: "dispatch",
+      symphonyId: plan.id,
+      retryTaskId: "a",
+    }),
+    /already used its 2 failed retries/,
+  );
 });
 
 void test("a failed continuation waits while another writer holds resources", async () => {
@@ -1322,8 +1388,12 @@ void test("dispatch addWrites promotes a blocked reader but refuses while a writ
   const writer = latestAttempt(symphony, "writer");
   assert.ok(reader && writer && plan.source.agentId);
   // Reader blocks while the writer still holds its writer resources.
-  f.active.set(reader.agentId, false);
-  await f.reconcile();
+  await f.send(reader.agentId, {
+    kind: "block",
+    symphonyId: plan.id,
+    attemptId: reader.id,
+    message: "Need to edit the shared helper",
+  });
   f.active.set(reader.agentId, false);
   await f.reconcile();
   assert.equal(
@@ -1469,8 +1539,12 @@ void test("a blocked retry replaces an unavailable agent on the same attempt", a
   const symphony = await f.define(plan, [task("a")]);
   const a = latestAttempt(symphony, "a");
   assert.ok(a && plan.source.agentId);
-  f.active.set(a.agentId, false);
-  await f.reconcile();
+  await f.send(a.agentId, {
+    kind: "block",
+    symphonyId: plan.id,
+    attemptId: a.id,
+    message: "Need the fixture path",
+  });
   f.active.set(a.agentId, false);
   await f.reconcile();
   assert.equal(latestAttempt(await f.read(plan.id), "a")?.state, "blocked");
@@ -1491,7 +1565,7 @@ void test("a blocked retry replaces an unavailable agent on the same attempt", a
   assert.ok(f.launches.has(resumed.agentId));
   const prompt = f.launches.get(resumed.agentId)?.prompt ?? "";
   assert.match(prompt, /Task a: a/);
-  assert.match(prompt, /It stopped without reporting\./);
+  assert.match(prompt, /It blocked with: `Need the fixture path`/);
 });
 
 void test("a blocked retry with a changed worker choice rebinds to a new agent with a handoff", async () => {
@@ -1972,13 +2046,15 @@ void test("failure kinds separate server settlements, plain failures, and launch
   server.active.set(serverAttempt.agentId, false);
   await server.reconcile();
   const settled = latestAttempt(await server.read(serverPlan.id), "a");
-  assert.equal(settled?.state, "blocked");
-  assert.equal(settled?.blockedBy, "server");
-  assert.equal(
-    notificationSummary(server, serverPlan.id, serverPlan.source.agentId)[0]
-      ?.kind,
-    "no-report",
-  );
+  assert.equal(settled?.state, "failed");
+  assert.equal(settled?.reportedBy, "server");
+  const serverSummary = notificationSummary(
+    server,
+    serverPlan.id,
+    serverPlan.source.agentId,
+  )[0];
+  assert.equal(serverSummary?.kind, "no-report");
+  assert.equal(serverSummary?.diagnosis?.need, "harness");
 
   const plain = await fixture();
   const plainPlan = await plain.start("plain");
@@ -2282,14 +2358,14 @@ void test("a changed worker choice on an uncertain launch is refused before any 
   const a = latestAttempt(current, "a");
   assert.ok(a && plan.source.agentId);
   assert.equal(a.launch?.state, "uncertain");
-  // The lost launch never appears, so the bounded re-check settles it blocked.
+  // The lost launch never appears, so the bounded re-check settles it failed.
   f.launches.delete(a.agentId);
   f.active.set(a.agentId, false);
   await f.reconcile();
-  const blocked = latestAttempt(await f.read(plan.id), "a");
-  assert.equal(blocked?.state, "blocked");
-  assert.equal(blocked?.launch?.state, "uncertain");
-  assert.equal(blocked?.launch?.settled, true);
+  const failed = latestAttempt(await f.read(plan.id), "a");
+  assert.equal(failed?.state, "failed");
+  assert.equal(failed?.launch?.state, "uncertain");
+  assert.equal(failed?.launch?.settled, true);
   const before = await f.read(plan.id);
   await assert.rejects(
     f.send(plan.source.agentId, {
@@ -2310,7 +2386,7 @@ void test("a changed worker choice on an uncertain launch is refused before any 
   );
   const unchanged = latestAttempt(after, "a");
   assert.equal(unchanged?.agentId, a.agentId);
-  assert.equal(unchanged?.state, "blocked");
+  assert.equal(unchanged?.state, "failed");
   assert.equal(unchanged?.launch?.state, "uncertain");
   assert.equal(unchanged?.launch?.provider, a.launch?.provider);
   // Dispatching without a replacement still reconciles the saved identity.
@@ -2350,4 +2426,1339 @@ void test("an uncertain launch reconciles when the same worker choice is dispatc
   assert.equal(reconciled?.id, a.id);
   assert.equal(reconciled?.agentId, a.agentId);
   assert.equal(reconciled?.launch?.state, "started");
+});
+
+// === Review loops ===
+
+/** The latest Conductor message wake for one symphony. */
+function conductorWake(
+  f: OrchestrationFixture,
+  symphonyId: string,
+  conductorId: string,
+) {
+  return f.wakePrompts
+    .filter(
+      (entry) =>
+        entry.agentId === conductorId &&
+        entry.prompt.startsWith(`Conductor symphony ${symphonyId}:`),
+    )
+    .at(-1);
+}
+
+void test("loops reopen the owning task and re-run its review until the loop succeeds", async () => {
+  const f = await fixture();
+  const plan = await f.start("loop-flow");
+  assert.ok(plan.source.agentId);
+  let symphony = await f.define(plan, [
+    task("api", [], ["src/api"]),
+    reviewTask("review", ["api"]),
+  ]);
+  const api = latestAttempt(symphony, "api");
+  assert.ok(api);
+
+  // Loop 1: the writer completes and the review finds a blocking defect.
+  await f.report(plan.id, "api");
+  f.active.set(api.agentId, false);
+  await f.reconcile();
+  const review1 = latestAttempt(await f.read(plan.id), "review");
+  assert.ok(review1);
+  await f.send(review1.agentId, {
+    kind: "report",
+    symphonyId: plan.id,
+    attemptId: review1.id,
+    report: needsChangesReport(),
+  });
+  f.active.set(review1.agentId, false);
+  await f.reconcile();
+  assert.ok(f.wakes.includes(`${plan.source.agentId}:${plan.id}:loop-end:1`));
+  assert.match(
+    conductorWake(f, plan.id, plan.source.agentId)?.prompt ?? "",
+    /Loop 1 needs changes: 1 blocking finding \[F1 \(api\)\]/,
+  );
+
+  // Loop 2: reopen the owner with the finding on its existing agent.
+  await f.send(plan.source.agentId, {
+    kind: "loop",
+    symphonyId: plan.id,
+    reason: "Fix F1",
+    reopen: [
+      { taskId: "api", findings: ["review#F1"], note: "Validate first" },
+    ],
+  });
+  symphony = await f.read(plan.id);
+  const api2 = latestAttempt(symphony, "api");
+  assert.ok(api2);
+  assert.equal(api2.loop, 2);
+  assert.equal(api2.agentId, api.agentId);
+  assert.deepEqual(
+    api2.reopen?.findings.map((entry) => entry.id),
+    ["F1"],
+  );
+  const reopened = f.wakePrompts.find(
+    (entry) => entry.key === `continue:${api2.id}`,
+  );
+  assert.ok(reopened);
+  assert.match(reopened.prompt, /Findings to address:/);
+  assert.match(reopened.prompt, /concertId is validated after its lookup/);
+  assert.match(reopened.prompt, /Conductor note: Validate first/);
+  // The review waits for the reopened owner.
+  assert.equal(latestAttempt(symphony, "review")?.id, review1.id);
+
+  await f.report(plan.id, "api");
+  f.active.set(api2.agentId, false);
+  await f.reconcile();
+  const review2 = latestAttempt(await f.read(plan.id), "review");
+  assert.ok(review2 && review2.id !== review1.id);
+  assert.equal(review2.loop, 2);
+  assert.equal(review2.recheck, true);
+  const rechecked = f.wakePrompts.find(
+    (entry) => entry.key === `continue:${review2.id}`,
+  );
+  assert.ok(rechecked);
+  assert.match(rechecked.prompt, /Prerequisite api changed in loop 2/);
+  assert.match(rechecked.prompt, /Previous loop findings to confirm fixed:/);
+
+  // The review repeats the same finding, so the wake recommends asking the user.
+  await f.send(review2.agentId, {
+    kind: "report",
+    symphonyId: plan.id,
+    attemptId: review2.id,
+    report: needsChangesReport(),
+  });
+  f.active.set(review2.agentId, false);
+  await f.reconcile();
+  assert.ok(f.wakes.includes(`${plan.source.agentId}:${plan.id}:loop-end:2`));
+  assert.match(
+    conductorWake(f, plan.id, plan.source.agentId)?.prompt ?? "",
+    /repeat the previous loop/,
+  );
+
+  // Loop 3: reopen again and the review now completes.
+  await f.send(plan.source.agentId, {
+    kind: "loop",
+    symphonyId: plan.id,
+    reason: "Fix F1 again",
+    reopen: [{ taskId: "api", findings: ["review#F1"] }],
+  });
+  symphony = await f.read(plan.id);
+  const api3 = latestAttempt(symphony, "api");
+  assert.ok(api3);
+  assert.equal(api3.loop, 3);
+  await f.report(plan.id, "api");
+  f.active.set(api3.agentId, false);
+  await f.reconcile();
+  const review3 = latestAttempt(await f.read(plan.id), "review");
+  assert.ok(review3 && review3.id !== review2.id);
+  assert.equal(review3.loop, 3);
+  await f.report(plan.id, "review", "completed", {
+    summary: "No blocking findings",
+  });
+  f.active.set(review3.agentId, false);
+  await f.reconcile();
+  assert.ok(f.wakes.includes(`${plan.source.agentId}:${plan.id}:loop-end:3`));
+  assert.match(
+    conductorWake(f, plan.id, plan.source.agentId)?.prompt ?? "",
+    /Loop 3 succeeded/,
+  );
+  await f.send(plan.source.agentId, {
+    kind: "finish",
+    symphonyId: plan.id,
+    summary: "All loops succeeded",
+  });
+  assert.equal((await f.read(plan.id)).status, "completed");
+});
+
+void test("a reopened task re-runs its transitive dependents with a short re-check", async () => {
+  const f = await fixture();
+  const plan = await f.start("dependents");
+  assert.ok(plan.source.agentId);
+  await f.define(plan, [
+    { ...task("api", [], ["src/api"]), reads: ["src"] },
+    { ...task("collect", ["api"]), reads: ["src"], writes: [] },
+    reviewTask("review", ["collect"]),
+  ]);
+  const api = latestAttempt(await f.read(plan.id), "api");
+  assert.ok(api);
+  await f.report(plan.id, "api");
+  f.active.set(api.agentId, false);
+  await f.reconcile();
+  const collect1 = latestAttempt(await f.read(plan.id), "collect");
+  assert.ok(collect1);
+  await f.report(plan.id, "collect");
+  f.active.set(collect1.agentId, false);
+  await f.reconcile();
+  const review1 = latestAttempt(await f.read(plan.id), "review");
+  assert.ok(review1);
+  await f.send(review1.agentId, {
+    kind: "report",
+    symphonyId: plan.id,
+    attemptId: review1.id,
+    report: needsChangesReport(),
+  });
+  f.active.set(review1.agentId, false);
+  await f.reconcile();
+
+  await f.send(plan.source.agentId, {
+    kind: "loop",
+    symphonyId: plan.id,
+    reason: "Fix F1",
+    reopen: [{ taskId: "api", findings: ["review#F1"] }],
+  });
+  const api2 = latestAttempt(await f.read(plan.id), "api");
+  assert.ok(api2);
+  assert.equal(api2.loop, 2);
+  // collect still holds its loop-1 attempt until api settles.
+  assert.equal(
+    latestAttempt(await f.read(plan.id), "collect")?.id,
+    collect1.id,
+  );
+  await f.report(plan.id, "api");
+  f.active.set(api2.agentId, false);
+  await f.reconcile();
+  const collect2 = latestAttempt(await f.read(plan.id), "collect");
+  assert.ok(collect2 && collect2.id !== collect1.id);
+  assert.equal(collect2.loop, 2);
+  assert.equal(collect2.recheck, true);
+  const recheck = f.wakePrompts.find(
+    (entry) => entry.key === `continue:${collect2.id}`,
+  );
+  assert.ok(recheck);
+  assert.match(recheck.prompt, /Prerequisite api changed in loop 2/);
+  // The review waits for collect and then re-checks with the previous findings.
+  assert.equal(latestAttempt(await f.read(plan.id), "review")?.id, review1.id);
+  await f.report(plan.id, "collect");
+  f.active.set(collect2.agentId, false);
+  await f.reconcile();
+  const review2 = latestAttempt(await f.read(plan.id), "review");
+  assert.ok(review2 && review2.id !== review1.id);
+  assert.equal(review2.loop, 2);
+  assert.equal(review2.recheck, true);
+});
+
+void test("loop is refused before a needs-changes loop ends and for uncovered items", async () => {
+  const f = await fixture();
+  const plan = await f.start("preconditions");
+  assert.ok(plan.source.agentId);
+  const symphony = await f.define(plan, [task("api", [], ["src/api"])]);
+  await assert.rejects(
+    f.send(plan.source.agentId, {
+      kind: "loop",
+      symphonyId: plan.id,
+      reason: "Too soon",
+      reopen: [],
+    }),
+    /only after the current loop ends/,
+  );
+  const api = latestAttempt(symphony, "api");
+  assert.ok(api);
+  await f.send(api.agentId, {
+    kind: "report",
+    symphonyId: plan.id,
+    attemptId: api.id,
+    report: needsChangesReport(),
+  });
+  f.active.set(api.agentId, false);
+  await f.reconcile();
+  await assert.rejects(
+    f.send(plan.source.agentId, {
+      kind: "loop",
+      symphonyId: plan.id,
+      reason: "Unknown task",
+      reopen: [{ taskId: "missing" }],
+    }),
+    /Unknown task/,
+  );
+  await assert.rejects(
+    f.send(plan.source.agentId, {
+      kind: "loop",
+      symphonyId: plan.id,
+      reason: "Bad reference",
+      reopen: [{ taskId: "api", findings: ["review#nope"] }],
+    }),
+    /Unknown finding/,
+  );
+  await assert.rejects(
+    f.send(plan.source.agentId, {
+      kind: "loop",
+      symphonyId: plan.id,
+      reason: "Uncovered",
+      reopen: [],
+    }),
+    /must reopen or defer every open item: finding api#F1/,
+  );
+});
+
+void test("loop past the budget needs a recorded user approval", async () => {
+  const f = await fixture();
+  const limited = await f.orchestrate("budget", {
+    conductor: "agent",
+    maxLoops: 1,
+  });
+  assert.ok("symphony" in limited);
+  const plan = limited.symphony;
+  assert.ok(plan.source.agentId);
+  assert.equal(plan.execution.conducting?.maxLoops, 1);
+  const symphony = await f.define(plan, [task("api", [], ["src/api"])]);
+  const api = latestAttempt(symphony, "api");
+  assert.ok(api);
+  await f.send(api.agentId, {
+    kind: "report",
+    symphonyId: plan.id,
+    attemptId: api.id,
+    report: {
+      outcome: "needs-changes",
+      summary: "Checks still red.",
+      evidence: ["Ran the checks"],
+      checks: [{ name: "Regression", status: "failed", detail: "Still red." }],
+    },
+  });
+  f.active.set(api.agentId, false);
+  await f.reconcile();
+  assert.match(
+    conductorWake(f, plan.id, plan.source.agentId)?.prompt ?? "",
+    /loop budget \(1\) is used/,
+  );
+  await assert.rejects(
+    f.send(plan.source.agentId, {
+      kind: "loop",
+      symphonyId: plan.id,
+      reason: "Fix the check",
+      reopen: [{ taskId: "api" }],
+    }),
+    /exceeds the loop budget/,
+  );
+  await f.send(plan.source.agentId, {
+    kind: "loop",
+    symphonyId: plan.id,
+    reason: "Fix the check",
+    reopen: [{ taskId: "api" }],
+    approval: { loops: 2, userAnswer: "Continue, we ship Friday." },
+  });
+  const looped = await f.read(plan.id);
+  assert.equal(
+    looped.execution.conducting?.loops?.[0]?.approval?.userAnswer,
+    "Continue, we ship Friday.",
+  );
+  assert.equal(currentLoop(looped), 2);
+  assert.equal(latestAttempt(looped, "api")?.loop, 2);
+});
+
+void test("a failed task is retried at most twice per loop, then asks the user", async () => {
+  const f = await fixture();
+  const plan = await f.start("retry-limit");
+  assert.ok(plan.source.agentId);
+  const symphony = await f.define(plan, [task("a", [], ["src/a"])]);
+  const a = latestAttempt(symphony, "a");
+  assert.ok(a);
+  await f.report(plan.id, "a", "failed");
+  f.active.set(a.agentId, false);
+  await f.reconcile();
+  for (let round = 0; round < 2; round += 1) {
+    await f.send(plan.source.agentId, {
+      kind: "dispatch",
+      symphonyId: plan.id,
+      retryTaskId: "a",
+    });
+    const retry = latestAttempt(await f.read(plan.id), "a");
+    assert.ok(retry);
+    await f.report(plan.id, "a", "failed");
+    f.active.set(retry.agentId, false);
+    await f.reconcile();
+  }
+  const attempts = (await f.read(plan.id)).execution.attempts.filter(
+    (entry) => entry.state === "failed",
+  );
+  assert.equal(attempts.length, 3);
+  await assert.rejects(
+    f.send(plan.source.agentId, {
+      kind: "dispatch",
+      symphonyId: plan.id,
+      retryTaskId: "a",
+    }),
+    /used its 2 failed retries/,
+  );
+});
+
+void test("finish with unresolved covers the open work and ends the symphony failed", async () => {
+  const f = await fixture();
+  const limited = await f.orchestrate("stop", {
+    conductor: "agent",
+    maxLoops: 1,
+  });
+  assert.ok("symphony" in limited);
+  const plan = limited.symphony;
+  assert.ok(plan.source.agentId);
+  const symphony = await f.define(plan, [task("api", [], ["src/api"])]);
+  const api = latestAttempt(symphony, "api");
+  assert.ok(api);
+  await f.send(api.agentId, {
+    kind: "report",
+    symphonyId: plan.id,
+    attemptId: api.id,
+    report: needsChangesReport(),
+  });
+  f.active.set(api.agentId, false);
+  await f.reconcile();
+  await assert.rejects(
+    f.send(plan.source.agentId, {
+      kind: "finish",
+      symphonyId: plan.id,
+      summary: "Stop",
+    }),
+    /completed report for every task/,
+  );
+  await assert.rejects(
+    f.send(plan.source.agentId, {
+      kind: "finish",
+      symphonyId: plan.id,
+      summary: "Stop",
+      unresolved: [{ taskId: "api", reason: "User stopped" }],
+    }),
+    /finding api#F1 is not listed/,
+  );
+  await f.send(plan.source.agentId, {
+    kind: "finish",
+    symphonyId: plan.id,
+    summary: "Stopped by the user",
+    unresolved: [
+      { finding: "api#F1", reason: "User stopped" },
+      { taskId: "api", reason: "User stopped" },
+    ],
+  });
+  const stopped = await f.read(plan.id);
+  assert.equal(stopped.status, "failed");
+  assert.equal(stopped.execution.unresolved?.length, 2);
+});
+
+/** Sends a report for a task's latest attempt and lets its agent stop. */
+async function reportAndSettle(
+  f: OrchestrationFixture,
+  symphonyId: string,
+  taskId: string,
+  report: Record<string, unknown>,
+) {
+  const attempt = latestAttempt(await f.read(symphonyId), taskId);
+  assert.ok(attempt);
+  await f.send(attempt.agentId, {
+    kind: "report",
+    symphonyId,
+    attemptId: attempt.id,
+    report: {
+      summary: "Inspected assignment",
+      evidence: ["Verified concrete fixture result"],
+      checks: [],
+      ...report,
+    },
+  });
+  f.active.set(attempt.agentId, false);
+  await f.reconcile();
+  return attempt;
+}
+
+/** Runs api then a review that reports blocking finding F1 against api. */
+async function firstLoopNeedsChanges(f: OrchestrationFixture, key: string) {
+  const plan = await f.start(key);
+  assert.ok(plan.source.agentId);
+  await f.define(plan, [
+    task("api", [], ["src/api"]),
+    reviewTask("review", ["api"]),
+  ]);
+  await reportAndSettle(f, plan.id, "api", { outcome: "completed" });
+  await reportAndSettle(f, plan.id, "review", needsChangesReport());
+  return { plan, conductor: plan.source.agentId };
+}
+
+void test("a refused loop leaves the symphony unchanged and rejects loop cycles", async () => {
+  const f = await fixture();
+  const { plan, conductor } = await firstLoopNeedsChanges(f, "atomic");
+  const before = await f.read(plan.id);
+  f.setValidate((score) => {
+    if (score.tasks.some((entry) => entry.writes.includes("link/file"))) {
+      throw new SymphonyError("Symlink disallowed");
+    }
+  });
+  await assert.rejects(
+    f.send(conductor, {
+      kind: "loop",
+      symphonyId: plan.id,
+      reason: "Fix F1",
+      reopen: [
+        { taskId: "api", findings: ["review#F1"], addWrites: ["link/file"] },
+      ],
+    }),
+    /Symlink disallowed/,
+  );
+  // `after` edges join the loop graph: api after review, review after api.
+  await assert.rejects(
+    f.send(conductor, {
+      kind: "loop",
+      symphonyId: plan.id,
+      reason: "Cycle",
+      reopen: [{ taskId: "api", findings: ["review#F1"], after: ["review"] }],
+    }),
+    /must not contain a cycle/,
+  );
+  await assert.rejects(
+    f.send(conductor, {
+      kind: "loop",
+      symphonyId: plan.id,
+      reason: "Twice",
+      reopen: [
+        { taskId: "api", findings: ["review#F1"] },
+        { taskId: "api", findings: [] },
+      ],
+    }),
+    /reopened more than once/,
+  );
+  const after = await f.read(plan.id);
+  assert.equal(after.version, before.version, "a refused loop mutates nothing");
+  assert.equal(after.execution.conducting?.loops, undefined);
+  // The same command without the refused scope is accepted afterwards.
+  f.setValidate(() => {});
+  await f.send(conductor, {
+    kind: "loop",
+    symphonyId: plan.id,
+    reason: "Fix F1",
+    reopen: [{ taskId: "api", findings: ["review#F1"] }],
+  });
+  assert.equal(latestAttempt(await f.read(plan.id), "api")?.loop, 2);
+});
+
+void test("a delayed reopen keeps its note and added writes until it starts", async () => {
+  const f = await fixture();
+  const { plan, conductor } = await firstLoopNeedsChanges(f, "delayed");
+  const api1 = latestAttempt(await f.read(plan.id), "api");
+  assert.ok(api1);
+  await f.send(conductor, {
+    kind: "loop",
+    symphonyId: plan.id,
+    reason: "Plan, then fix F1",
+    tasks: [
+      {
+        id: "plan-2",
+        title: "Plan the fix",
+        description: "Decide where validation belongs",
+        dependsOn: [],
+        reads: ["src"],
+        writes: [],
+        checks: [],
+        profile: "Small",
+      },
+    ],
+    reopen: [
+      {
+        taskId: "api",
+        findings: ["review#F1"],
+        note: "DO THIS NOTE",
+        addWrites: ["src/extra"],
+        after: ["plan-2"],
+      },
+    ],
+  });
+  let symphony = await f.read(plan.id);
+  // api waits for its loop-only prerequisite; plan-2 starts.
+  assert.equal(latestAttempt(symphony, "api")?.id, api1.id);
+  assert.ok(latestAttempt(symphony, "plan-2"));
+  await reportAndSettle(f, plan.id, "plan-2", { outcome: "completed" });
+  symphony = await f.read(plan.id);
+  const api2 = latestAttempt(symphony, "api");
+  assert.ok(api2 && api2.id !== api1.id);
+  assert.equal(api2.loop, 2);
+  assert.deepEqual(
+    api2.addedWrites?.map((grant) => grant.path),
+    ["src/extra"],
+  );
+  assert.deepEqual(
+    api2.reopen?.findings.map((finding) => finding.summary),
+    [blockingFinding.summary],
+  );
+  const prompt = f.wakePrompts.find(
+    (entry) => entry.key === `continue:${api2.id}`,
+  )?.prompt;
+  assert.ok(prompt);
+  assert.match(prompt, /Conductor note: DO THIS NOTE/);
+  assert.match(prompt, /added: src\/extra/);
+  assert.match(prompt, /concertId is validated after its lookup/);
+});
+
+void test("an unsettled needs-changes report keeps the loop open and the review waiting", async () => {
+  const f = await fixture();
+  const plan = await f.start("unsettled");
+  assert.ok(plan.source.agentId);
+  const symphony = await f.define(plan, [
+    task("api", [], ["src/api"]),
+    reviewTask("review", ["api"]),
+  ]);
+  const api = latestAttempt(symphony, "api");
+  assert.ok(api);
+  await f.send(api.agentId, {
+    kind: "report",
+    symphonyId: plan.id,
+    attemptId: api.id,
+    report: needsChangesReport({ ...blockingFinding, taskId: "api" }),
+  });
+  // The task agent is still running after its report.
+  await f.reconcile();
+  assert.equal(latestAttempt(await f.read(plan.id), "review"), undefined);
+  await assert.rejects(
+    f.send(plan.source.agentId, {
+      kind: "loop",
+      symphonyId: plan.id,
+      reason: "Too soon",
+      reopen: [{ taskId: "api", findings: ["api#F1"] }],
+    }),
+    /only after the current loop ends/,
+  );
+  f.active.set(api.agentId, false);
+  await f.reconcile();
+  assert.ok(latestAttempt(await f.read(plan.id), "review"));
+});
+
+void test("the re-running review receives an owner's own finding after the owner is reopened", async () => {
+  const f = await fixture();
+  const plan = await f.start("self-finding");
+  assert.ok(plan.source.agentId);
+  await f.define(plan, [
+    task("api", [], ["src/api"]),
+    reviewTask("review", ["api"]),
+  ]);
+  const selfFinding = {
+    id: "F9",
+    severity: "blocking" as const,
+    paths: ["src/api.ts:9"],
+    summary: "The api contract test still fails.",
+  };
+  await reportAndSettle(f, plan.id, "api", {
+    outcome: "needs-changes",
+    findings: [selfFinding],
+  });
+  await reportAndSettle(f, plan.id, "review", { outcome: "completed" });
+  await f.send(plan.source.agentId, {
+    kind: "loop",
+    symphonyId: plan.id,
+    reason: "Fix F9",
+    reopen: [{ taskId: "api", findings: ["api#F9"] }],
+  });
+  await reportAndSettle(f, plan.id, "api", { outcome: "completed" });
+  const review2 = latestAttempt(await f.read(plan.id), "review");
+  assert.ok(review2 && review2.loop === 2);
+  const prompt = f.wakePrompts.find(
+    (entry) => entry.key === `continue:${review2.id}`,
+  )?.prompt;
+  assert.ok(prompt);
+  assert.match(prompt, /Previous loop findings to confirm fixed:/);
+  assert.match(prompt, /The api contract test still fails\./);
+});
+
+void test("findings from two reviewers with the same id resolve by reporter", async () => {
+  const f = await fixture();
+  const plan = await f.start("two-reviewers");
+  assert.ok(plan.source.agentId);
+  await f.define(plan, [
+    task("api", [], ["src/api"]),
+    reviewTask("r1", ["api"]),
+    reviewTask("r2", ["api"]),
+  ]);
+  await reportAndSettle(f, plan.id, "api", { outcome: "completed" });
+  await reportAndSettle(
+    f,
+    plan.id,
+    "r1",
+    needsChangesReport({ ...blockingFinding, summary: "First defect" }),
+  );
+  await reportAndSettle(
+    f,
+    plan.id,
+    "r2",
+    needsChangesReport({ ...blockingFinding, summary: "Second defect" }),
+  );
+  await assert.rejects(
+    f.send(plan.source.agentId, {
+      kind: "loop",
+      symphonyId: plan.id,
+      reason: "Ambiguous",
+      reopen: [{ taskId: "api", findings: ["F1"] }],
+    }),
+    /ambiguous; name it as r1#F1 or r2#F1/,
+  );
+  await f.send(plan.source.agentId, {
+    kind: "loop",
+    symphonyId: plan.id,
+    reason: "Fix both",
+    reopen: [{ taskId: "api", findings: ["r1#F1", "r2#F1"] }],
+  });
+  const api2 = latestAttempt(await f.read(plan.id), "api");
+  assert.deepEqual(
+    api2?.reopen?.findings.map((finding) => finding.summary),
+    ["First defect", "Second defect"],
+  );
+});
+
+void test("a deferred finding is carried to later loops until it is reopened", async () => {
+  const f = await fixture();
+  const plan = await f.start("deferred");
+  assert.ok(plan.source.agentId);
+  await f.define(plan, [
+    task("api", [], ["src/api"]),
+    task("ui", [], ["src/ui"]),
+  ]);
+  const own = (id: string, summary: string) => ({
+    outcome: "needs-changes",
+    findings: [{ id, severity: "blocking", paths: ["src/x.ts:1"], summary }],
+  });
+  await reportAndSettle(f, plan.id, "api", own("F1", "api defect"));
+  await reportAndSettle(f, plan.id, "ui", own("F2", "ui defect"));
+  await f.send(plan.source.agentId, {
+    kind: "loop",
+    symphonyId: plan.id,
+    reason: "Fix ui only",
+    reopen: [{ taskId: "ui", findings: ["ui#F2"] }],
+    deferred: [
+      { finding: "api#F1", reason: "Needs a user decision" },
+      { taskId: "api", reason: "Needs a user decision" },
+    ],
+  });
+  await reportAndSettle(f, plan.id, "ui", { outcome: "completed" });
+  // Loop 2 ends needing changes because the deferred finding is still open.
+  assert.ok(f.wakes.includes(`${plan.source.agentId}:${plan.id}:loop-end:2`));
+  assert.match(
+    conductorWake(f, plan.id, plan.source.agentId)?.prompt ?? "",
+    /Loop 2 needs changes: 1 blocking finding \[F1 \(api\)\]/,
+  );
+  await assert.rejects(
+    f.send(plan.source.agentId, {
+      kind: "loop",
+      symphonyId: plan.id,
+      reason: "Drop it",
+      reopen: [],
+    }),
+    /must reopen or defer every open item: finding api#F1, task api/,
+  );
+  await f.send(plan.source.agentId, {
+    kind: "loop",
+    symphonyId: plan.id,
+    reason: "Now fix api",
+    reopen: [{ taskId: "api", findings: ["api#F1"] }],
+  });
+  const api3 = latestAttempt(await f.read(plan.id), "api");
+  assert.equal(api3?.loop, 3);
+  assert.deepEqual(
+    api3?.reopen?.findings.map((finding) => finding.summary),
+    ["api defect"],
+  );
+});
+
+void test("finish with unresolved waits for agents to stop and then releases their scope", async () => {
+  const f = await fixture();
+  const plan = await f.start("stop");
+  assert.ok(plan.source.agentId);
+  const symphony = await f.define(plan, [task("api", [], ["src/api"])]);
+  const api = latestAttempt(symphony, "api");
+  assert.ok(api);
+  const stop = {
+    kind: "finish",
+    symphonyId: plan.id,
+    summary: "The user stopped the work.",
+    unresolved: [{ taskId: "api", reason: "The user stopped." }],
+  };
+  await assert.rejects(
+    f.send(plan.source.agentId, stop),
+    /every task agent to stop and settle first; task "api"/,
+  );
+  await f.send(api.agentId, {
+    kind: "block",
+    symphonyId: plan.id,
+    attemptId: api.id,
+    message: "Waiting for the user",
+  });
+  f.active.set(api.agentId, false);
+  await f.reconcile();
+  await f.send(plan.source.agentId, stop);
+  assert.equal((await f.read(plan.id)).status, "failed");
+  // The stopped report-less attempt no longer owns src/api.
+  const next = await f.start("after-stop");
+  const started = await f.define(next, [task("api2", [], ["src/api"])]);
+  assert.ok(latestAttempt(started, "api2"));
+});
+
+void test("a loop reopen keeps the worker choice a successful retry used", async () => {
+  const f = await fixture();
+  const plan = await f.start("choice");
+  assert.ok(plan.source.agentId);
+  await f.define(plan, [
+    task("api", [], ["src/api"]),
+    reviewTask("review", ["api"]),
+  ]);
+  await reportAndSettle(f, plan.id, "api", { outcome: "failed" });
+  await f.send(plan.source.agentId, {
+    kind: "dispatch",
+    symphonyId: plan.id,
+    retryTaskId: "api",
+    provider: "fake",
+    model: "other",
+  });
+  const retried = await reportAndSettle(f, plan.id, "api", {
+    outcome: "completed",
+  });
+  assert.equal(retried.launch?.model, "other");
+  await reportAndSettle(f, plan.id, "review", needsChangesReport());
+  await f.send(plan.source.agentId, {
+    kind: "loop",
+    symphonyId: plan.id,
+    reason: "Fix F1",
+    reopen: [{ taskId: "api", findings: ["review#F1"] }],
+  });
+  const continued = latestAttempt(await f.read(plan.id), "api");
+  assert.equal(continued?.loop, 2);
+  assert.equal(continued?.agentId, retried.agentId);
+  assert.equal(continued?.launch?.model, "other");
+  // When that agent can no longer receive a message, the new agent keeps it.
+  await reportAndSettle(f, plan.id, "api", { outcome: "completed" });
+  await reportAndSettle(f, plan.id, "review", needsChangesReport());
+  f.undeliverable.add(retried.agentId);
+  await f.send(plan.source.agentId, {
+    kind: "loop",
+    symphonyId: plan.id,
+    reason: "Fix F1 again",
+    reopen: [{ taskId: "api", findings: ["review#F1"] }],
+  });
+  const replaced = latestAttempt(await f.read(plan.id), "api");
+  assert.equal(replaced?.loop, 3);
+  assert.notEqual(replaced?.agentId, retried.agentId);
+  assert.equal(replaced?.launch?.model, "other");
+});
+
+void test("an unconfirmed launch keeps its fence after it fails until its agent appears", async () => {
+  const f = await fixture();
+  const plan = await f.start("uncertain-fence");
+  assert.ok(plan.source.agentId);
+  f.loseAck();
+  const symphony = await f.define(plan, [
+    task("api", [], ["src/api"]),
+    task("ui", [], ["src/api"]),
+  ]);
+  const api = latestAttempt(symphony, "api");
+  assert.ok(api);
+  // The creation acknowledgement was lost and the identity checks run out.
+  f.workers.launchCheckDelaysMs = [0];
+  f.workers.inspect = async () => ({
+    exists: false,
+    active: false,
+    deliverable: false,
+  });
+  await f.reconcile();
+  await f.reconcile();
+  await f.reconcile();
+  let current = await f.read(plan.id);
+  const failed = latestAttempt(current, "api");
+  assert.equal(failed?.state, "failed");
+  assert.equal(failed?.reportedBy, "server");
+  assert.equal(failed?.launch?.state, "uncertain");
+  assert.equal(failed?.launch?.settled, true);
+  // The first creation may still land, so no second writer starts.
+  assert.equal(latestAttempt(current, "ui"), undefined);
+  await assert.rejects(
+    f.send(plan.source.agentId, {
+      kind: "finish",
+      symphonyId: plan.id,
+      summary: "Stop",
+      unresolved: [
+        { taskId: "api", reason: "Stopped" },
+        { taskId: "ui", reason: "Stopped" },
+      ],
+    }),
+    /task "api" has an unconfirmed launch/,
+  );
+  // The delayed agent appears: the attempt runs again on it, still fenced.
+  f.workers.inspect = async (id) => ({
+    exists: f.launches.has(id),
+    active: f.active.get(id) ?? false,
+    deliverable: f.launches.has(id),
+  });
+  await f.reconcile();
+  current = await f.read(plan.id);
+  const adopted = latestAttempt(current, "api");
+  assert.equal(adopted?.id, api.id);
+  assert.equal(adopted?.state, "running");
+  assert.equal(adopted?.report, null);
+  assert.equal(adopted?.reportedBy, undefined);
+  assert.equal(adopted?.launch?.state, "started");
+  assert.equal(adopted?.launch?.settled, false);
+  assert.equal(latestAttempt(current, "ui"), undefined);
+  // Only after the agent reports and stops does the other writer start.
+  await f.report(plan.id, "api");
+  f.active.set(api.agentId, false);
+  await f.reconcile();
+  current = await f.read(plan.id);
+  assert.equal(latestAttempt(current, "api")?.state, "completed");
+  assert.ok(latestAttempt(current, "ui"));
+});
+
+void test("every prior finding is captured per reporter beyond one report's limit", async () => {
+  const f = await fixture();
+  const plan = await f.start("many-findings");
+  assert.ok(plan.source.agentId);
+  await f.define(plan, [
+    task("api", [], ["src/api"]),
+    reviewTask("r1", ["api"]),
+    reviewTask("r2", ["api"]),
+  ]);
+  await reportAndSettle(f, plan.id, "api", { outcome: "completed" });
+  const finding = (id: string, line: number) => ({
+    ...blockingFinding,
+    id,
+    paths: [`src/api.ts:${line}`],
+    summary: `Defect ${id} in the api.`,
+  });
+  const many = Array.from({ length: 24 }, (_, index) =>
+    finding(`F${index + 1}`, index + 1),
+  );
+  await reportAndSettle(f, plan.id, "r1", {
+    ...needsChangesReport(),
+    findings: many,
+  });
+  await reportAndSettle(
+    f,
+    plan.id,
+    "r2",
+    needsChangesReport(finding("G1", 99)),
+  );
+  await f.send(plan.source.agentId, {
+    kind: "loop",
+    symphonyId: plan.id,
+    reason: "Fix every defect",
+    reopen: [{ taskId: "api" }],
+  });
+  let symphony = await f.read(plan.id);
+  const record = symphony.execution.conducting?.loops?.at(-1);
+  assert.deepEqual(
+    record?.previousReports?.map((entry) => [
+      entry.reporterTaskId,
+      entry.findings.length,
+    ]),
+    [
+      ["r1", 24],
+      ["r2", 1],
+    ],
+  );
+  await reportAndSettle(f, plan.id, "api", { outcome: "completed" });
+  symphony = await f.read(plan.id);
+  const prompt = (taskId: string) => {
+    const attempt = latestAttempt(symphony, taskId);
+    assert.ok(attempt && attempt.loop === 2);
+    const wake = f.wakePrompts.find(
+      (entry) => entry.key === `continue:${attempt.id}`,
+    )?.prompt;
+    assert.ok(wake);
+    return wake;
+  };
+  // Each review gets every finding it reported, with reporter-qualified ids.
+  const r1 = prompt("r1");
+  for (const entry of many) {
+    assert.ok(r1.includes(`- r1#${entry.id} [blocking]`), entry.id);
+  }
+  assert.match(r1, /1 more previous finding from other reporters/);
+  const r2 = prompt("r2");
+  assert.match(r2, /- r2#G1 \[blocking\] task api/);
+  assert.match(r2, /- r1#F1 \[blocking\]/);
+  assert.match(
+    r2,
+    /1 more previous finding from other reporters is not listed/,
+  );
+  // History counts the whole snapshot, not one report's limit.
+  assert.equal(historyLoops(symphony)[0]?.blocking, 25);
+});
+
+void test("same-agent continuations carry the current prerequisite results", async () => {
+  const f = await fixture();
+  const { plan, conductor } = await firstLoopNeedsChanges(f, "current-results");
+  await f.send(conductor, {
+    kind: "loop",
+    symphonyId: plan.id,
+    reason: "Fix F1",
+    reopen: [{ taskId: "api", findings: ["review#F1"] }],
+  });
+  // The reopened owner finds a new defect of its own and a failing check.
+  await reportAndSettle(f, plan.id, "api", {
+    outcome: "needs-changes",
+    summary: "F1 is fixed but the contract broke.",
+    checks: [{ name: "contract", status: "failed", detail: "Schema mismatch" }],
+    findings: [
+      {
+        id: "F2",
+        severity: "blocking",
+        paths: ["src/api.ts:7"],
+        summary: "The response schema drifted.",
+      },
+    ],
+  });
+  const review = latestAttempt(await f.read(plan.id), "review");
+  assert.ok(review && review.loop === 2);
+  const prompt = f.wakePrompts.find(
+    (entry) => entry.key === `continue:${review.id}`,
+  )?.prompt;
+  assert.ok(prompt);
+  assert.match(prompt, /Prerequisite results:/);
+  assert.match(prompt, /- api: needs-changes\. F1 is fixed but the contract/);
+  assert.match(
+    prompt,
+    /F2 \[blocking\] at src\/api\.ts:7: The response schema/,
+  );
+  assert.match(prompt, /Failed checks: contract/);
+});
+
+void test("a reopened owner waiting on an after planner receives its result", async () => {
+  const planner = {
+    id: "plan-2",
+    title: "Plan the fix",
+    description: "Decide where validation belongs",
+    dependsOn: [],
+    reads: ["src"],
+    writes: [],
+    checks: [],
+    profile: "Small",
+  };
+  for (const reuse of [true, false]) {
+    const f = await fixture();
+    const { plan, conductor } = await firstLoopNeedsChanges(
+      f,
+      reuse ? "after-continue" : "after-fallback",
+    );
+    const api1 = latestAttempt(await f.read(plan.id), "api");
+    assert.ok(api1);
+    if (!reuse) {
+      f.undeliverable.add(api1.agentId);
+    }
+    await f.send(conductor, {
+      kind: "loop",
+      symphonyId: plan.id,
+      reason: "Plan, then fix F1",
+      tasks: [planner],
+      reopen: [{ taskId: "api", findings: ["review#F1"], after: ["plan-2"] }],
+    });
+    await reportAndSettle(f, plan.id, "plan-2", {
+      outcome: "completed",
+      summary: "Validation belongs in the router.",
+    });
+    const api2 = latestAttempt(await f.read(plan.id), "api");
+    assert.ok(api2 && api2.loop === 2);
+    const prompt = reuse
+      ? f.wakePrompts.find((entry) => entry.key === `continue:${api2.id}`)
+          ?.prompt
+      : f.launches.get(api2.agentId)?.prompt;
+    assert.ok(prompt, reuse ? "continuation" : "fallback assignment");
+    assert.equal(api2.agentId === api1.agentId, reuse);
+    assert.match(
+      prompt,
+      /- plan-2: completed\. Validation belongs in the router\./,
+    );
+  }
+});
+
+void test("a finished symphony refuses late reports and blocks without reopening settlement", async () => {
+  const f = await fixture();
+  const plan = await f.start("late-after-finish");
+  assert.ok(plan.source.agentId);
+  const symphony = await f.define(plan, [
+    task("api", [], ["src/api"]),
+    task("ui"),
+  ]);
+  const api = latestAttempt(symphony, "api");
+  assert.ok(api);
+  // api blocks and stops; the read-only ui completes.
+  await f.send(api.agentId, {
+    kind: "block",
+    symphonyId: plan.id,
+    attemptId: api.id,
+    message: "Waiting for the user",
+  });
+  f.active.set(api.agentId, false);
+  await f.reconcile();
+  const ui = await reportAndSettle(f, plan.id, "ui", { outcome: "completed" });
+  assert.ok(ui);
+  await f.send(plan.source.agentId, {
+    kind: "finish",
+    symphonyId: plan.id,
+    summary: "The user stopped the work.",
+    unresolved: [{ taskId: "api", reason: "The user stopped." }],
+  });
+  const finished = await f.read(plan.id);
+  assert.equal(finished.status, "failed");
+  // The same worker submits late: refused, and the launch stays settled.
+  await assert.rejects(
+    f.report(plan.id, "api"),
+    /symphony is finished; the attempt no longer accepts/,
+  );
+  await assert.rejects(
+    f.send(api.agentId, {
+      kind: "block",
+      symphonyId: plan.id,
+      attemptId: api.id,
+      message: "Still waiting",
+    }),
+    /symphony is finished/,
+  );
+  // An exact replay of a saved report is acknowledged without a change.
+  await f.send(ui.agentId, {
+    kind: "report",
+    symphonyId: plan.id,
+    attemptId: ui.id,
+    report: {
+      outcome: "completed",
+      summary: "Inspected assignment",
+      evidence: ["Verified concrete fixture result"],
+      checks: [],
+    },
+  });
+  const after = await f.read(plan.id);
+  assert.equal(after.version, finished.version);
+  assert.equal(latestAttempt(after, "api")?.launch?.settled, true);
+  assert.equal(latestAttempt(after, "api")?.state, "blocked");
+});
+
+void test("a finished symphony refuses a late report replacing a server failure", async () => {
+  const f = await fixture();
+  const plan = await f.start("late-server-report");
+  assert.ok(plan.source.agentId);
+  const symphony = await f.define(plan, [task("api", [], ["src/api"])]);
+  const api = latestAttempt(symphony, "api");
+  assert.ok(api);
+  // The agent stops twice without a report: nudge, then a server failure.
+  f.active.set(api.agentId, false);
+  await f.reconcile();
+  f.active.set(api.agentId, false);
+  await f.reconcile();
+  const failed = latestAttempt(await f.read(plan.id), "api");
+  assert.equal(failed?.reportedBy, "server");
+  await f.send(plan.source.agentId, {
+    kind: "finish",
+    symphonyId: plan.id,
+    summary: "The user stopped the work.",
+    unresolved: [{ taskId: "api", reason: "The user stopped." }],
+  });
+  const finished = await f.read(plan.id);
+  await assert.rejects(f.report(plan.id, "api"), /symphony is finished/);
+  const after = await f.read(plan.id);
+  assert.equal(after.version, finished.version);
+  assert.equal(latestAttempt(after, "api")?.reportedBy, "server");
+  assert.equal(latestAttempt(after, "api")?.launch?.settled, true);
+});
+
+void test("an explicitly reopened review still confirms its previous findings", async () => {
+  for (const reuse of [true, false]) {
+    const f = await fixture();
+    const { plan, conductor } = await firstLoopNeedsChanges(
+      f,
+      reuse ? "explicit-review-continue" : "explicit-review-fallback",
+    );
+    const review1 = latestAttempt(await f.read(plan.id), "review");
+    assert.ok(review1);
+    if (!reuse) {
+      f.undeliverable.add(review1.agentId);
+    }
+    await f.send(conductor, {
+      kind: "loop",
+      symphonyId: plan.id,
+      reason: "Fix F1 and review again",
+      reopen: [
+        { taskId: "api", findings: ["review#F1"] },
+        { taskId: "review", note: "Review the fix" },
+      ],
+    });
+    await reportAndSettle(f, plan.id, "api", { outcome: "completed" });
+    const review2 = latestAttempt(await f.read(plan.id), "review");
+    assert.ok(review2 && review2.loop === 2);
+    assert.equal(review2.agentId === review1.agentId, reuse);
+    const prompt = reuse
+      ? f.wakePrompts.find((entry) => entry.key === `continue:${review2.id}`)
+          ?.prompt
+      : f.launches.get(review2.agentId)?.prompt;
+    assert.ok(prompt, reuse ? "continuation" : "fallback assignment");
+    assert.match(prompt, /Reopened: Review the fix/);
+    assert.match(
+      prompt,
+      /- review#F1 \[blocking\] task api at src\/api\.ts:41/,
+    );
+    assert.match(prompt, /Confirm each finding is fixed/);
+  }
+});
+
+void test("a replacement for a re-running review keeps its previous findings", async () => {
+  for (const settle of ["failed", "blocked"] as const) {
+    const f = await fixture();
+    const { plan, conductor } = await firstLoopNeedsChanges(
+      f,
+      `review-replacement-${settle}`,
+    );
+    await f.send(conductor, {
+      kind: "loop",
+      symphonyId: plan.id,
+      reason: "Fix F1",
+      reopen: [{ taskId: "api", findings: ["review#F1"] }],
+    });
+    await reportAndSettle(f, plan.id, "api", { outcome: "completed" });
+    const review2 = latestAttempt(await f.read(plan.id), "review");
+    assert.ok(review2 && review2.loop === 2);
+    if (settle === "failed") {
+      // Stops without reporting: one nudge, then a harness failure.
+      f.active.set(review2.agentId, false);
+      await f.reconcile();
+      f.active.set(review2.agentId, false);
+      await f.reconcile();
+    } else {
+      await f.send(review2.agentId, {
+        kind: "block",
+        symphonyId: plan.id,
+        attemptId: review2.id,
+        message: "Cannot read the api diff",
+      });
+      f.active.set(review2.agentId, false);
+      await f.reconcile();
+    }
+    assert.equal(latestAttempt(await f.read(plan.id), "review")?.state, settle);
+    f.undeliverable.add(review2.agentId);
+    await f.send(conductor, {
+      kind: "dispatch",
+      symphonyId: plan.id,
+      retryTaskId: "review",
+    });
+    const replaced = latestAttempt(await f.read(plan.id), "review");
+    assert.ok(replaced && replaced.agentId !== review2.agentId);
+    const prompt = f.launches.get(replaced.agentId)?.prompt;
+    assert.ok(prompt);
+    assert.match(
+      prompt,
+      /You are replacing the agent from the previous attempt/,
+    );
+    assert.match(prompt, /Prerequisite api changed in loop 2/);
+    assert.match(
+      prompt,
+      /- review#F1 \[blocking\] task api at src\/api\.ts:41/,
+    );
+    assert.match(prompt, /Confirm each finding is fixed/);
+  }
+});
+
+void test("long valid findings shorten the review prompt instead of stalling the loop", async () => {
+  for (const reuse of [true, false]) {
+    const f = await fixture();
+    const plan = await f.start(reuse ? "long-continue" : "long-fallback");
+    assert.ok(plan.source.agentId);
+    await f.define(plan, [
+      task("api", [], ["src/api"]),
+      reviewTask("review", ["api"]),
+    ]);
+    await reportAndSettle(f, plan.id, "api", { outcome: "completed" });
+    const long = (id: string) => ({
+      id,
+      severity: "blocking" as const,
+      taskId: "api",
+      paths: ["src/api.ts:1"],
+      summary: `${id} ${"s".repeat(1990)}`,
+      suggestedFix: "f".repeat(2000),
+    });
+    const ids = (prefix: string) =>
+      Array.from({ length: 24 }, (_, index) => `${prefix}${index + 1}`);
+    await reportAndSettle(f, plan.id, "review", {
+      ...needsChangesReport(),
+      findings: ids("R").map(long),
+    });
+    const review1 = latestAttempt(await f.read(plan.id), "review");
+    assert.ok(review1);
+    if (!reuse) {
+      f.undeliverable.add(review1.agentId);
+    }
+    await f.send(plan.source.agentId, {
+      kind: "loop",
+      symphonyId: plan.id,
+      reason: "Fix every defect",
+      reopen: [{ taskId: "api", findings: ids("review#R") }],
+    });
+    // The owner finds 24 more long defects of its own.
+    await reportAndSettle(f, plan.id, "api", {
+      ...needsChangesReport(),
+      findings: ids("A").map(long),
+    });
+    const symphony = await f.read(plan.id);
+    assert.equal(symphony.execution.interruption, null);
+    const review2 = latestAttempt(symphony, "review");
+    assert.ok(review2 && review2.loop === 2, "the review started");
+    const prompt = reuse
+      ? f.wakePrompts.find((entry) => entry.key === `continue:${review2.id}`)
+          ?.prompt
+      : f.launches.get(review2.agentId)?.prompt;
+    assert.ok(prompt);
+    assert.ok(prompt.length <= SYMPHONY_LIMITS.promptChars);
+    // Every old and current finding keeps its identity; details are saved.
+    for (const id of [...ids("review#R"), ...ids("A")]) {
+      assert.match(prompt, new RegExp(`- ${id} \\[blocking\\] task api`), id);
+    }
+    assert.match(
+      prompt,
+      /Findings and failed checks are shortened to fit the prompt/,
+    );
+    assert.equal(latestAttempt(symphony, "api")?.report?.findings?.length, 24);
+  }
+});
+
+void test("long failed check names shorten the review prompt instead of stalling the loop", async () => {
+  const f = await fixture();
+  const plan = await f.start("long-checks");
+  const owners = Array.from({ length: 9 }, (_, index) => `w${index + 1}`);
+  await f.define(plan, [
+    ...owners.map((id) => task(id, [], [`src/${id}`])),
+    reviewTask("review", owners),
+  ]);
+  // Each owner leaves 16 distinct, legal 1000-character failed check names.
+  for (const id of owners) {
+    await reportAndSettle(f, plan.id, id, {
+      outcome: "needs-changes",
+      checks: Array.from({ length: 16 }, (_, index) => ({
+        name: `${id}-c${index + 1} ${"n".repeat(990)}`,
+        status: "failed",
+        detail: "Still fails",
+      })),
+    });
+  }
+  const symphony = await f.read(plan.id);
+  assert.equal(symphony.execution.interruption, null);
+  const review = latestAttempt(symphony, "review");
+  assert.ok(review, "the review started");
+  const prompt = f.launches.get(review.agentId)?.prompt;
+  assert.ok(prompt);
+  assert.ok(prompt.length <= SYMPHONY_LIMITS.promptChars);
+  // Each check keeps its identity; the full names stay in the saved reports.
+  for (const id of owners) {
+    assert.match(prompt, new RegExp(`${id}-c16 n`));
+  }
+  assert.match(
+    prompt,
+    /Findings and failed checks are shortened to fit the prompt/,
+  );
+});
+
+void test("a task that cannot start wakes the Conductor once", async () => {
+  const f = await fixture();
+  const plan = await f.start("oversized-wake");
+  assert.ok(plan.source.agentId);
+  const symphony = await f.define(plan, [
+    task("api", [], ["src/api"]),
+    reviewTask("review", ["api"]),
+  ]);
+  // The fallback needs near-maximum input in nearly every field, so the test
+  // stores the interruption that `reserve` records for such a prompt.
+  const message = `Task "review" cannot start: its prompt exceeds ${SYMPHONY_LIMITS.promptChars} characters even with shortened findings and checks. Ask the user, then finish with \`unresolved\` covering this task.`;
+  await f.store.update(symphony.id, symphony.version, (current) => {
+    current.execution.interruption = message;
+    current.status = executionStatus(current);
+    return current;
+  });
+  await f.reconcile();
+  await f.reconcile();
+  const wakes = f.wakePrompts.filter(
+    (entry) => entry.agentId === plan.source.agentId,
+  );
+  assert.equal(wakes.length, 1);
+  assert.ok(wakes[0]?.key?.startsWith(`${plan.id}:interruption:`));
+  assert.match(wakes[0]?.prompt ?? "", /A task cannot start\. Task "review"/);
 });

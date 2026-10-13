@@ -18,6 +18,16 @@ export const SYMPHONY_LIMITS = {
   changedPaths: 50,
   /** Dirty write-scope entries one fingerprint observation may return. */
   fingerprintPaths: 200,
+  /** `orchestrate` accepts a loop budget of 1..maxLoops. */
+  maxLoops: 5,
+  /** Loop budget when `orchestrate` omits `maxLoops`. */
+  defaultLoops: 3,
+  /** `failed` attempts a task may retry within one loop (so 3 attempts). */
+  failedRetriesPerLoop: 2,
+  /** Findings one report may carry. */
+  findingsPerReport: 24,
+  /** Characters a saved agent prompt or wake may hold. */
+  promptChars: 128_000,
 } as const;
 export const uuidSchema = z.string().uuid();
 export const taskIdSchema = z
@@ -64,7 +74,7 @@ export const taskSchema = z
     resources: z.array(taskIdSchema).max(16),
     worker: z
       .object({
-        role: z.enum(["exploration", "implementation"]),
+        role: z.enum(["exploration", "implementation", "review"]),
         profile: text(160),
         provider: text(80).optional(),
         model: text(160).optional(),
@@ -73,6 +83,9 @@ export const taskSchema = z
       .strict(),
     criteria: z.array(text(1000)).min(1).max(16),
     checks: z.array(text(1000)).max(16),
+    // Mirrors `worker.role === "review"` for callers that read the definition
+    // directly. The role is the canonical marker; `define`/`loop` set both.
+    review: z.boolean().optional(),
     stopWhen: text(2000),
   })
   .strict();
@@ -120,9 +133,30 @@ export const checkReportSchema = z
     detail: text(2000),
   })
   .strict();
+// A defect a task agent reports, usually a reviewer against another task's
+// code. `taskId` names the owning task and is omitted for a finding about the
+// reporting task itself. `paths` are display locations such as
+// `src/api.ts:41`, never scope grants.
+export const findingSchema = z
+  .object({
+    id: text(200),
+    severity: z.enum(["blocking", "minor"]),
+    taskId: taskIdSchema.optional(),
+    paths: z.array(observedPathSchema).min(1).max(16),
+    summary: text(2000),
+    suggestedFix: text(2000).optional(),
+  })
+  .strict();
 // The action a failed task agent asks the Conductor for: widen the write scope,
-// answer a question, change the model, or retry with a direction.
-export const failureNeedSchema = z.enum(["scope", "input", "model", "none"]);
+// answer a question, change the model, or report a harness defect. `none` is
+// kept so reports stored before `needs-changes` existed stay readable.
+export const failureNeedSchema = z.enum([
+  "scope",
+  "input",
+  "model",
+  "harness",
+  "none",
+]);
 export const taskDiagnosisSchema = z
   .object({
     tried: z.array(text(1000)).min(1).max(8),
@@ -142,10 +176,16 @@ export const taskDiagnosisSchema = z
   );
 export const taskReportSchema = z
   .object({
-    outcome: z.enum(["completed", "failed"]),
+    outcome: z.enum(["completed", "needs-changes", "failed"]),
     summary: text(8000),
     evidence: z.array(text(2000)).min(1).max(24),
     checks: z.array(checkReportSchema).max(16),
+    // A review or integration task lists the defects it found. `loop` refers to
+    // findings by id, so the ids must be unique within the report.
+    findings: z
+      .array(findingSchema)
+      .max(SYMPHONY_LIMITS.findingsPerReport)
+      .optional(),
     diagnosis: taskDiagnosisSchema.optional(),
   })
   .strict()
@@ -155,6 +195,34 @@ export const taskReportSchema = z
       message: "A completed report cannot include a diagnosis.",
       path: ["diagnosis"],
     },
+  )
+  .refine(
+    (report) =>
+      report.outcome !== "completed" ||
+      !report.findings?.some((finding) => finding.severity === "blocking"),
+    {
+      message: "A completed report cannot include a blocking finding.",
+      path: ["findings"],
+    },
+  )
+  .refine(
+    (report) =>
+      report.outcome !== "needs-changes" ||
+      (report.findings?.some((finding) => finding.severity === "blocking") ??
+        false) ||
+      report.checks.some((check) => check.status === "failed"),
+    {
+      message:
+        "A needs-changes report requires a blocking finding or a failed check.",
+      path: ["findings"],
+    },
+  )
+  .refine(
+    (report) => {
+      const ids = report.findings?.map((finding) => finding.id) ?? [];
+      return new Set(ids).size === ids.length;
+    },
+    { message: "Finding IDs must be unique.", path: ["findings"] },
   );
 // A server-checked scope grant recorded on the attempt that received it.
 export const grantedWriteSchema = z
@@ -169,13 +237,40 @@ export const attemptSchema = z
     id: uuidSchema,
     taskId: taskIdSchema,
     agentId: identifier,
-    state: z.enum(["running", "blocked", "completed", "failed"]),
+    state: z.enum([
+      "running",
+      "blocked",
+      "completed",
+      "needs-changes",
+      "failed",
+    ]),
     startedAt: z.number().int().nonnegative(),
     endedAt: z.number().int().nonnegative().nullable(),
     message: text(4000).nullable(),
     report: taskReportSchema.nullable(),
     reportHash: hash.nullable(),
-    reportedBy: z.enum(["worker", "launcher"]).optional(),
+    // Who wrote the report: the task agent, the launcher when agent creation was
+    // rejected, or the server when the harness could not run the work (an
+    // unconfirmed launch, an unreachable agent, or no report after the nudge).
+    reportedBy: z.enum(["worker", "launcher", "server"]).optional(),
+    // Failed retries that replayed this attempt's unconfirmed launch identity
+    // instead of creating another attempt. They count toward the per-loop
+    // retry limit like failed attempts do.
+    identityRetries: z.number().int().nonnegative().optional(),
+    // The loop this attempt ran in. Absent on records stored before loops
+    // existed; readers treat it as loop 1 (`attemptLoop`).
+    loop: z.number().int().min(1).optional(),
+    // Set when the Conductor reopened this task with review findings in a new
+    // loop. `findings` are the reported defects the attempt addresses and
+    // `recheck` marks an attempt that only re-checks a reopened prerequisite.
+    reopen: z
+      .object({
+        reason: text(2000),
+        findings: z.array(findingSchema).max(SYMPHONY_LIMITS.findingsPerReport),
+      })
+      .strict()
+      .optional(),
+    recheck: z.boolean().optional(),
     grantedWrites: z
       .array(grantedWriteSchema)
       .max(
@@ -225,7 +320,7 @@ export const attemptSchema = z
     wake: z
       .object({
         key: text(200),
-        prompt: text(128000),
+        prompt: text(SYMPHONY_LIMITS.promptChars),
       })
       .strict()
       .optional(),
@@ -243,10 +338,99 @@ export const attemptSchema = z
         // instead of sleeping, so it never blocks the shared command queue.
         checks: z.number().int().nonnegative().optional(),
         nextCheckAt: z.number().int().nonnegative().optional(),
-        prompt: text(128000),
+        prompt: text(SYMPHONY_LIMITS.promptChars),
         settled: z.boolean(),
       })
       .strict()
+      .optional(),
+  })
+  .strict();
+// A blocking finding or a needs-changes task the Conductor chose not to
+// reopen, with a reason, so nothing is dropped silently. `loop` uses the shape
+// for its `deferred` list and `finish` for `unresolved`.
+export const unresolvedItemSchema = z
+  .object({
+    finding: text(300).optional(),
+    taskId: taskIdSchema.optional(),
+    reason: text(2000),
+  })
+  .strict()
+  .refine((item) => item.finding !== undefined || item.taskId !== undefined, {
+    message: "Name the finding or task left unresolved.",
+    path: ["finding"],
+  });
+/** The `loop` command's deferred entry; same shape as an unresolved item. */
+export const deferredItemSchema = unresolvedItemSchema;
+export const loopApprovalSchema = z
+  .object({
+    /** The loop number the user approved. */
+    loops: z.number().int().min(1),
+    /** The user's own words, recorded on the loop and shown in History. */
+    userAnswer: text(2000),
+  })
+  .strict();
+export const loopReopenSchema = z
+  .object({
+    taskId: taskIdSchema,
+    /** Finding ids from the previous loop, such as `review#F1`. */
+    findings: z
+      .array(text(300))
+      .max(SYMPHONY_LIMITS.findingsPerReport)
+      .default([]),
+    /** Loop-only prerequisites that do not change the declared `dependsOn`. */
+    after: z.array(taskIdSchema).max(SYMPHONY_LIMITS.tasks).optional(),
+    /** The Conductor's note for the reopened attempt. */
+    note: text(2000).optional(),
+    /** Validated write additions recorded on the reopened attempt. */
+    addedWrites: z
+      .array(grantedWriteSchema)
+      .max(SYMPHONY_LIMITS.addedWritesPerAttempt)
+      .optional(),
+    /**
+     * The full finding objects `findings` named, captured when `loop` was
+     * accepted so a later rerun of the reporter cannot change them.
+     */
+    resolved: z
+      .array(findingSchema)
+      .max(SYMPHONY_LIMITS.findingsPerReport)
+      .optional(),
+  })
+  .strict();
+// The blocking findings one task's latest report still carried when a loop
+// started. Finding ids are unique only within a report, so the reporter
+// qualifies them as `reporterTaskId#id`.
+export const previousReportSchema = z
+  .object({
+    reporterTaskId: taskIdSchema,
+    findings: z
+      .array(findingSchema)
+      .min(1)
+      .max(SYMPHONY_LIMITS.findingsPerReport),
+  })
+  .strict();
+// One record per loop the Conductor started with `loop`. Loop 1 is implicit
+// and has no record.
+export const loopRecordSchema = z
+  .object({
+    number: z.number().int().min(1),
+    reason: text(2000),
+    startedAt: z.number().int().nonnegative(),
+    reopened: z.array(loopReopenSchema).max(SYMPHONY_LIMITS.tasks).default([]),
+    added: z.array(taskIdSchema).max(SYMPHONY_LIMITS.tasks).default([]),
+    deferred: z.array(deferredItemSchema).max(24).default([]),
+    approval: loopApprovalSchema.optional(),
+    // Legacy aggregate of the open blocking findings, capped at one report's
+    // limit. Kept readable for records stored before `previousReports`.
+    previousFindings: z
+      .array(findingSchema)
+      .max(SYMPHONY_LIMITS.findingsPerReport)
+      .optional(),
+    // The open blocking findings when the loop started, one snapshot per
+    // reporting task, captured for the re-running reviews to confirm each one
+    // is fixed. Each snapshot is bounded like the report it came from.
+    previousReports: z
+      .array(previousReportSchema)
+      .max(SYMPHONY_LIMITS.tasks)
       .optional(),
   })
   .strict();
@@ -262,8 +446,22 @@ export const executionSchema = z
         conductor: z.enum(["self", "agent"]),
         conductorProfile: text(160).optional(),
         conductorConfig: text(32000).optional(),
-        prompt: text(128000),
+        prompt: text(SYMPHONY_LIMITS.promptChars),
         notification: z.string().max(128).nullable(),
+        // The loop budget chosen at `orchestrate`; absent means
+        // `SYMPHONY_LIMITS.defaultLoops`.
+        maxLoops: z
+          .number()
+          .int()
+          .min(1)
+          .max(SYMPHONY_LIMITS.maxLoops)
+          .optional(),
+        // Records of loops started with `loop`, oldest first. Grows past
+        // `maxLoops` only with a recorded approval.
+        loops: z
+          .array(loopRecordSchema)
+          .max(SYMPHONY_LIMITS.attempts)
+          .optional(),
       })
       .strict()
       .optional(),
@@ -271,6 +469,12 @@ export const executionSchema = z
     summary: text(8000).nullable(),
     finishedAt: z.number().int().nonnegative().nullable(),
     interruption: text(4000).nullable(),
+    // Set by `finish` when the user stopped a symphony with open findings or
+    // non-completed tasks; such a symphony ends `failed` and lists them.
+    unresolved: z
+      .array(unresolvedItemSchema)
+      .max(SYMPHONY_LIMITS.attempts)
+      .optional(),
   })
   .strict();
 export const symphonySchema = z
@@ -325,9 +529,40 @@ export type SymphonyListEntry = z.infer<typeof symphonyListEntrySchema>;
 export type Attempt = z.infer<typeof attemptSchema>;
 export type TaskReport = z.infer<typeof taskReportSchema>;
 export type TaskDiagnosis = z.infer<typeof taskDiagnosisSchema>;
+export type TaskFinding = z.infer<typeof findingSchema>;
+export type CheckReport = z.infer<typeof checkReportSchema>;
 export type FailureNeed = z.infer<typeof failureNeedSchema>;
 export type GrantedWrite = z.infer<typeof grantedWriteSchema>;
+export type LoopApproval = z.infer<typeof loopApprovalSchema>;
+export type LoopReopen = z.infer<typeof loopReopenSchema>;
+export type LoopRecord = z.infer<typeof loopRecordSchema>;
+export type PreviousReport = z.infer<typeof previousReportSchema>;
+export type UnresolvedItem = z.infer<typeof unresolvedItemSchema>;
+export type AttemptReopen = NonNullable<Attempt["reopen"]>;
 export type PendingWake = NonNullable<Attempt["wake"]>;
+
+/**
+ * The number of open blocking findings a loop record captured when it
+ * started, or undefined for a record that captured none. Reads the
+ * per-reporter snapshots, falling back to the legacy capped aggregate.
+ */
+export function previousFindingCount(record: LoopRecord): number | undefined {
+  if (record.previousReports) {
+    return record.previousReports.reduce(
+      (count, entry) => count + entry.findings.length,
+      0,
+    );
+  }
+  return record.previousFindings?.length;
+}
+
+/**
+ * Whether a task is a review: a read-only pass over other tasks' work. The
+ * review role is canonical; `review` mirrors it for definitions built by hand.
+ */
+export function isReviewTask(task: TaskDefinition): boolean {
+  return task.worker.role === "review" || task.review === true;
+}
 
 export function symphonyStatusLabel(status: StoredSymphony["status"]): string {
   const labels = {

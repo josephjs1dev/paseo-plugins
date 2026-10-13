@@ -30,8 +30,9 @@ type StateColor =
 /**
  * Status colors deliberately differ from bare text readability: running is the
  * accent, attention and failures use the semantic status colors, and
- * waiting/ready share the muted neutral. Finishing keeps the warning hue so it
- * stays distinct from Completed, and every status is also written in text.
+ * waiting/ready share the muted neutral. Finishing and needs changes keep the
+ * warning hue so both stay distinct from Completed and Failed, and every
+ * status is also written in text.
  */
 const STATE_COLOR: Record<TaskStateKey, StateColor> = {
   ready: "foregroundMuted",
@@ -39,6 +40,7 @@ const STATE_COLOR: Record<TaskStateKey, StateColor> = {
   running: "accent",
   blocked: "statusWarning",
   finishing: "statusWarning",
+  "needs-changes": "statusWarning",
   failed: "statusDanger",
   completed: "statusSuccess",
 };
@@ -295,6 +297,7 @@ function Legend({ theme }: { theme: PluginTheme }) {
           ["Blocked", "blocked"],
           ["Finishing", "finishing"],
           ["Completed", "completed"],
+          ["Needs changes", "needs-changes"],
           ["Failed", "failed"],
         ] as const
       ).map(([label, state]) => (

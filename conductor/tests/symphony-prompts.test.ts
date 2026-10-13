@@ -12,7 +12,11 @@ import {
   nudgePrompt,
   unionChangedPaths,
 } from "../server/symphonies/prompts";
-import type { TaskReport } from "../shared/symphonies/models";
+import {
+  SYMPHONY_LIMITS,
+  type TaskFinding,
+  type TaskReport,
+} from "../shared/symphonies/models";
 import { testDirectory } from "./fixtures";
 import { fixtureSymphonyId } from "./symphony-fixtures";
 
@@ -88,6 +92,139 @@ void test("the assignment states what to do without payload samples or shell com
   assert.match(prompt, /\[Conductor agent commands\]/);
   assert.match(prompt, /End your turn only after the report is accepted\./);
   assertNoPayloadSamples(prompt);
+});
+
+void test("the assignment states the three report outcomes and review guidance", () => {
+  const finding = {
+    id: "F1",
+    severity: "blocking" as const,
+    taskId: "api",
+    paths: ["src/api.ts:41"],
+    summary: "concertId is validated after its lookup.",
+    suggestedFix: "Validate before the lookup.",
+  };
+  const base = {
+    symphonyId: fixtureSymphonyId,
+    attemptId: "attempt-2",
+    taskId: "api",
+    title: "Fix the API",
+    goal: "Migrate pagination",
+    outcome: "Validate concertId first",
+    reads: ["src"],
+    writes: ["src/api"],
+    checks: ["typecheck"],
+    prerequisites: [],
+  };
+  const prompt = assignmentPrompt(base);
+  assert.match(prompt, /- completed:/);
+  assert.match(prompt, /- needs-changes:/);
+  assert.match(prompt, /- failed:/);
+  assert.match(prompt, /ends\s+the loop/);
+  assert.match(prompt, /never uses\s+`failed` for a failing check/);
+  // A review gets the extra guidance to report only with no blocking finding.
+  const review = assignmentPrompt({ ...base, review: true });
+  assert.match(review, /This is a review task/);
+  assert.match(review, /report completed only when no blocking finding/);
+  // A reopened prompt carries the full finding objects, not a summary line.
+  const reopened = assignmentPrompt({
+    ...base,
+    reopen: { reason: "Fix F1", findings: [finding] },
+  });
+  assert.match(reopened, /Reopened: Fix F1/);
+  assert.match(reopened, /Findings to address:/);
+  assert.match(
+    reopened,
+    /F1 \[blocking\] task api at src\/api\.ts:41: concertId is validated after its lookup\./,
+  );
+  assert.match(reopened, /Suggested fix: Validate before the lookup\./);
+  // A dependent re-check names the changed prerequisite and the old findings.
+  const recheck = continuationPrompt({
+    taskId: "review",
+    attemptId: "attempt-3",
+    position: { taskId: "review", number: 2, total: 2 },
+    writes: [],
+    added: [],
+    recheck: { loop: 2, changed: ["api"] },
+    previous: { findings: [finding], omitted: 0 },
+  });
+  assert.match(recheck, /Prerequisite api changed in loop 2/);
+  assert.match(recheck, /Previous loop findings to confirm fixed:/);
+  assert.match(recheck, /Confirm each finding is fixed/);
+});
+
+void test("prompts shorten findings only to fit the saved prompt limit", () => {
+  const long = (id: string): TaskFinding => ({
+    id,
+    severity: "blocking",
+    taskId: "api",
+    paths: ["src/api.ts:41", "src/rpc.ts:7"],
+    summary: "s".repeat(2000),
+    suggestedFix: "f".repeat(2000),
+  });
+  const ids = (prefix: string) =>
+    Array.from({ length: 24 }, (_, index) => `${prefix}${index + 1}`);
+  const input = {
+    taskId: "review",
+    attemptId: "attempt-3",
+    position: { taskId: "review", number: 2, total: 2 },
+    writes: [],
+    added: [],
+    previous: { findings: ids("review#R").map(long), omitted: 0 },
+    prerequisites: [
+      {
+        taskId: "api",
+        outcome: "needs-changes",
+        findings: ids("A").map(long),
+      },
+    ],
+  };
+  // Small enough: every field is kept and no pointer is added.
+  const small = continuationPrompt({
+    ...input,
+    previous: { findings: [long("review#R1")], omitted: 0 },
+    prerequisites: [],
+  });
+  assert.match(small, /Suggested fix: f/);
+  assert.doesNotMatch(small, /shortened to fit/);
+  // 48 long findings exceed the limit: every identity stays, details move to
+  // the saved reports, and the prompt says so.
+  const brief = continuationPrompt(input);
+  assert.ok(brief.length <= SYMPHONY_LIMITS.promptChars);
+  for (const id of [...ids("review#R"), ...ids("A")]) {
+    assert.match(
+      brief,
+      new RegExp(
+        `- ${id} \\[blocking\\] task api at src/api\\.ts:41 \\(\\+1 more\\)`,
+      ),
+    );
+  }
+  assert.doesNotMatch(brief, /Suggested fix/);
+  assert.match(
+    brief,
+    /Findings and failed checks are shortened to fit the prompt\. Read each full finding/,
+  );
+  // An assignment with a tight budget falls back to counts, never silently.
+  const counted = assignmentPrompt(
+    {
+      symphonyId: fixtureSymphonyId,
+      attemptId: "attempt-3",
+      taskId: "review",
+      title: "Review the API",
+      goal: "Migrate pagination",
+      outcome: "Confirm the fixes",
+      reads: ["src"],
+      writes: [],
+      checks: [],
+      prerequisites: [],
+      previous: { findings: ids("review#R").map(long), omitted: 0 },
+    },
+    2500,
+  );
+  assert.match(counted, /- 24 findings, not listed here to fit the prompt\./);
+  assert.match(
+    counted,
+    /Findings and failed checks are shortened to fit the prompt/,
+  );
 });
 
 void test("a handoff renders the previous report and paths as lines", () => {

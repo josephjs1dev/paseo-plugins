@@ -8,12 +8,15 @@ import type { PluginTheme } from "@getpaseo/plugin";
 import {
   latestAttempt,
   taskAttempts,
+  type Attempt,
   type GrantedWrite,
   type StoredSymphony,
   type TaskDefinition,
 } from "../../shared/symphonies/models";
+import { attemptLoop } from "../../shared/symphonies/score";
 import { Button, Disclosure, Notice } from "../ui/controls";
 import {
+  FindingsPanel,
   InsetPanel,
   PROSE_WIDTH,
   ReportFooter,
@@ -38,12 +41,18 @@ export interface TaskDisclosures {
  */
 export type TaskDisclosure = "summary" | "instructions" | "evidence" | "checks";
 
+/**
+ * Needs changes shares the warning family (amber) — the work ran but the
+ * result is not acceptable yet — while failed keeps the danger color: the
+ * harness could not run the work at all.
+ */
 const STATE_COLORS: Record<TaskStateKey, StateColor> = {
   ready: "foregroundMuted",
   waiting: "foregroundMuted",
   running: "accent",
   blocked: "statusWarning",
   finishing: "statusWarning",
+  "needs-changes": "statusWarning",
   failed: "statusDanger",
   completed: "statusSuccess",
 };
@@ -101,6 +110,7 @@ export function SymphonyTaskCard({
   compact = false,
   disclosures,
   onToggle,
+  loop,
   openAgent,
 }: {
   theme: PluginTheme;
@@ -109,9 +119,16 @@ export function SymphonyTaskCard({
   compact?: boolean;
   disclosures?: TaskDisclosures;
   onToggle?: (selection: TaskDisclosure) => void;
+  /** The loop being viewed, when the symphony has several. */
+  loop?: number;
   openAgent?: (id: string) => void;
 }) {
   const attempt = latestAttempt(symphony, task.id);
+  // A task that did not re-run in the viewed loop keeps an earlier result.
+  const carriedFrom =
+    loop !== undefined && attempt && attemptLoop(attempt) < loop
+      ? attemptLoop(attempt)
+      : undefined;
   const state = taskState(symphony, task);
   const report = attempt?.report ?? null;
   const failedChecks =
@@ -218,6 +235,18 @@ export function SymphonyTaskCard({
         >
           {`· ${task.id}`}
         </Text>
+        {carriedFrom !== undefined && (
+          <Text
+            testID={`symphony-task-${task.id}-carried`}
+            style={{
+              color: theme.colors.foregroundMuted,
+              fontSize: 12,
+              lineHeight: 17,
+            }}
+          >
+            {`· result from loop ${carriedFrom}`}
+          </Text>
+        )}
         {agentAttempts > 1 && (
           <Text
             style={{
@@ -259,6 +288,9 @@ export function SymphonyTaskCard({
           {attempt.message}
         </Notice>
       )}
+      {attempt?.reopen && (
+        <ReopenDisclosure theme={theme} attempt={attempt} compact={compact} />
+      )}
       {report === null && (
         <InstructionPreview
           task={task}
@@ -296,6 +328,64 @@ export function SymphonyTaskCard({
           grants={grantedWrites}
           compact={compact}
         />
+      )}
+    </View>
+  );
+}
+
+/**
+ * A reopened attempt's brief: why the Conductor reopened this task in a new
+ * loop, then the findings the attempt addresses so the fix work and the
+ * reviewer's defects stay linked on the card itself.
+ */
+function ReopenDisclosure({
+  theme,
+  attempt,
+  compact,
+}: {
+  theme: PluginTheme;
+  attempt: Attempt;
+  compact: boolean;
+}) {
+  const reopen = attempt.reopen;
+  const [expanded, setExpanded] = useState(false);
+  if (!reopen) {
+    return null;
+  }
+  return (
+    <View
+      style={{
+        borderTopWidth: 1,
+        borderTopColor: theme.colors.border,
+        paddingTop: 8,
+        gap: 8,
+      }}
+    >
+      <Disclosure
+        theme={theme}
+        label={`Reopened · loop ${attemptLoop(attempt)}`}
+        expanded={expanded}
+        onToggle={() => setExpanded((open) => !open)}
+        testID={`symphony-task-reopen-${attempt.taskId}`}
+        dense={!compact}
+      />
+      <Text
+        selectable
+        numberOfLines={2}
+        ellipsizeMode="tail"
+        style={{
+          color: theme.colors.foregroundMuted,
+          fontSize: 12,
+          lineHeight: 17,
+          maxWidth: PROSE_WIDTH,
+        }}
+      >
+        {reopen.reason}
+      </Text>
+      {expanded && reopen.findings.length > 0 && (
+        <InsetPanel theme={theme}>
+          <FindingsPanel theme={theme} findings={reopen.findings} />
+        </InsetPanel>
       )}
     </View>
   );

@@ -208,6 +208,399 @@ test("fixture scenarios render their documented task and graph states", async ({
   await expect(detail).not.toContainText("No tasks were recorded.");
 });
 
+/** Geometry of a testid element within the symphony detail surface. */
+function boxOf(page: Page, testId: string) {
+  return page.getByTestId(testId).evaluate((element: HTMLElement) => {
+    const { left, top, width, height } = element.getBoundingClientRect();
+    return { left, top, width, height };
+  });
+}
+
+test("Tasks, Graph and Context show the latest loop and can show an earlier one", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  const detail = page.getByTestId("symphony-detail");
+  await openSymphony(page, "loops");
+  const trigger = page.getByTestId("loop-select");
+  const listbox = page.getByTestId("loop-listbox");
+  const option = (loop: number) => page.getByTestId(`loop-option-${loop}`);
+
+  // The latest loop is selected by default; ui did not re-run in loop 3.
+  await expect(trigger).toContainText("Loop 3 · succeeded · latest");
+  await expect(trigger).toHaveAttribute("aria-expanded", "false");
+  await expect(trigger).toHaveAttribute("aria-haspopup", "listbox");
+  await expect(listbox).toHaveCount(0);
+  await expect(page.getByTestId("loop-past-note")).toHaveCount(0);
+  await expect(page.getByTestId("symphony-task-review")).toContainText(
+    "Completed",
+  );
+  await expect(page.getByTestId("symphony-task-ui-carried")).toContainText(
+    "result from loop 2",
+  );
+  // The first task card's geometry while closed, captured before anything
+  // opens, so the floating list can be proven not to shift it.
+  const taskCardBefore = await boxOf(page, "symphony-task-api");
+
+  // Enter opens the inline list: newest loop first, the pick semibold and
+  // ticked, older options plain.
+  await trigger.focus();
+  await page.keyboard.press("Enter");
+  await expect(listbox).toBeVisible();
+  await expect(trigger).toHaveAttribute("aria-expanded", "true");
+  await expect(option(3)).toHaveAttribute("aria-selected", "true");
+  await expect(option(2).locator("svg")).toHaveCount(0);
+  // The check is a rendered Lucide icon, not a glyph, and the list floats:
+  // its left edge sits on the trigger's left edge, it starts just below the
+  // trigger, and opening it moves nothing on the page.
+  await expect(option(3).locator("svg")).toHaveCount(1);
+  const [triggerBox, listboxBox] = await Promise.all([
+    boxOf(page, "loop-select"),
+    boxOf(page, "loop-listbox"),
+  ]);
+  expect(listboxBox.left).toBeGreaterThanOrEqual(triggerBox.left - 1);
+  expect(listboxBox.left).toBeLessThanOrEqual(triggerBox.left + 1);
+  expect(listboxBox.top).toBeGreaterThanOrEqual(
+    triggerBox.top + triggerBox.height - 1,
+  );
+  expect(listboxBox.top).toBeLessThanOrEqual(
+    triggerBox.top + triggerBox.height + 8,
+  );
+  expect(listboxBox.width).toBeGreaterThanOrEqual(triggerBox.width);
+  const taskCardAfter = await boxOf(page, "symphony-task-api");
+  expect(Math.abs(taskCardAfter.top - taskCardBefore.top)).toBeLessThanOrEqual(
+    1,
+  );
+  expect(
+    Math.abs(taskCardAfter.left - taskCardBefore.left),
+  ).toBeLessThanOrEqual(1);
+  await expect(option(3).getByText("Loop 3 · succeeded").first()).toHaveCSS(
+    "font-weight",
+    "600",
+  );
+  await expect(option(2).getByText("Loop 2 · needs changes").first()).toHaveCSS(
+    "font-weight",
+    "400",
+  );
+  await expect(option(2)).not.toContainText("✓");
+
+  // Wide rows are 36px tall (44 on compact), with one elevation source: a
+  // soft y-offset shadow, no zero-offset halo. An ordinary (unforced) mouse
+  // hover reaches the row and paints the surface2 hover background.
+  const rowHeight = await option(2).evaluate(
+    (row: HTMLElement) => row.getBoundingClientRect().height,
+  );
+  expect(rowHeight).toBe(36);
+  await option(2).hover();
+  const hoverColor = await option(2).evaluate(
+    (row: HTMLElement) => getComputedStyle(row).backgroundColor,
+  );
+  expect(hoverColor).not.toBe("rgba(0, 0, 0, 0)");
+  const panelShadow = await listbox.evaluate((panel: HTMLElement) => {
+    const style = getComputedStyle(panel);
+    return { boxShadow: style.boxShadow, zIndex: style.zIndex };
+  });
+  expect(panelShadow.boxShadow).not.toBe("none");
+  // y-offset soft shadow with a small opacity radius.
+  expect(panelShadow.boxShadow).toMatch(/rgba\(0, 0, 0, 0\.12\) 0px 4px 12px/);
+  expect(Number(panelShadow.zIndex)).toBeGreaterThan(0);
+
+  // Escape from a focused option closes without choosing and returns focus to
+  // the trigger, so the keyboard stays anchored.
+  await page.keyboard.press("Tab");
+  await expect(option(3)).toBeFocused();
+  await page.keyboard.press("Escape");
+  await expect(listbox).toHaveCount(0);
+  await expect(trigger).toBeFocused();
+  await expect(page.getByTestId("loop-past-note")).toHaveCount(0);
+
+  // Space reopens; keyboard selection (Enter on a focused option) closes the
+  // list, restores trigger focus, and follows the latest loop again.
+  await page.keyboard.press("Space");
+  await expect(listbox).toBeVisible();
+  await page.keyboard.press("Tab");
+  await expect(option(3)).toBeFocused();
+  await page.keyboard.press("Enter");
+  await expect(listbox).toHaveCount(0);
+  await expect(trigger).toBeFocused();
+  await expect(trigger).toContainText("Loop 3 · succeeded · latest");
+
+  // Loop 1 shows the symphony as it ended, in Tasks and in the Graph.
+  await page.keyboard.press("Space");
+  await expect(listbox).toBeVisible();
+  await option(1).click();
+  await expect(listbox).toHaveCount(0);
+  await expect(trigger).toContainText("Loop 1 · needs changes");
+  await expect(page.getByTestId("loop-past-note")).toContainText(
+    "Showing loop 1 as it ended. Loop 3 is the latest.",
+  );
+  await expect(page.getByTestId("symphony-task-review")).toContainText(
+    "Needs changes",
+  );
+  await expect(page.getByTestId("symphony-task-ui-carried")).toHaveCount(0);
+  await detailButton(detail, "Graph").click();
+  await expect(page.getByTestId("symphony-node-review")).toContainText(
+    "Needs changes",
+  );
+
+  // The floating list overlays the graph too: alignment holds, no graph node
+  // moves, and an ordinary unforced hover and click reach the options.
+  const nodeBefore = await boxOf(page, "symphony-node-review");
+  await trigger.click();
+  await expect(listbox).toBeVisible();
+  const [graphTriggerBox, graphListBox] = await Promise.all([
+    boxOf(page, "loop-select"),
+    boxOf(page, "loop-listbox"),
+  ]);
+  expect(
+    Math.abs(graphListBox.left - graphTriggerBox.left),
+  ).toBeLessThanOrEqual(1);
+  expect(graphListBox.top).toBeGreaterThanOrEqual(
+    graphTriggerBox.top + graphTriggerBox.height - 1,
+  );
+  expect(graphListBox.top).toBeLessThanOrEqual(
+    graphTriggerBox.top + graphTriggerBox.height + 8,
+  );
+  const nodeAfter = await boxOf(page, "symphony-node-review");
+  expect(Math.abs(nodeAfter.top - nodeBefore.top)).toBeLessThanOrEqual(1);
+  expect(Math.abs(nodeAfter.left - nodeBefore.left)).toBeLessThanOrEqual(1);
+  await option(3).hover();
+  const graphHover = await option(3).evaluate(
+    (row: HTMLElement) => getComputedStyle(row).backgroundColor,
+  );
+  expect(graphHover).not.toBe("rgba(0, 0, 0, 0)");
+  await option(3).click();
+  await expect(listbox).toHaveCount(0);
+  await expect(trigger).toBeFocused();
+  await expect(trigger).toContainText("Loop 3 · succeeded · latest");
+
+  // Context explains why a later loop started; loop 1 has only the goal.
+  await detailButton(detail, "Context").click();
+  await expect(page.getByTestId("loop-context-2")).toHaveCount(0);
+  await trigger.click();
+  await expect(listbox).toBeVisible();
+  await option(2).click();
+  const context = page.getByTestId("loop-context-2");
+  await expect(context).toContainText("WHY LOOP 2 STARTED");
+  await expect(context).toContainText("Fix review findings F1 and F2");
+  await expect(context).toContainText("Reopened api");
+
+  // Escape closes the list without choosing and refocuses the trigger.
+  await trigger.click();
+  await expect(listbox).toBeVisible();
+  await page.keyboard.press("Escape");
+  await expect(listbox).toHaveCount(0);
+  await expect(trigger).toBeFocused();
+  await expect(trigger).toHaveAttribute("aria-expanded", "false");
+  await expect(page.locator("[data-testid='loop-select'] svg")).toHaveCount(1);
+
+  // Back to following the latest loop.
+  await detailButton(detail, "Show latest loop").click();
+  await expect(trigger).toContainText("Loop 3 · succeeded · latest");
+  await expect(page.getByTestId("loop-past-note")).toHaveCount(0);
+  expect(await noPageOverflow(page)).toBe(true);
+
+  // Compact width keeps the dropdown on one line, closed and open, with the
+  // 44px trigger touch target. Return to Tasks first so the first task card
+  // is on the surface.
+  await detailButton(detail, "Tasks").click();
+  await page.setViewportSize({ width: 390, height: 844 });
+  expect(await noPageOverflow(page)).toBe(true);
+  const compactTrigger = await trigger.boundingBox();
+  expect(compactTrigger?.height ?? 0).toBeGreaterThanOrEqual(44);
+  const compactCardBefore = await boxOf(page, "symphony-task-api");
+  await trigger.click();
+  await expect(listbox).toBeVisible();
+  expect(await noPageOverflow(page)).toBe(true);
+  const compactRowsHeights = await Promise.all(
+    [1, 2, 3].map(async (loop) =>
+      page
+        .getByTestId(`loop-option-${loop}`)
+        .evaluate((row: HTMLElement) => row.getBoundingClientRect().height),
+    ),
+  );
+  for (const height of compactRowsHeights) {
+    expect(height).toBe(44);
+  }
+  const compactTriggerBox = await boxOf(page, "loop-select");
+  const compactListBox = await boxOf(page, "loop-listbox");
+  expect(
+    Math.abs(compactListBox.left - compactTriggerBox.left),
+  ).toBeLessThanOrEqual(1);
+  expect(compactListBox.top).toBeGreaterThanOrEqual(
+    compactTriggerBox.top + compactTriggerBox.height - 1,
+  );
+  expect(compactListBox.top).toBeLessThanOrEqual(
+    compactTriggerBox.top + compactTriggerBox.height + 8,
+  );
+  const compactCardAfter = await boxOf(page, "symphony-task-api");
+  expect(
+    Math.abs(compactCardAfter.top - compactCardBefore.top),
+  ).toBeLessThanOrEqual(1);
+  expect(
+    Math.abs(compactCardAfter.left - compactCardBefore.left),
+  ).toBeLessThanOrEqual(1);
+  await option(3).hover();
+  const compactHover = await option(3).evaluate(
+    (row: HTMLElement) => getComputedStyle(row).backgroundColor,
+  );
+  expect(compactHover).not.toBe("rgba(0, 0, 0, 0)");
+  await option(3).click();
+  await expect(listbox).toHaveCount(0);
+  await expect(trigger).toBeFocused();
+
+  // The floating list overlays the compact graph too: alignment holds, a
+  // graph node does not move, and an ordinary hover and click reach options.
+  await detailButton(detail, "Graph").click();
+  const compactNodeBefore = await boxOf(page, "symphony-node-review");
+  await trigger.click();
+  await expect(listbox).toBeVisible();
+  expect(await noPageOverflow(page)).toBe(true);
+  const [compactGraphTrigger, compactGraphList] = await Promise.all([
+    boxOf(page, "loop-select"),
+    boxOf(page, "loop-listbox"),
+  ]);
+  expect(
+    Math.abs(compactGraphList.left - compactGraphTrigger.left),
+  ).toBeLessThanOrEqual(1);
+  expect(compactGraphList.top).toBeGreaterThanOrEqual(
+    compactGraphTrigger.top + compactGraphTrigger.height - 1,
+  );
+  expect(compactGraphList.top).toBeLessThanOrEqual(
+    compactGraphTrigger.top + compactGraphTrigger.height + 8,
+  );
+  const compactNodeAfter = await boxOf(page, "symphony-node-review");
+  expect(
+    Math.abs(compactNodeAfter.top - compactNodeBefore.top),
+  ).toBeLessThanOrEqual(1);
+  await option(2).hover();
+  const compactGraphHover = await option(2).evaluate(
+    (row: HTMLElement) => getComputedStyle(row).backgroundColor,
+  );
+  expect(compactGraphHover).not.toBe("rgba(0, 0, 0, 0)");
+  await option(2).click();
+  await expect(listbox).toHaveCount(0);
+  await expect(trigger).toBeFocused();
+
+  // History always lists every loop, so it has no selector.
+  await detailButton(detail, "History").click();
+  await expect(page.getByTestId("loop-selector")).toHaveCount(0);
+});
+
+test("needs changes, loop headers, findings, and unresolved stay readable", async ({
+  page,
+}) => {
+  const detail = page.getByTestId("symphony-detail");
+
+  // A needs-changes implementation task: amber state dot and label, distinct
+  // from the danger red of the failed check line beneath it.
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await openSymphony(page, "needs-changes");
+  const apiCard = page.getByTestId("symphony-task-api");
+  await expect(apiCard).toContainText("Needs changes");
+  await expect(apiCard).toContainText(
+    "✕ contract test: expected 400 for an unknown concert, received 500",
+  );
+  const dotColor = await apiCard.evaluate((element) => {
+    for (const dot of Array.from(element.querySelectorAll("div"))) {
+      const style = getComputedStyle(dot);
+      if (style.width === "6px" && style.height === "6px") {
+        return style.backgroundColor;
+      }
+    }
+    return null;
+  });
+  expect(dotColor).toBe("rgb(148, 96, 18)");
+  await apiCard.getByTestId("symphony-task-findings-api").click();
+  await expect(apiCard).toContainText("✕ Blocking · F1");
+  await expect(apiCard).toContainText("server/symphonies/execution.ts:112");
+  await expect(apiCard).toContainText("Map SymphonyError 404 cases");
+  // The score graph and legend carry the same state.
+  await detailButton(detail, "Graph").click();
+  await expect(page.getByTestId("symphony-node-api")).toContainText(
+    "Needs changes",
+  );
+  await expect(page.getByTestId("symphony-graph")).toContainText(
+    "Needs changes",
+  );
+
+  // The full loop flow grouped in History: loop verdicts with blocking
+  // counts, reopen reasons, the recorded user approval, and reopened
+  // attempts showing the findings they address.
+  await openSymphony(page, "loops");
+  await expect(detail).toContainText(
+    "Loops 1 and 2 needed changes; the user approved loop 3 past the budget",
+  );
+  await detailButton(detail, "History").click();
+  const loop1 = page.getByTestId("history-loop-1");
+  await expect(loop1).toContainText("Loop 1");
+  await expect(loop1).toContainText("needs changes (2 blocking)");
+  const loop2 = page.getByTestId("history-loop-2");
+  await expect(loop2).toContainText("Loop 2");
+  await expect(loop2).toContainText("needs changes (1 blocking)");
+  await expect(loop2).toContainText(
+    "Reopened because: Fix review findings F1 and F2",
+  );
+  const loop3 = page.getByTestId("history-loop-3");
+  await expect(loop3).toContainText("Loop 3");
+  await expect(loop3).toContainText("succeeded");
+  await expect(loop3).toContainText(
+    'User approved loop 3: "Yes, run one more loop to fix F3."',
+  );
+  await expect(loop3).toContainText(
+    "Reopened because: Fix the follow-up finding F3 found while re-checking",
+  );
+  // Grouped rows are always numbered so the same task across loops keeps
+  // unique test IDs — per task, not globally — and the review re-check links
+  // the findings it addresses.
+  await expect(page.getByTestId("history-attempt-api-1")).toContainText(
+    "Attempt 1",
+  );
+  const reviewRecheck = page.getByTestId("history-attempt-review-2");
+  await expect(reviewRecheck).toContainText("Attempt 2");
+  await expect(reviewRecheck).toContainText("Reopened — Confirm F1 and F2");
+  await expect(reviewRecheck).toContainText("✕ Blocking · F1");
+  await expect(reviewRecheck).toContainText("on api");
+  const followUp = page.getByTestId("history-attempt-api-3");
+  await expect(followUp).toContainText("Attempt 3");
+  await expect(followUp).toContainText("✕ Blocking · F3");
+  await expect(followUp).toContainText("orchestration.ts:1223");
+  const finalReview = page.getByTestId("history-attempt-review-3");
+  await expect(finalReview).toContainText("Attempt 3");
+  await expect(finalReview).toContainText("Completed");
+  expect(await noPageOverflow(page)).toBe(true);
+
+  // Single-loop symphonies keep their ungrouped history: no loop headers.
+  await openSymphony(page, "recovery");
+  await detailButton(detail, "History").click();
+  await expect(detail.getByTestId("history-task-repair")).toBeVisible();
+  await expect(detail.getByText("Loop 1")).toHaveCount(0);
+
+  // A symphony finished with unresolved work lists every item the user left
+  // open, on the detail surface.
+  await openSymphony(page, "unresolved");
+  const unresolved = page.getByTestId("symphony-unresolved");
+  await expect(unresolved).toContainText("UNRESOLVED");
+  await expect(unresolved).toContainText(
+    "api#F1 — Needs a product decision on the 400 shape.",
+  );
+  await expect(unresolved).toContainText(
+    "api — User chose to stop instead of looping.",
+  );
+  const apiStop = page.getByTestId("symphony-task-api");
+  await expect(apiStop).toContainText("Needs changes");
+  await expect(apiStop).toContainText("Findings 1");
+  expect(await noPageOverflow(page)).toBe(true);
+  // Compact layout: the findings panel stays inside 390px.
+  await page.setViewportSize({ width: 390, height: 844 });
+  await openSymphony(page, "needs-changes", "&global");
+  const narrowApi = page.getByTestId("symphony-task-api");
+  await narrowApi.getByTestId("symphony-task-findings-api").click();
+  await expect(narrowApi).toContainText("✕ Blocking · F1");
+  await expect(narrowApi).toContainText("on api");
+  expect(await noPageOverflow(page)).toBe(true);
+});
+
 test("failed reports show diagnosis, granted writes, and reused agents", async ({
   page,
 }) => {
@@ -386,6 +779,9 @@ test("captures Tasks and Graph screenshots at the required viewports and themes"
     "recovery",
     "empty",
     "planning",
+    "needs-changes",
+    "loops",
+    "unresolved",
   ]) {
     await openSymphony(page, fixture, "&global&dark");
     await snap(`narrow-dark-tasks-${fixture}.png`);

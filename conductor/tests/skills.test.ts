@@ -49,6 +49,26 @@ void test("the skill directs recovery from diagnosis and reviews granted writes"
   assert.match(ORCHESTRATE_SKILL, /Widen refused/);
 });
 
+void test("the skill runs review loops inside one symphony", () => {
+  assert.match(ORCHESTRATE_SKILL, /maxLoops/);
+  assert.match(ORCHESTRATE_SKILL, /"review":true/);
+  assert.match(ORCHESTRATE_SKILL, /needs-changes/);
+  assert.match(ORCHESTRATE_SKILL, /at most 2 retries per loop/);
+  const recovery = ORCHESTRATE_SKILL.indexOf("### 8. Handle");
+  const loops = ORCHESTRATE_SKILL.indexOf("### 8b. Loops");
+  const finish = ORCHESTRATE_SKILL.indexOf("### 9. Finish");
+  assert.ok(recovery >= 0 && recovery < loops && loops < finish);
+  assert.match(ORCHESTRATE_SKILL, /node '<helper>' loop <</);
+  assert.match(ORCHESTRATE_SKILL, /"approval"|approval: \{"loops"/);
+  assert.match(ORCHESTRATE_SKILL, /unresolved/);
+  assert.match(
+    ORCHESTRATE_SKILL,
+    /Never start a symphony to fix another symphony's findings/,
+  );
+  assert.match(ORCHESTRATE_SKILL, /Loop must reopen or defer every open item/);
+  assert.match(ORCHESTRATE_SKILL, /exceeds the loop budget/);
+});
+
 void test("install writes both copies, refreshes them, and remove deletes only Conductor copies", async () => {
   const home = await testDirectory();
   const paths = skillPaths(home);

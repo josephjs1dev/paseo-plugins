@@ -6,8 +6,10 @@ import {
 } from "../shared/symphonies/commands";
 import {
   attemptSchema,
+  executionSchema,
   SYMPHONY_LIMITS,
   taskReportSchema,
+  taskSchema,
 } from "../shared/symphonies/models";
 import { symphonyAck } from "../server/entrypoints/commands/ack";
 
@@ -231,6 +233,387 @@ void test("failed reports may carry a diagnosis and completed reports reject it"
       ...base,
       diagnosis: { ...diagnosis, extra: true },
     }).success,
+    false,
+  );
+});
+
+void test("reports distinguish needs-changes from failed with findings and diagnosis rules", () => {
+  const blocking = {
+    id: "F1",
+    severity: "blocking" as const,
+    taskId: "api",
+    paths: ["src/api.ts:41"],
+    summary: "concertId is validated after its lookup.",
+  };
+  const report = (patch: Record<string, unknown>) =>
+    taskReportSchema.safeParse({
+      outcome: "needs-changes",
+      summary: "The work ran but is not acceptable yet",
+      evidence: ["Checks still red after fix rounds"],
+      checks: [],
+      ...patch,
+    });
+  // needs-changes requires a blocking finding or a failed check.
+  assert.equal(report({ findings: [blocking] }).success, true);
+  assert.equal(
+    report({
+      checks: [
+        { name: "Regression", status: "failed" as const, detail: "Red." },
+      ],
+    }).success,
+    true,
+  );
+  assert.equal(
+    report({ findings: [{ ...blocking, severity: "minor" }] }).success,
+    false,
+  );
+  assert.equal(report({}).success, false);
+  assert.equal(report({ findings: [blocking], checks: [] }).success, true);
+  // Diagnosis stays failed-only, so needs-changes cannot carry one.
+  assert.equal(
+    report({
+      findings: [blocking],
+      diagnosis: { tried: ["tried"], suspectedCause: "cause", need: "harness" },
+    }).success,
+    false,
+  );
+  // completed allows only minor findings and no diagnosis.
+  const completed = {
+    outcome: "completed" as const,
+    summary: "Done",
+    evidence: ["Observed the behavior"],
+    checks: [],
+  };
+  assert.equal(
+    taskReportSchema.safeParse({
+      ...completed,
+      findings: [{ ...blocking, severity: "minor" }],
+    }).success,
+    true,
+  );
+  assert.equal(
+    taskReportSchema.safeParse({ ...completed, findings: [blocking] }).success,
+    false,
+  );
+  // failed carries the diagnosis; need gains harness and keeps none.
+  assert.equal(
+    taskReportSchema.safeParse({
+      outcome: "failed",
+      summary: "Agent unreachable",
+      evidence: ["Cannot launch"],
+      checks: [],
+      diagnosis: {
+        tried: ["tried"],
+        suspectedCause: "Launcher",
+        need: "harness",
+      },
+    }).success,
+    true,
+  );
+  assert.equal(
+    taskReportSchema.safeParse({
+      outcome: "failed",
+      summary: "Stored before needs-changes",
+      evidence: ["Old record"],
+      checks: [],
+      diagnosis: { tried: ["tried"], suspectedCause: "cause", need: "none" },
+    }).success,
+    true,
+  );
+  // Finding ids must be unique and the count is bounded.
+  assert.equal(
+    taskReportSchema.safeParse({
+      ...completed,
+      findings: [
+        { ...blocking, severity: "minor" },
+        { ...blocking, id: "F1" },
+      ],
+    }).success,
+    false,
+  );
+  const many = Array.from(
+    { length: SYMPHONY_LIMITS.findingsPerReport + 1 },
+    (_, index) => ({ ...blocking, id: `F${index}` }),
+  );
+  assert.equal(report({ findings: many }).success, false);
+  assert.equal(SYMPHONY_LIMITS.findingsPerReport, 24);
+});
+
+void test("loop reopens owning tasks, appends tasks, defers, and records approval", () => {
+  const loop = {
+    kind: "loop" as const,
+    symphonyId: id,
+    reason: "Fix review findings F1-F3",
+    reopen: [
+      {
+        taskId: "api",
+        findings: ["review#F1", "review#F2"],
+        note: "Validate concertId before lookup.",
+        addWrites: ["shared/schema.ts"],
+        after: ["plan-2"],
+      },
+      { taskId: "ui", findings: ["review#F3"] },
+    ],
+    tasks: [
+      {
+        id: "plan-2",
+        title: "Plan the concertId validation",
+        description: "Design the ordering fix",
+        dependsOn: [],
+        reads: ["server", "shared"],
+        writes: [],
+        checks: [],
+      },
+    ],
+    deferred: [{ finding: "review#F4", reason: "Needs a user decision" }],
+    approval: { loops: 4, userAnswer: "Continue, we ship Friday." },
+  };
+  const parsed = symphonyCommandSchema.parse(loop);
+  if (parsed.kind !== "loop") {
+    throw new Error("expected a loop command");
+  }
+  assert.deepEqual(parsed.reopen, loop.reopen);
+  assert.deepEqual(parsed.deferred, loop.deferred);
+  assert.deepEqual(parsed.approval, loop.approval);
+  assert.equal(parsed.tasks?.[0]?.id, "plan-2");
+  // reopen is optional and defaults to an empty list.
+  const withoutReopen = symphonyCommandSchema.parse({
+    ...loop,
+    reopen: undefined,
+  });
+  if (withoutReopen.kind !== "loop") {
+    throw new Error("expected a loop command");
+  }
+  assert.deepEqual(withoutReopen.reopen, []);
+  // A deferred entry needs a finding or a task, and approval loops are positive.
+  assert.equal(
+    symphonyCommandSchema.safeParse({
+      ...loop,
+      deferred: [{ reason: "No reason given" }],
+    }).success,
+    false,
+  );
+  assert.equal(
+    symphonyCommandSchema.safeParse({
+      ...loop,
+      approval: { loops: 0, userAnswer: "No" },
+    }).success,
+    false,
+  );
+  // Appended tasks follow the same worker choice rule as define.
+  assert.equal(
+    symphonyCommandSchema.safeParse({
+      ...loop,
+      tasks: [
+        {
+          id: "t",
+          title: "T",
+          description: "D",
+          profile: "Small",
+          model: "pi-test",
+        },
+      ],
+    }).success,
+    false,
+  );
+  // Finding references per reopened task are bounded.
+  assert.equal(
+    symphonyCommandSchema.safeParse({
+      ...loop,
+      reopen: [
+        {
+          taskId: "api",
+          findings: Array.from(
+            { length: SYMPHONY_LIMITS.findingsPerReport + 1 },
+            (_, index) => `F${index}`,
+          ),
+        },
+      ],
+    }).success,
+    false,
+  );
+  assert.equal(SYMPHONY_LIMITS.maxLoops, 5);
+  assert.equal(SYMPHONY_LIMITS.defaultLoops, 3);
+  assert.equal(SYMPHONY_LIMITS.failedRetriesPerLoop, 2);
+});
+
+void test("orchestrate bounds the loop budget and finish accepts unresolved", () => {
+  const orchestrate = {
+    kind: "orchestrate" as const,
+    key: "key",
+    title: "Fix pagination",
+    goal: "Migrate cursor pagination",
+  };
+  assert.equal(symphonyCommandSchema.safeParse(orchestrate).success, true);
+  for (const maxLoops of [1, 5]) {
+    assert.equal(
+      symphonyCommandSchema.safeParse({ ...orchestrate, maxLoops }).success,
+      true,
+    );
+  }
+  for (const maxLoops of [0, 6]) {
+    assert.equal(
+      symphonyCommandSchema.safeParse({ ...orchestrate, maxLoops }).success,
+      false,
+      `maxLoops ${maxLoops}`,
+    );
+  }
+  const finish = {
+    kind: "finish" as const,
+    symphonyId: id,
+    summary: "Stopped at the loop budget.",
+    unresolved: [{ finding: "review#F1", reason: "User chose to stop." }],
+  };
+  assert.deepEqual(symphonyCommandSchema.parse(finish), finish);
+  assert.equal(
+    symphonyCommandSchema.safeParse({
+      ...finish,
+      unresolved: [{ reason: "No item named" }],
+    }).success,
+    false,
+  );
+  assert.equal(
+    symphonyCommandSchema.safeParse({ ...finish, unresolved: undefined })
+      .success,
+    true,
+  );
+});
+
+void test("define tasks may be marked review and attempts record loops and reopen context", () => {
+  // A define task accepts the review marker.
+  assert.equal(
+    symphonyCommandSchema.safeParse({
+      kind: "define",
+      symphonyId: id,
+      tasks: [{ ...task, review: true }],
+    }).success,
+    true,
+  );
+  // The stored task definition carries the review role and the mirror flag;
+  // older stored definitions parse without it.
+  const reviewTask = {
+    id: "review",
+    title: "Review the work",
+    outcome: "Materialize review findings",
+    prerequisites: ["api"],
+    inputs: ["Prerequisite reports"],
+    reads: ["src"],
+    writes: [],
+    resources: [],
+    worker: { role: "review" as const, profile: "default" },
+    criteria: ["Findings name the owning task"],
+    checks: [],
+    review: true,
+    stopWhen: "Return the review",
+  };
+  assert.equal(taskSchema.safeParse(reviewTask).success, true);
+  assert.equal(
+    taskSchema.safeParse({ ...reviewTask, review: undefined }).success,
+    true,
+  );
+
+  // An attempt records the loop it ran in, reopen context, and a recheck flag.
+  const firstFinding = {
+    id: "F1",
+    severity: "blocking" as const,
+    taskId: "api",
+    paths: ["src/api.ts:41"],
+    summary: "concertId is validated after its lookup.",
+  };
+  const needs = {
+    id: otherId,
+    taskId: "review",
+    agentId: "agent-1",
+    state: "needs-changes" as const,
+    startedAt: 1,
+    endedAt: 2,
+    message: null,
+    report: {
+      outcome: "needs-changes" as const,
+      summary: "Found a blocking ordering bug",
+      evidence: ["Reviewed the endpoint path"],
+      checks: [
+        { name: "Order", status: "failed" as const, detail: "reversed" },
+      ],
+      findings: [firstFinding],
+    },
+    reportHash: null,
+  };
+  assert.equal(attemptSchema.safeParse(needs).success, true);
+  const parsed = attemptSchema.parse({
+    ...needs,
+    loop: 2,
+    reopen: {
+      reason: "Fix F1 (api)",
+      findings: [firstFinding],
+    },
+    recheck: false,
+  });
+  assert.equal(parsed.loop, 2);
+  assert.equal(parsed.reopen?.reason, "Fix F1 (api)");
+  assert.equal(parsed.reopen?.findings[0]?.id, "F1");
+  assert.equal(parsed.recheck, false);
+  assert.equal(attemptSchema.safeParse({ ...needs, loop: 0 }).success, false);
+  assert.equal(
+    attemptSchema.safeParse({ ...needs, recheck: true }).success,
+    true,
+  );
+});
+
+void test("conducting metadata carries the loop budget, loop records, and unresolved items", () => {
+  const execution = {
+    origin: "conducted" as const,
+    conducting: {
+      phase: "working" as const,
+      concurrency: 2,
+      requestedBy: null,
+      conductorLaunch: "started" as const,
+      conductor: "self" as const,
+      prompt: "Carry out the shared plan",
+      notification: null,
+      maxLoops: 4,
+      loops: [
+        {
+          number: 2,
+          reason: "Fix review findings F1-F3",
+          startedAt: 10,
+          reopened: [
+            {
+              taskId: "api",
+              findings: ["review#F1", "review#F2"],
+              after: ["plan-2"],
+            },
+          ],
+          added: ["plan-2"],
+          deferred: [{ finding: "review#F4", reason: "User decision" }],
+          approval: { loops: 4, userAnswer: "Continue." },
+        },
+      ],
+    },
+    attempts: [],
+    summary: null,
+    finishedAt: null,
+    interruption: null,
+    unresolved: [{ taskId: "ui", reason: "User stopped" }],
+  };
+  assert.deepEqual(executionSchema.parse(execution), execution);
+  // Loop records before loops existed stay parsable: maxLoops, loops, and the
+  // loop-only fields are all optional, and repeated fields do not default.
+  assert.equal(
+    executionSchema.safeParse({
+      ...execution,
+      conducting: {
+        ...execution.conducting,
+        maxLoops: undefined,
+        loops: undefined,
+      },
+      unresolved: undefined,
+    }).success,
+    true,
+  );
+  assert.equal(
+    executionSchema.safeParse({ ...execution, unresolved: [{ reason: "?" }] })
+      .success,
     false,
   );
 });

@@ -561,11 +561,11 @@ void test(
     const byName = new Map(tools.map((tool) => [tool.name, tool]));
     assert.match(
       byName.get("report")?.description ?? "",
-      /A failed report needs a diagnosis; need "scope" needs requestedWrites/,
+      /needs-changes needs at least one blocking finding or failed check/,
     );
     assert.match(
       byName.get("report")?.description ?? "",
-      /A completed report has no diagnosis/,
+      /A review names each blocking defect in findings/,
     );
     assert.match(
       byName.get("widen")?.description ?? "",

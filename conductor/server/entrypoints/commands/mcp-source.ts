@@ -3,7 +3,7 @@ import { symphonyCommandSchema } from "../../../shared/symphonies/commands";
 
 const descriptions = {
   report:
-    'Save your assigned attempt\'s completed or failed report with actual evidence and check results. Use the symphonyId and attemptId from your assignment. Give a result for every required check. A failed report needs a diagnosis; need "scope" needs requestedWrites. A completed report has no diagnosis. Reporting succeeds only when the result contains your saved report. Inspect the returned acknowledgement, then end your turn.',
+    "Save your assigned attempt's completed, needs-changes or failed report with actual evidence and check results. Use the symphonyId and attemptId from your assignment. Give a result for every required check. completed needs every declared check passed and no blocking findings; needs-changes needs at least one blocking finding or failed check and is resolved by the next loop, not retried; failed is for a harness problem (launch, unreachable agent, missing permissions, unavailable model) and needs a diagnosis. A review names each blocking defect in findings with its owning taskId and path:line. Reporting succeeds only when the result contains your saved report. Inspect the returned acknowledgement, then end your turn.",
   block:
     "Record a blocker on your assigned attempt when you need input or cannot proceed. This does not report successful completion. Use when you need input or cannot proceed and no report applies. The Conductor resumes you with an answer.",
   get: "Inspect a symphony you own or are assigned to, including saved reports. Use this to verify an uncertain acknowledgement before retrying.",
