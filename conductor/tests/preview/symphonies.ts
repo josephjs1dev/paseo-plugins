@@ -575,6 +575,160 @@ Object.assign(extendedFixtureSymphonies, {
   unresolved: unresolvedSymphony,
 });
 
+/**
+ * Two loops whose displayed scores genuinely differ: loop 2 appended the api
+ * task (`added`), so the graph for loop 1 shows only ui while the latest loop
+ * shows ui plus api. The graph-selection invalidation regression uses this to
+ * pick a latest-loop task, step back to a loop without it, and return.
+ */
+const loopScoresSymphony = (): StoredSymphony => {
+  const api = task("api", {
+    worker: { role: "implementation", profile: "default" },
+  });
+  const ui = task("ui", {
+    worker: { role: "implementation", profile: "default" },
+  });
+  const base = storedSymphony();
+  return {
+    ...base,
+    id: "f1151538-5302-4fbf-b50b-f6a55f2a5c24",
+    title: "Loop score revision",
+    status: "running",
+    revisions: [
+      {
+        number: 1,
+        parent: null,
+        reason: "Conductor task breakdown",
+        acceptedAt: LOOP_T0,
+        score: { tasks: [ui] },
+      },
+      {
+        number: 2,
+        parent: 1,
+        reason: "Loop 2 appended the api task for the user-approved fix",
+        acceptedAt: LOOP_T0 + 60 * LOOP_MINUTE,
+        score: { tasks: [ui, api] },
+      },
+    ],
+    execution: {
+      origin: "conducted",
+      conducting: {
+        phase: "working",
+        concurrency: 2,
+        requestedBy: null,
+        conductor: "agent",
+        conductorLaunch: "started",
+        prompt: "Coordinate the loop fix",
+        notification: "loop-end:1",
+        maxLoops: 3,
+        loops: [
+          {
+            number: 2,
+            reason: "Fix the api offset handling found in loop 1",
+            startedAt: LOOP_T0 + 45 * LOOP_MINUTE,
+            reopened: [{ taskId: "api", findings: ["api#F1"] }],
+            added: ["api"],
+            deferred: [],
+          },
+        ],
+      },
+      attempts: [
+        loopAttempt("ui", "needs-changes", 1, 1, 30, {
+          report: {
+            outcome: "needs-changes",
+            summary: "The ui findings stand; the api task must run too.",
+            evidence: ["Read the loop 1 report"],
+            checks: [],
+          },
+        }),
+        loopAttempt("api", "running", 2, 2, 70, {
+          launch: fixtureLaunch(true),
+          reopen: {
+            reason: "Fix review finding F1 — add the missing api task.",
+            findings: [
+              loopFinding(
+                "F1",
+                "blocking",
+                "api",
+                ["conductor/server/symphonies/execution.ts:41"],
+                "The api task reports nothing yet; the fix plan needs the task in the score.",
+              ),
+            ],
+          },
+        }),
+      ],
+      summary: null,
+      finishedAt: null,
+      interruption: null,
+    },
+  };
+};
+
+Object.assign(extendedFixtureSymphonies, {
+  "loop-scores": loopScoresSymphony,
+});
+
+/**
+ * A reported result that is one short paragraph (93 characters, no newline):
+ * it clamps to a single visually truncated line at narrow panes, so Show more
+ * must stay reachable at every width and reveal the complete text (finding
+ * R1). One completed task keeps the completed symphony consistent.
+ */
+export const shortResultSummary =
+  "Compared both pagination strategies, recorded the findings, and left the choice to the user.";
+
+const shortResultSymphony = (): StoredSymphony => {
+  const api = task("api", {
+    worker: { role: "implementation", profile: "default" },
+  });
+  const base = storedSymphony();
+  return {
+    ...base,
+    id: "f1151538-5302-4fbf-b50b-f6a55f2a5c25",
+    status: "completed",
+    revisions: [
+      {
+        number: 1,
+        parent: null,
+        reason: "Conductor task breakdown",
+        acceptedAt: LOOP_T0,
+        score: { tasks: [api] },
+      },
+    ],
+    execution: {
+      origin: "tracked",
+      attempts: [
+        {
+          id: "b410f767-1197-469b-8b89-af35338a4ec9",
+          taskId: "api",
+          agentId: "worker-api",
+          state: "completed",
+          startedAt: LOOP_T0,
+          endedAt: LOOP_T0 + 20 * LOOP_MINUTE,
+          message: null,
+          reportHash: "c".repeat(64),
+          report: {
+            outcome: "completed",
+            summary: shortResultSummary,
+            evidence: ["Read the recorded findings"],
+            checks: [
+              { name: "focused checks", status: "passed", detail: "green" },
+            ],
+          },
+          launch: fixtureLaunch(true),
+        },
+      ],
+      summary: shortResultSummary,
+      finishedAt: LOOP_T0 + 30 * LOOP_MINUTE,
+      interruption: null,
+    },
+  };
+};
+
+Object.assign(extendedFixtureSymphonies, {
+  "short-result": shortResultSymphony,
+});
+
 /** Orchestrated symphonies record the goal as both plan and expected outcome. */
 const goalEchoContext = {
   ...planContext,

@@ -33,9 +33,18 @@ export interface GraphEdgeLayout {
   readonly points: readonly GraphPoint[];
 }
 
+export interface GraphLayoutSummary {
+  readonly tasks: number;
+  /** Dependency edges after transitive reduction. */
+  readonly dependencies: number;
+  /** Dashed shared-resource connectors. */
+  readonly conflicts: number;
+}
+
 export interface GraphLayout {
   readonly nodes: readonly GraphNodeLayout[];
   readonly edges: readonly GraphEdgeLayout[];
+  readonly summary: GraphLayoutSummary;
   readonly width: number;
   readonly height: number;
 }
@@ -345,5 +354,10 @@ export function layoutGraph(graph: Score, compact = false): GraphLayout {
     maxRows * geometry.nodeHeight +
     Math.max(0, maxRows - 1) * geometry.gapY +
     (conflictRows.size ? conflictDrop + 12 : 0);
-  return { nodes, edges, width, height };
+  const summary: GraphLayoutSummary = {
+    tasks: graph.tasks.length,
+    dependencies: dependencyEdges.length,
+    conflicts: edges.length - dependencyEdges.length,
+  };
+  return { nodes, edges, summary, width, height };
 }

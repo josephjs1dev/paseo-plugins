@@ -179,6 +179,49 @@ void test("long one-line titles are stored fully for the client to truncate", ()
   assert.equal(compact.nodes[0]?.width, 220);
 });
 
+void test("the summary counts tasks, reduced dependencies, and conflicts", () => {
+  const chain = layoutGraph(
+    {
+      tasks: [
+        task("t1"),
+        task("t2", { prerequisites: ["t1"] }),
+        task("t3", { prerequisites: ["t1", "t2"] }),
+      ],
+    },
+    false,
+  );
+  // The transitive edge t1->t3 is reduced, so only two arrows remain.
+  assert.deepEqual(chain.summary, { tasks: 3, dependencies: 2, conflicts: 0 });
+  const multi = layoutGraph(score(), false);
+  assert.deepEqual(multi.summary, { tasks: 3, dependencies: 2, conflicts: 0 });
+});
+
+void test("shared-resource conflicts count in the summary heading", () => {
+  const shared = {
+    reads: [],
+    writes: ["src/api"],
+    worker: { role: "implementation" as const, profile: "default" },
+  };
+  const layout = layoutGraph(
+    {
+      tasks: [
+        task("w1", shared),
+        task("w2", { ...shared }),
+        task("w3", { ...shared }),
+      ],
+    },
+    false,
+  );
+  assert.equal(layout.summary.conflicts, 3);
+  assert.equal(layout.summary.dependencies, 0);
+  assert.equal(layout.summary.tasks, 3);
+});
+
+void test("a single-node summary describes an empty score", () => {
+  const single = layoutGraph({ tasks: [task("only")] }, true);
+  assert.deepEqual(single.summary, { tasks: 1, dependencies: 0, conflicts: 0 });
+});
+
 void test("layout is deterministic across repeated calls", () => {
   const source = {
     tasks: [task("api"), task("collect", { prerequisites: ["api"] })],

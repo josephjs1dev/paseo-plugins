@@ -328,10 +328,19 @@ test("task and graph agent links open the actual task agent and retain the Condu
   const api = page.getByTestId("symphony-node-api");
   await api.focus();
   await page.keyboard.press("Enter");
-  await expect(page.getByTestId("preview-status")).toContainText("worker-api");
+  // Keyboard selection stays in Podium; opening the agent is the explicit
+  // panel action, so nothing navigates on Enter alone.
+  await expect(page.getByTestId("preview-status")).not.toContainText(
+    "worker-api",
+  );
   await expect(page.getByTestId("symphony-graph-selection")).toContainText(
     "Selected api",
   );
+  await page
+    .getByTestId("symphony-graph-selection")
+    .getByRole("button", { name: "Open agent · api", exact: true })
+    .click();
+  await expect(page.getByTestId("preview-status")).toContainText("worker-api");
   const collect = page.getByTestId("symphony-node-collect");
   await collect.focus();
   await page.keyboard.press("Enter");

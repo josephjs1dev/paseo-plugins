@@ -30,6 +30,7 @@ export function ReportFooter({
   evidenceOpen,
   checksOpen,
   onToggle,
+  nested = false,
 }: {
   theme: PluginTheme;
   taskId: string;
@@ -38,6 +39,8 @@ export function ReportFooter({
   evidenceOpen: boolean;
   checksOpen: boolean;
   onToggle(this: void, selection: "evidence" | "checks"): void;
+  /** Inset fill inside an already raised card. */
+  nested?: boolean;
 }) {
   const failedChecks = report.checks.filter(
     (check) => check.status === "failed",
@@ -119,22 +122,22 @@ export function ReportFooter({
         )}
       </View>
       {findingsOpen && findings.length > 0 && (
-        <InsetPanel theme={theme}>
+        <InsetPanel theme={theme} nested={nested}>
           <FindingsPanel theme={theme} findings={findings} />
         </InsetPanel>
       )}
       {evidenceOpen && (
-        <InsetPanel theme={theme}>
+        <InsetPanel theme={theme} nested={nested}>
           <EvidencePanel theme={theme} evidence={report.evidence} />
         </InsetPanel>
       )}
       {checksOpen && (
-        <InsetPanel theme={theme}>
+        <InsetPanel theme={theme} nested={nested}>
           <ChecksPanel theme={theme} checks={report.checks} />
         </InsetPanel>
       )}
       {diagnosisOpen && report.diagnosis && (
-        <InsetPanel theme={theme}>
+        <InsetPanel theme={theme} nested={nested}>
           <DiagnosisPanel theme={theme} diagnosis={report.diagnosis} />
         </InsetPanel>
       )}
@@ -241,7 +244,9 @@ export function DiagnosisPanel({
 /**
  * Footer disclosure toggle. Matches the shared Disclosure control (chevron,
  * focus ring, 44px compact touch target, aria-expanded) and can render its
- * label in the danger color, which the Checks toggle needs when a check failed.
+ * label in the danger color, which the Checks toggle needs when a check
+ * failed. Quieter than card body text: the label names what opens, not a
+ * headline.
  */
 function FooterToggle({
   theme,
@@ -293,10 +298,12 @@ function FooterToggle({
       </Text>
       <Text
         style={{
-          color: danger ? theme.colors.statusDanger : theme.colors.foreground,
-          fontSize: 13,
+          color: danger
+            ? theme.colors.statusDanger
+            : theme.colors.foregroundMuted,
+          fontSize: 12,
           lineHeight: 18,
-          fontWeight: "600",
+          fontWeight: "500",
         }}
       >
         {label}
@@ -307,19 +314,23 @@ function FooterToggle({
 
 /**
  * Inset surface for revealed details: surface1 background, a hairline border,
- * radius 6, and 12 padding, rendered at the full card width.
+ * radius 6, and 12 padding, rendered at the full card width. Inside an
+ * already raised card, `nested` swaps to surface2 so the inset still reads
+ * against the card's own fill.
  */
 export function InsetPanel({
   theme,
   children,
+  nested = false,
 }: {
   theme: PluginTheme;
   children: React.ReactNode;
+  nested?: boolean;
 }) {
   return (
     <View
       style={{
-        backgroundColor: theme.colors.surface1,
+        backgroundColor: nested ? theme.colors.surface2 : theme.colors.surface1,
         borderWidth: 1,
         borderColor: theme.colors.border,
         borderRadius: 6,

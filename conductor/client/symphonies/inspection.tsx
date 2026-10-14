@@ -101,7 +101,8 @@ export function SymphonyInspection({
             Every task lists its own status; arrows point from a prerequisite to
             the task that depends on it, and dashed connectors mark shared
             resources that need serialization without adding prerequisites.
-            Select a task to open its task agent when one is running.
+            Select a task to inspect its relationships below the score; its Open
+            agent action there opens the task agent when one is running.
           </Text>
           <ScoreView
             theme={theme}

@@ -1,6 +1,7 @@
 import { useState, useSyncExternalStore } from "react";
 import { ScrollView, Text, TextInput, View } from "react-native";
 import type { PluginTheme } from "@getpaseo/plugin";
+import { Icon } from "@getpaseo/plugin/client/react-native";
 import type { AgentsSnapshot } from "../../shared/agents/models";
 import {
   visibleItems,
@@ -14,11 +15,11 @@ import { visibleSymphonies, type SymphoniesData } from "../symphonies/list";
 import { SymphonyToolbar } from "../symphonies/toolbar";
 import { RefreshButton } from "../ui/refresh-button";
 
-const filters: { id: Filter; label: string }[] = [
-  { id: "attention", label: "Needs attention" },
-  { id: "running", label: "Running" },
-  { id: "inactive", label: "Inactive" },
-  { id: "all", label: "All" },
+const filters: { id: Filter; label: string; icon: string }[] = [
+  { id: "attention", label: "Needs attention", icon: "Bell" },
+  { id: "running", label: "Running", icon: "Activity" },
+  { id: "inactive", label: "Inactive", icon: "CirclePause" },
+  { id: "all", label: "All", icon: "ListChecks" },
 ];
 
 interface Props {
@@ -153,6 +154,7 @@ export function PodiumToolbar(props: Props) {
               role="tab"
               variant="tab"
               label={section === "agents" ? "Agents" : "Symphonies"}
+              icon={section === "agents" ? "Users" : "Music2"}
               selected={state.section === section}
               onPress={() => session.update({ section })}
             />
@@ -210,6 +212,7 @@ export function PodiumToolbar(props: Props) {
                 {...controls}
                 variant="tab"
                 label={filter.label}
+                icon={filter.icon}
                 selected={state.filter === filter.id}
                 {...(reliable
                   ? {
@@ -237,27 +240,53 @@ export function PodiumToolbar(props: Props) {
             testID="podium-tools"
             style={{ ...rowStyle, alignItems: "center" }}
           >
-            <TextInput
-              accessibilityLabel="Search agents and requests"
-              placeholder="Search agents, requests, concerts…"
-              placeholderTextColor={theme.colors.foregroundMuted}
-              value={state.query}
-              onChangeText={(query) => session.update({ query })}
+            <View
               style={{
                 flex: 1,
                 minWidth: compact ? 220 : 240,
-                height: compact ? 44 : 34,
-                paddingHorizontal: 10,
-                paddingVertical: 6,
-                color: theme.colors.foreground,
-                backgroundColor: theme.colors.surface1,
-                borderWidth: 1,
-                borderColor: theme.colors.border,
-                borderRadius: 6,
-                fontSize: 13,
-                lineHeight: 18,
               }}
-            />
+            >
+              <View
+                aria-hidden
+                accessible={false}
+                accessibilityElementsHidden
+                importantForAccessibility="no-hide-descendants"
+                pointerEvents="none"
+                style={{
+                  position: "absolute",
+                  left: 10,
+                  top: 0,
+                  bottom: 0,
+                  justifyContent: "center",
+                }}
+              >
+                <Icon
+                  name="Search"
+                  size={16}
+                  color={theme.colors.foregroundMuted}
+                />
+              </View>
+              <TextInput
+                accessibilityLabel="Search agents and requests"
+                placeholder="Search agents, requests, concerts…"
+                placeholderTextColor={theme.colors.foregroundMuted}
+                value={state.query}
+                onChangeText={(query) => session.update({ query })}
+                style={{
+                  height: compact ? 44 : 34,
+                  paddingLeft: 32,
+                  paddingRight: 10,
+                  paddingVertical: 6,
+                  color: theme.colors.foreground,
+                  backgroundColor: theme.colors.surface1,
+                  borderWidth: 1,
+                  borderColor: theme.colors.border,
+                  borderRadius: 6,
+                  fontSize: 13,
+                  lineHeight: 18,
+                }}
+              />
+            </View>
             <Button
               {...controls}
               label={

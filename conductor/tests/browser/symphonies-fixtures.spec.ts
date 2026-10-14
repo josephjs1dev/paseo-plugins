@@ -1,8 +1,9 @@
 import { expect, test, type Locator, type Page } from "@playwright/test";
-import { mkdir } from "node:fs/promises";
+import { mkdir, writeFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { longSummary, longTaskTitle } from "../symphony-fixtures";
+import { shortResultSummary } from "../preview/symphonies";
 
 /**
  * Integration verification for the Tasks and Graph UI.
@@ -14,12 +15,10 @@ import { longSummary, longTaskTitle } from "../symphony-fixtures";
  * code is not touched by this spec.
  */
 
-const SHOTS = fileURLToPath(
-  new URL(
-    "../../../.artifacts/reviews/20261006-conductor-symphony-ui/screenshots",
-    import.meta.url,
-  ),
+const REVIEW_DIR = fileURLToPath(
+  new URL("../../../.artifacts/reviews/20261013-podium-ui", import.meta.url),
 );
+const SHOTS = resolve(REVIEW_DIR, "screenshots");
 
 async function openSymphony(page: Page, fixture: string, extra = "") {
   await page.goto(`/?symphonies&symphony-fixture=${fixture}${extra}`);
@@ -501,16 +500,21 @@ test("needs changes, loop headers, findings, and unresolved stay readable", asyn
   await expect(apiCard).toContainText(
     "✕ contract test: expected 400 for an unknown concert, received 500",
   );
-  const dotColor = await apiCard.evaluate((element) => {
-    for (const dot of Array.from(element.querySelectorAll("div"))) {
-      const style = getComputedStyle(dot);
-      if (style.width === "6px" && style.height === "6px") {
-        return style.backgroundColor;
-      }
-    }
-    return null;
-  });
-  expect(dotColor).toBe("rgb(148, 96, 18)");
+  // The shared status presentation paints the label (and its icon) in the
+  // warning role: the work ran, but the result is not acceptable yet.
+  await expect(apiCard.getByText("Needs changes", { exact: true })).toHaveCSS(
+    "color",
+    "rgb(148, 96, 18)",
+  );
+  // The status icon is the svg beside the label, not the Open agent icon;
+  // the host Icon carries its color as the stroke attribute.
+  const iconColor = await apiCard
+    .getByText("Needs changes", { exact: true })
+    .evaluate((text) => {
+      const svg = text.previousElementSibling?.querySelector("svg");
+      return svg?.getAttribute("stroke") ?? null;
+    });
+  expect(iconColor).toBe("#946012");
   await apiCard.getByTestId("symphony-task-findings-api").click();
   await expect(apiCard).toContainText("✕ Blocking · F1");
   await expect(apiCard).toContainText("server/symphonies/execution.ts:112");
@@ -757,6 +761,15 @@ test("captures Tasks and Graph screenshots at the required viewports and themes"
   await detailButton(detail, "Graph").click();
   await snap("wide-light-graph-long-title.png");
 
+  // 768x1024 (intermediate), dark, Tasks and Graph: the mid layout keeps the
+  // split view, so its dark rendering is captured alongside the light one
+  // from the 768px behavior test below.
+  await page.setViewportSize({ width: 768, height: 1024 });
+  await openSymphony(page, "multi", "&dark");
+  await snap("mid-dark-tasks-multi.png");
+  await detailButton(detail, "Graph").click();
+  await snap("mid-dark-graph-multi.png");
+
   // 390x844 (compact), light and dark.
   await page.setViewportSize({ width: 390, height: 844 });
   await openSymphony(page, "multi", "&global");
@@ -769,6 +782,39 @@ test("captures Tasks and Graph screenshots at the required viewports and themes"
   await snap("narrow-dark-graph-multi.png");
   await openSymphony(page, "long-title", "&global&dark");
   await snap("narrow-dark-tasks-long-title.png");
+
+  // 320px: the smallest supported compact width, light and dark, Tasks and
+  // Graph. Long titles and results must wrap without horizontal overflow.
+  for (const [label, suffix] of [
+    ["light", "&global"],
+    ["dark", "&global&dark"],
+  ] as const) {
+    await page.setViewportSize({ width: 320, height: 690 });
+    await openSymphony(page, "long-title", suffix);
+    expect(await noPageOverflow(page)).toBe(true);
+    await snap(`tiny-${label}-tasks-long-title.png`);
+    await detailButton(detail, "Graph").click();
+    expect(await noPageOverflow(page)).toBe(true);
+    await snap(`tiny-${label}-graph-long-title.png`);
+  }
+
+  // Stale storage: the warning notice stays above the saved content so the
+  // progress and results never read as live.
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto("/?symphonies&symphony-failed&global&dark");
+  await page.getByRole("tab", { name: "Symphonies", exact: true }).click();
+  await expect(
+    page.getByText(/Symphony storage could not refresh/),
+  ).toBeVisible();
+  await snap("narrow-dark-list-stale.png");
+  await page
+    .getByRole("button", { name: /^Open symphony:/ })
+    .first()
+    .click();
+  await expect(page.getByTestId("symphony-detail")).toContainText(
+    "Symphony refresh failed",
+  );
+  await snap("narrow-dark-detail-stale.png");
 
   // Remaining states as a narrow dark contact sheet.
   for (const fixture of [
@@ -786,6 +832,360 @@ test("captures Tasks and Graph screenshots at the required viewports and themes"
     await openSymphony(page, fixture, "&global&dark");
     await snap(`narrow-dark-tasks-${fixture}.png`);
   }
+});
+
+/**
+ * WCAG 2.x relative-contrast ratio for two resolved CSS colors, both read
+ * from the rendered page. 4.5:1 is the AA bar for body text.
+ */
+function contrastRatio(a: string, b: string): number {
+  const channel = (value: number) => {
+    const scaled = value / 255;
+    return scaled <= 0.03928
+      ? scaled / 12.92
+      : ((scaled + 0.055) / 1.055) ** 2.4;
+  };
+  const luminance = (color: string) => {
+    const values = (color.match(/\d+(?:\.\d+)?/g) ?? []).map(Number);
+    return (
+      0.2126 * channel(values[0] ?? 0) +
+      0.7152 * channel(values[1] ?? 0) +
+      0.0722 * channel(values[2] ?? 0)
+    );
+  };
+  const la = luminance(a);
+  const lb = luminance(b);
+  return (Math.max(la, lb) + 0.05) / (Math.min(la, lb) + 0.05);
+}
+
+test("status and metadata text meets the 4.5:1 contrast bar in both themes", async ({
+  page,
+}) => {
+  for (const [theme, suffix] of [
+    ["light", ""],
+    ["dark", "&dark"],
+  ] as const) {
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await openSymphony(page, "multi", suffix);
+    const surface = await page.evaluate(() => {
+      const read = (testId: string) => {
+        const element = document.querySelector<HTMLElement>(
+          `[data-testid="${testId}"]`,
+        );
+        if (!element) {
+          return null;
+        }
+        let node: HTMLElement | null = element;
+        while (node) {
+          const background = getComputedStyle(node).backgroundColor;
+          if (background && background !== "rgba(0, 0, 0, 0)") {
+            return background;
+          }
+          node = node.parentElement;
+        }
+        return null;
+      };
+      return {
+        taskState: read("symphony-task-ui"),
+        detail: read("symphony-detail"),
+      };
+    });
+    expect(surface.taskState, `${theme} task surface`).not.toBeNull();
+    expect(surface.detail, `${theme} detail surface`).not.toBeNull();
+    for (const [name, testId] of [
+      ["status label", "symphony-task-ui"],
+      ["progress count", "symphony-detail"],
+    ] as const) {
+      const textColor = await page.getByTestId(testId).evaluate((element) => {
+        for (const text of Array.from(element.querySelectorAll("*"))) {
+          const content = (text.textContent ?? "").trim();
+          // Leaf text nodes only: wrapper views inherit a default color that
+          // says nothing about the rendered label.
+          if (
+            text.children.length === 0 &&
+            (content.startsWith("Waiting") ||
+              content.includes("tasks reported complete"))
+          ) {
+            const style = getComputedStyle(text);
+            if (style.color !== "rgba(0, 0, 0, 0)") {
+              return style.color;
+            }
+          }
+        }
+        return null;
+      });
+      expect(textColor, `${theme} ${name} color`).not.toBeNull();
+      const background =
+        name === "status label" ? surface.taskState : surface.detail;
+      const ratio = contrastRatio(textColor ?? "", background ?? "");
+      expect(
+        ratio,
+        `${theme} ${name} contrast on ${background}`,
+      ).toBeGreaterThanOrEqual(4.5);
+    }
+  }
+});
+
+/**
+ * R1 regression: a reported result that is one short paragraph (93 characters,
+ * no newline) clamps to a single visually truncated line at narrow panes. The
+ * expansion control must exist at every width, keep a 44px target when
+ * compact, and reveal the complete text with no residual visual clamp.
+ */
+test("short single-paragraph results stay fully reachable at 320px and mid width", async ({
+  page,
+}) => {
+  const detail = page.getByTestId("symphony-detail");
+  for (const [label, width, height, suffix, compact] of [
+    ["320px", 320, 690, "&global", true],
+    ["768px", 768, 1024, "", false],
+  ] as const) {
+    await page.setViewportSize({ width, height });
+    await openSymphony(page, "short-result", suffix);
+    expect(
+      await noPageOverflow(page),
+      `${label} must not overflow the page`,
+    ).toBe(true);
+    // The result surface's Show more is the first control in the detail; a
+    // compact task card may carry its own second toggle for the same text.
+    const showMore = detailButton(detail, "Show more");
+    await expect(showMore, `${label} offers expansion`).toBeVisible();
+    if (compact) {
+      const box = await showMore.boundingBox();
+      expect(
+        box?.height ?? 0,
+        `${label} expansion control touch target`,
+      ).toBeGreaterThanOrEqual(44);
+    }
+    // Visual clamp before expansion: the single preview line overflows at a
+    // narrow pane. (At 768px the 93 characters fit one line, so only the
+    // reachability of the full text is asserted there.)
+    const paragraph = detail.getByText(shortResultSummary).first();
+    await expect(paragraph).toBeVisible();
+    // Before expansion the preview is a single truncated text line (93
+    // characters cannot fit one line at 320px). At 768px the line fits, so
+    // only reachability of the full text is asserted there.
+    const clamped = await paragraph.evaluate(
+      (element: HTMLElement) => element.clientHeight,
+    );
+    if (compact) {
+      expect(
+        clamped,
+        `${label} preview is one truncated line`,
+      ).toBeLessThanOrEqual(21);
+    }
+    await showMore.click();
+    const expanded = await paragraph.evaluate(
+      (element: HTMLElement) => element.clientHeight,
+    );
+    if (compact) {
+      expect(
+        expanded,
+        `${label} full wrapped text becomes visible`,
+      ).toBeGreaterThan(clamped);
+    }
+    await expect(paragraph).toBeVisible();
+  }
+});
+
+/**
+ * R5 regression: the track reflects reported task counts — present but empty
+ * when tasks exist and none reported, absent for planning and for a score
+ * with zero tasks (no division by zero, no fake percentage).
+ */
+test("progress track is present-but-empty with tasks, and absent when planning or zero", async ({
+  page,
+}) => {
+  const detail = page.getByTestId("symphony-detail");
+  await page.setViewportSize({ width: 1440, height: 900 });
+
+  // Three tasks, none reported complete: the track exists with three
+  // unfilled segments. (Default fixture; the queue row carries its own
+  // continuous-track container, the detail carries the segmented one.)
+  await page.goto("/?symphonies");
+  await page.getByRole("tab", { name: "Symphonies", exact: true }).click();
+  await page
+    .getByRole("button", { name: /^Open symphony:/ })
+    .first()
+    .click();
+  await expect(detail).toBeVisible();
+  const track = detail.locator('[aria-label="0 of 3 tasks reported complete"]');
+  await expect(track).toHaveCount(1);
+  const slices = track.locator("[aria-label]");
+  const segments = await slices.count();
+  expect(segments, "one segment per task").toBe(3);
+  const fills = await slices.evaluateAll((nodes) =>
+    nodes.map((node) => getComputedStyle(node).backgroundColor),
+  );
+  for (const fill of fills) {
+    expect(fill, "no segment claims completion").not.toBe("rgb(25, 115, 74)");
+  }
+
+  // Planning: no count and no track at all, only "Splitting into tasks".
+  await openSymphony(page, "planning");
+  await expect(
+    detail.getByText("Splitting into tasks", { exact: true }),
+  ).toBeVisible();
+  await expect(
+    detail.locator('[aria-label*="tasks reported complete"]'),
+  ).toHaveCount(0);
+
+  // Zero tasks: the count renders, the track does not.
+  await openSymphony(page, "empty");
+  const emptyTrack = detail.locator(
+    '[aria-label="0 of 0 tasks reported complete"]',
+  );
+  await expect(emptyTrack).toHaveCount(1);
+  expect(
+    await emptyTrack.evaluate(
+      (element: HTMLElement) =>
+        Array.from(element.querySelectorAll("[aria-label]")).filter(
+          (node) => node !== element,
+        ).length,
+    ),
+  ).toBe(0);
+});
+
+/**
+ * R3 regression: the graph selection panel's Open agent action keeps a 44px
+ * touch target in compact layout.
+ */
+test("compact graph Open agent keeps a 44px touch target", async ({ page }) => {
+  await page.setViewportSize({ width: 320, height: 690 });
+  await page.goto("/?symphonies&global");
+  await page.getByRole("tab", { name: "Symphonies", exact: true }).click();
+  await page
+    .getByRole("button", { name: /^Open symphony:/ })
+    .first()
+    .click();
+  await expect(page.getByTestId("symphony-detail")).toBeVisible();
+  // Give the api task a live attempt so the panel can offer navigation.
+  await page
+    .getByRole("button", { name: "Source claims task", exact: true })
+    .click();
+  await page
+    .getByTestId("symphony-detail")
+    .getByRole("button", { name: "Graph", exact: true })
+    .click();
+  await expect(page.getByTestId("symphony-graph")).toBeVisible();
+  await page.getByTestId("symphony-node-api").click();
+  await expect(page.getByTestId("symphony-graph-selection")).toBeVisible();
+  const box = await page.getByTestId("symphony-graph-open-agent").boundingBox();
+  expect(box?.height ?? 0).toBeGreaterThanOrEqual(44);
+  expect(
+    await page.evaluate(() => document.documentElement.scrollWidth),
+  ).toBeLessThanOrEqual(320);
+});
+
+/**
+ * R4: 150% page-scale emulation (CDP Emulation.setPageScaleFactor — a pinch
+ * zoom that only scales rendering, not a browser zoom) keeps content
+ * unclipped and tabs reachable. Genuine 200% browser zoom is not reproducible
+ * in this harness; the attempts and their measurements are recorded in
+ * zoom-probe.json and the limitation is stated in notes.md.
+ */
+test("150% page-scale emulation keeps content unclipped and tabs reachable", async ({
+  page,
+}) => {
+  const detail = page.getByTestId("symphony-detail");
+  await page.setViewportSize({ width: 1440, height: 900 });
+
+  // Attempt a genuine browser zoom first and record what actually happens.
+  await openSymphony(page, "multi");
+  const before = await page.evaluate(() => ({
+    dpr: window.devicePixelRatio,
+    clientWidth: document.documentElement.clientWidth,
+    vvScale: window.visualViewport ? window.visualViewport.scale : null,
+  }));
+  await page.keyboard.down("Control");
+  await page.mouse.move(720, 450);
+  await page.mouse.wheel(0, -1200);
+  await page.keyboard.up("Control");
+  await page.waitForTimeout(300);
+  const after = await page.evaluate(() => ({
+    dpr: window.devicePixelRatio,
+    clientWidth: document.documentElement.clientWidth,
+    vvScale: window.visualViewport ? window.visualViewport.scale : null,
+  }));
+  // Device-scale emulation is also not browser zoom: it scales raster output
+  // while the CSS layout width stays unchanged, so it never reflows either.
+  const cdp = await page.context().newCDPSession(page);
+  await cdp.send("Emulation.setDeviceMetricsOverride", {
+    width: 1440,
+    height: 900,
+    deviceScaleFactor: 2,
+    mobile: false,
+  });
+  await page.waitForTimeout(300);
+  const dsf = await page.evaluate(() => ({
+    dpr: window.devicePixelRatio,
+    clientWidth: document.documentElement.clientWidth,
+  }));
+  await cdp.send("Emulation.clearDeviceMetricsOverride");
+  await mkdir(REVIEW_DIR, { recursive: true });
+  await writeFile(
+    resolve(REVIEW_DIR, "zoom-probe.json"),
+    JSON.stringify(
+      {
+        genuineBrowserZoom: "not reproducible in this harness",
+        attempts: [
+          {
+            method: "Ctrl+wheel zoom gesture",
+            result:
+              "ignored by headless Chromium: devicePixelRatio, layout clientWidth and visualViewport.scale all unchanged",
+            before,
+            after,
+          },
+          {
+            method: "Emulation.setDeviceMetricsOverride deviceScaleFactor 2",
+            result:
+              "raster scale only: clientWidth stays 1440, so no reflow; not browser zoom",
+            measured: dsf,
+          },
+        ],
+        existingCoverage:
+          "Emulation.setPageScaleFactor 1.5 (pinch zoom, rendering scaled without reflow) in this test and the layout probe",
+        reflowProxy:
+          "640px layout probes cover the CSS layout width a 1280px window has at 200% browser zoom",
+      },
+      null,
+      2,
+    ),
+  );
+
+  // Page-scale (pinch) emulation at 150%: rendering scales, layout does not.
+  await cdp.send("Emulation.setPageScaleFactor", { pageScaleFactor: 1.5 });
+  await page.setViewportSize({ width: 1440, height: 900 });
+  expect(await noPageOverflow(page)).toBe(true);
+  // The action area wraps instead of pushing the tab strip off-screen.
+  await expect(detailButton(detail, "Tasks")).toBeVisible();
+  await expect(detailButton(detail, "History")).toBeVisible();
+  for (const view of ["Tasks", "Graph", "History"]) {
+    await detailButton(detail, view).click();
+  }
+  await detailButton(detail, "Graph").click();
+  await expect(page.getByTestId("symphony-graph")).toBeVisible();
+  // Graph still scrolls internally under the scaled rendering.
+  const canvas = await page
+    .getByTestId("symphony-node-api")
+    .evaluate((element: HTMLElement) => {
+      let node: HTMLElement | null = element.parentElement;
+      while (node && node.scrollWidth <= node.clientWidth) {
+        node = node.parentElement;
+      }
+      if (!node || node === document.documentElement) {
+        return null;
+      }
+      node.scrollLeft = 200;
+      return node.scrollLeft;
+    });
+  expect(canvas ?? 0).toBeGreaterThan(0);
+  await mkdir(SHOTS, { recursive: true });
+  await page.screenshot({
+    path: resolve(SHOTS, "pagescale-150-multi-graph-light.png"),
+    fullPage: false,
+  });
+  await cdp.send("Emulation.setPageScaleFactor", { pageScaleFactor: 1 });
 });
 
 test("768px viewport keeps every tab reachable and the graph internally scrollable", async ({
@@ -845,56 +1245,22 @@ test("768px viewport keeps every tab reachable and the graph internally scrollab
   );
   expect(canvas ? canvas.scrollLeft : 0).toBeGreaterThan(0);
 
-  // Keyboard activation still opens a task agent from the graph.
+  // Keyboard activation selects the node for inspection without leaving
+  // Podium; the agent opens only through the panel's explicit action.
   await page.getByTestId("symphony-node-api").focus();
   await page.keyboard.press("Enter");
-  await expect(page.getByTestId("preview-status")).toContainText("worker-api");
+  await expect(page.getByTestId("symphony-graph-selection")).toContainText(
+    "Selected api",
+  );
+  await expect(page.getByTestId("preview-status")).not.toContainText(
+    "worker-api",
+  );
 
   await mkdir(SHOTS, { recursive: true });
   await page.screenshot({
     path: resolve(SHOTS, "mid-768-graph-multi-light.png"),
     fullPage: false,
   });
-});
-
-test("enlarged zoom keeps content unclipped and tabs reachable", async ({
-  page,
-}) => {
-  const detail = page.getByTestId("symphony-detail");
-  await page.setViewportSize({ width: 1440, height: 900 });
-  const cdp = await page.context().newCDPSession(page);
-  await cdp.send("Emulation.setPageScaleFactor", { pageScaleFactor: 1.5 });
-  await openSymphony(page, "multi");
-  expect(await noPageOverflow(page)).toBe(true);
-  // The action area wraps instead of pushing the tab strip off-screen.
-  await expect(detailButton(detail, "Tasks")).toBeVisible();
-  await expect(detailButton(detail, "History")).toBeVisible();
-  for (const view of ["Tasks", "Graph", "History"]) {
-    await detailButton(detail, view).click();
-  }
-  await detailButton(detail, "Graph").click();
-  await expect(page.getByTestId("symphony-graph")).toBeVisible();
-  // Graph still scrolls internally under zoom.
-  const canvas = await page
-    .getByTestId("symphony-node-api")
-    .evaluate((element: HTMLElement) => {
-      let node: HTMLElement | null = element.parentElement;
-      while (node && node.scrollWidth <= node.clientWidth) {
-        node = node.parentElement;
-      }
-      if (!node || node === document.documentElement) {
-        return null;
-      }
-      node.scrollLeft = 200;
-      return node.scrollLeft;
-    });
-  expect(canvas ?? 0).toBeGreaterThan(0);
-  await mkdir(SHOTS, { recursive: true });
-  await page.screenshot({
-    path: resolve(SHOTS, "zoom-150-multi-graph-light.png"),
-    fullPage: false,
-  });
-  await cdp.send("Emulation.setPageScaleFactor", { pageScaleFactor: 1 });
 });
 
 test("fixture symphonies serialize under the production symphony schema", async () => {

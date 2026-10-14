@@ -5,18 +5,15 @@ import { fileURLToPath } from "node:url";
 
 /**
  * Layout probe: measures geometry at the required viewports/themes (1440x900,
- * 390x844, 768px, and 150% zoom) in both the Tasks and Graph views, and
- * records the numbers as JSON evidence. The card-title and node-title text
- * metrics distinguish wrapping (full text visible on cards) from intentional
- * node truncation, and the graph-canvas metrics prove the canvas scrolls
- * internally while the page never overflows.
+ * 390x844, 320px, 768px, and 150% zoom) in both the Tasks and Graph views,
+ * and records the numbers as JSON evidence. The card-title and node-title
+ * text metrics distinguish wrapping (full text visible on cards) from
+ * intentional node truncation, and the graph-canvas metrics prove the canvas
+ * scrolls internally while the page never overflows.
  */
 
 const EVIDENCE = fileURLToPath(
-  new URL(
-    "../../../.artifacts/reviews/20261006-conductor-symphony-ui",
-    import.meta.url,
-  ),
+  new URL("../../../.artifacts/reviews/20261013-podium-ui", import.meta.url),
 );
 
 type Probe = {
@@ -199,14 +196,27 @@ test("layout probe collects geometry at the required viewports and themes", asyn
   await collect("390x844", "light", "&global");
   await collect("390x844", "dark", "&global&dark");
 
+  await page.setViewportSize({ width: 320, height: 690 });
+  await collect("320x690", "light", "&global");
+  await collect("320x690", "dark", "&global&dark");
+
   await page.setViewportSize({ width: 768, height: 1024 });
   await collect("768x1024", "light", "");
 
-  // 150% browser zoom at wide.
+  // Reflow proxy for 200% browser zoom: a 1280px window at 200% zoom lays
+  // out at a 640px CSS width. This is viewport emulation, not zoom itself —
+  // genuine browser zoom is not reproducible in this harness (see
+  // ../fixtures spec's zoom-probe.json for the recorded attempts).
+  await page.setViewportSize({ width: 640, height: 900 });
+  await collect("640x900-reflow-proxy-200pct-zoom", "light", "");
+  await collect("640x900-reflow-proxy-200pct-zoom", "dark", "&dark");
+
+  // 150% page-scale emulation at wide: pinch zoom scales rendering without
+  // reflow; it is not browser zoom.
   const cdp = await page.context().newCDPSession(page);
   await cdp.send("Emulation.setPageScaleFactor", { pageScaleFactor: 1.5 });
   await page.setViewportSize({ width: 1440, height: 900 });
-  await collect("1440x900-zoom150", "light", "");
+  await collect("1440x900-pagescale150", "light", "");
   await cdp.send("Emulation.setPageScaleFactor", { pageScaleFactor: 1 });
 
   await writeFile(

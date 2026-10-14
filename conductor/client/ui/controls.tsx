@@ -1,6 +1,8 @@
 import { Pressable, Text, View, type ViewStyle } from "react-native";
 import { useState, type ReactNode } from "react";
+import { Icon } from "@getpaseo/plugin/client/react-native";
 import type { PluginTheme } from "@getpaseo/plugin";
+import type { PluginIconProps } from "@getpaseo/plugin/client/react-native";
 
 export interface ButtonProps {
   theme: PluginTheme;
@@ -17,6 +19,8 @@ export interface ButtonProps {
   role?: "button" | "tab";
   accessibilityLabel?: string;
   expanded?: boolean;
+  /** Leading host Lucide icon; decorative, the label keeps the a11y name. */
+  icon?: PluginIconProps["name"];
 }
 export function Button({
   theme,
@@ -33,9 +37,13 @@ export function Button({
   role = "button",
   accessibilityLabel,
   expanded,
+  icon,
 }: ButtonProps) {
   const [focused, setFocused] = useState(false);
-  const color = primary ? theme.colors.surface0 : theme.colors.foreground;
+  // Accent fills pair with the theme's own accentForeground.
+  const color = primary
+    ? theme.colors.accentForeground
+    : theme.colors.foreground;
   return (
     <Pressable
       testID={testID}
@@ -74,11 +82,21 @@ export function Button({
                 : "transparent",
             }
           : {}),
-        backgroundColor: primary ? theme.colors.foreground : "transparent",
+        backgroundColor: primary ? theme.colors.accent : "transparent",
         opacity: disabled ? 0.5 : 1,
         ...(pressed ? { opacity: 0.8 } : {}),
       })}
     >
+      {icon ? (
+        <View
+          aria-hidden
+          accessible={false}
+          accessibilityElementsHidden
+          importantForAccessibility="no-hide-descendants"
+        >
+          <Icon name={icon} size={16} color={color} />
+        </View>
+      ) : null}
       <Text
         style={{
           color: danger ? theme.colors.statusDanger : color,
@@ -90,18 +108,50 @@ export function Button({
       >
         {label}
       </Text>
-      {count !== undefined && (
-        <Text
-          style={{
-            color: theme.colors.foregroundMuted,
-            fontSize: 11,
-            lineHeight: 18,
-            fontVariant: ["tabular-nums"],
-          }}
-        >
-          {count}
-        </Text>
-      )}
+      {count !== undefined &&
+        (variant === "tab" ? (
+          <View
+            style={{
+              minHeight: 18,
+              minWidth: 20,
+              paddingHorizontal: 6,
+              paddingVertical: 2,
+              borderRadius: 9,
+              alignItems: "center",
+              justifyContent: "center",
+              backgroundColor: selected
+                ? theme.colors.accent
+                : theme.colors.surface1,
+              borderWidth: selected ? 0 : 1,
+              borderColor: theme.colors.border,
+            }}
+          >
+            <Text
+              style={{
+                color: selected
+                  ? theme.colors.accentForeground
+                  : theme.colors.foregroundMuted,
+                fontSize: 11,
+                lineHeight: 14,
+                fontWeight: "600",
+                fontVariant: ["tabular-nums"],
+              }}
+            >
+              {count}
+            </Text>
+          </View>
+        ) : (
+          <Text
+            style={{
+              color: theme.colors.foregroundMuted,
+              fontSize: 11,
+              lineHeight: 18,
+              fontVariant: ["tabular-nums"],
+            }}
+          >
+            {count}
+          </Text>
+        ))}
     </Pressable>
   );
 }

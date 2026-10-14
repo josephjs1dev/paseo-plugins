@@ -1,14 +1,17 @@
 import { useState } from "react";
 import { ScrollView, Text, View } from "react-native";
 import type { PluginTheme } from "@getpaseo/plugin";
+import { Icon } from "@getpaseo/plugin/client/react-native";
 import {
   SYMPHONY_LIMITS,
   latestAttempt,
-  symphonyStatusLabel,
   type SymphonyContext,
   type StoredSymphony,
 } from "../../shared/symphonies/models";
 import { currentLoop } from "../../shared/symphonies/score";
+import { taskState } from "../../shared/symphonies/task-state";
+import { StatusMarker, symphonyStatusPresentation } from "../ui/status";
+import { SymphonyProgress } from "../ui/progress";
 import {
   historyLoops,
   scoreAtLoop,
@@ -24,6 +27,13 @@ import {
   type TaskDisclosures,
   type TaskDisclosure,
 } from "./task-card";
+
+const TAB_ICONS = {
+  tasks: "ListChecks",
+  graph: "GitBranch",
+  context: "FileText",
+  history: "History",
+} as const;
 
 export function SymphonyDetail({
   theme,
@@ -62,6 +72,18 @@ export function SymphonyDetail({
   const completed = score.tasks.filter(
     (task) => latestAttempt(symphony, task.id)?.state === "completed",
   ).length;
+  /**
+   * Header segments mirror the reported completion the count names: a slice
+   * fills only when that task's latest attempt reported complete, in score
+   * order. A settling agent still reports complete; it is not inertly done,
+   * but the list counts it and the header must agree with the list.
+   */
+  const segments = score.tasks.map((task) => ({
+    id: task.id,
+    title: task.title,
+    state: taskState(symphony, task).key,
+    reportedComplete: latestAttempt(symphony, task.id)?.state === "completed",
+  }));
   const resultLabel =
     symphony.execution.origin === "conducted"
       ? "RESULT · REPORTED BY THE CONDUCTOR AGENT"
@@ -72,9 +94,6 @@ export function SymphonyDetail({
     conducting && !planning
       ? ` · Loop ${currentLoop(symphony)} of ${conducting.maxLoops ?? SYMPHONY_LIMITS.defaultLoops}`
       : "";
-  const progressNote = planning
-    ? " · Conductor agent is splitting the goal into tasks"
-    : ` · ${completed} of ${score.tasks.length} tasks reported complete${loopNote}`;
   const toggle = (key: string) =>
     setExpanded((prior) => ({ ...prior, [key]: !prior[key] }));
   const isOpen = (key: string) => Boolean(expanded[key]);
@@ -105,31 +124,42 @@ export function SymphonyDetail({
       contentContainerStyle={{ padding: compact ? 16 : 24, gap: 16 }}
       testID="symphony-detail"
     >
-      <Label theme={theme}>
-        {symphonyStatusLabel(symphony.status).toUpperCase()}
-      </Label>
-      <Text
-        accessibilityRole="header"
-        style={{
-          color: theme.colors.foreground,
-          fontSize: 22,
-          lineHeight: 29,
-          fontWeight: "600",
-        }}
-      >
-        {symphony.title}
-      </Text>
-      <Text
-        style={{
-          color: theme.colors.foregroundMuted,
-          fontSize: 12,
-          lineHeight: 20,
-        }}
-      >
-        {symphony.source.concertName} ·{" "}
-        {symphony.source.branch ?? "Branch unknown"}
-        {progressNote}
-      </Text>
+      <View style={{ gap: 6 }} testID="symphony-detail-header">
+        <StatusMarker
+          theme={theme}
+          presentation={symphonyStatusPresentation(symphony.status)}
+          size={16}
+        />
+        <Text
+          accessibilityRole="header"
+          style={{
+            color: theme.colors.foreground,
+            fontSize: 22,
+            lineHeight: 29,
+            fontWeight: "600",
+          }}
+        >
+          {symphony.title}
+        </Text>
+        <Text
+          style={{
+            color: theme.colors.foregroundMuted,
+            fontSize: 12,
+            lineHeight: 20,
+          }}
+        >
+          {symphony.source.concertName} ·{" "}
+          {symphony.source.branch ?? "Branch unknown"}
+          {loopNote}
+        </Text>
+      </View>
+      <SymphonyProgress
+        theme={theme}
+        completedTasks={completed}
+        taskCount={score.tasks.length}
+        planning={planning}
+        {...(planning ? {} : { segments })}
+      />
       {stale && (
         <Notice theme={theme} warning>
           Symphony refresh failed. Showing the last saved state.
@@ -151,7 +181,7 @@ export function SymphonyDetail({
         </Notice>
       )}
       {symphony.execution.summary && (
-        <ResultSummary theme={theme} label={resultLabel}>
+        <ResultSummary theme={theme} label={resultLabel} compact={compact}>
           {symphony.execution.summary}
         </ResultSummary>
       )}
@@ -187,6 +217,7 @@ export function SymphonyDetail({
               theme={theme}
               variant="tab"
               label={entry.charAt(0).toUpperCase() + entry.slice(1)}
+              icon={TAB_ICONS[entry]}
               selected={view === entry}
               onPress={() => setView(entry)}
             />
@@ -209,6 +240,7 @@ export function SymphonyDetail({
                 theme={theme}
                 variant="quiet"
                 label="Conductor agent"
+                icon="ArrowUpRight"
                 onPress={() => {
                   if (symphony.source.agentId) {
                     openAgent(symphony.source.agentId);
@@ -270,7 +302,7 @@ export function SymphonyDetail({
 
 const PREVIEW_LINES = 3;
 
-/** First up-to-three preview lines of summary prose. */
+/** First up-to-three nonempty preview lines of summary prose. */
 function previewLines(value: string): string[] {
   return value
     .split("\n")
@@ -278,25 +310,54 @@ function previewLines(value: string): string[] {
     .slice(0, PREVIEW_LINES);
 }
 
-/** True when the prose continues beyond the three preview lines. */
-function hasMoreLines(value: string): boolean {
-  const lines = value.split("\n").filter((line) => line.trim().length > 0);
-  return lines.length > PREVIEW_LINES;
-}
-
+/**
+ * The reported result in its own quiet surface: attribution heading, then a
+ * clamped preview. Every clamp is a React Native truncation, so whether a
+ * line overflows depends on pane width, which no character count can know —
+ * therefore every nonempty result offers Show more unconditionally instead of
+ * guessing. Prose that already fits reveals the same selectable text; prose
+ * that clamps at any width always reaches the full content.
+ */
 function ResultSummary({
   theme,
   label,
+  compact,
   children,
 }: {
   theme: PluginTheme;
   label: string;
+  /** Layout hint from the browser; defaults only for callers without layout info. */
+  compact?: boolean;
   children: string;
 }) {
   const [expanded, setExpanded] = useState(false);
+  const lines = previewLines(children);
   return (
-    <View style={{ gap: 8 }}>
-      <Label theme={theme}>{label}</Label>
+    <View
+      style={{
+        gap: 8,
+        backgroundColor: theme.colors.surface1,
+        borderWidth: 1,
+        borderColor: theme.colors.border,
+        borderRadius: 10,
+        padding: 14,
+      }}
+    >
+      <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
+        <View
+          aria-hidden
+          accessible={false}
+          accessibilityElementsHidden
+          importantForAccessibility="no-hide-descendants"
+        >
+          <Icon
+            name="MessageSquareText"
+            size={14}
+            color={theme.colors.foregroundMuted}
+          />
+        </View>
+        <Label theme={theme}>{label}</Label>
+      </View>
       {expanded ? (
         <Text
           selectable
@@ -311,10 +372,8 @@ function ResultSummary({
         </Text>
       ) : (
         <View style={{ gap: 6 }}>
-          {previewLines(children).map((line, index) => (
+          {lines.length === 0 ? (
             <Text
-              key={index}
-              numberOfLines={1}
               selectable
               style={{
                 color: theme.colors.foreground,
@@ -323,18 +382,34 @@ function ResultSummary({
                 maxWidth: 760,
               }}
             >
-              {line}
+              {children}
             </Text>
-          ))}
-          {hasMoreLines(children) && (
+          ) : (
+            lines.map((line, index) => (
+              <Text
+                key={index}
+                numberOfLines={1}
+                selectable
+                style={{
+                  color: theme.colors.foreground,
+                  fontSize: 14,
+                  lineHeight: 20,
+                  maxWidth: 760,
+                }}
+              >
+                {line}
+              </Text>
+            ))
+          )}
+          <View style={{ alignItems: "flex-start" }}>
             <Button
               theme={theme}
               variant="quiet"
-              dense
+              dense={!compact}
               label="Show more"
               onPress={() => setExpanded(true)}
             />
-          )}
+          </View>
         </View>
       )}
     </View>

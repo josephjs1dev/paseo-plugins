@@ -1,9 +1,7 @@
 import { useState } from "react";
 import { Text, View } from "react-native";
-import {
-  taskState,
-  type TaskStateKey,
-} from "../../shared/symphonies/task-state";
+import { Icon } from "@getpaseo/plugin/client/react-native";
+import { taskState } from "../../shared/symphonies/task-state";
 import type { PluginTheme } from "@getpaseo/plugin";
 import {
   latestAttempt,
@@ -15,12 +13,12 @@ import {
 } from "../../shared/symphonies/models";
 import { attemptLoop } from "../../shared/symphonies/score";
 import { Button, Disclosure, Notice } from "../ui/controls";
+import { statusColor, taskStatusPresentation } from "../ui/status";
 import {
   FindingsPanel,
   InsetPanel,
   PROSE_WIDTH,
   ReportFooter,
-  type StateColor,
 } from "./task-report";
 
 /**
@@ -40,22 +38,6 @@ export interface TaskDisclosures {
  * toggles stay independent.
  */
 export type TaskDisclosure = "summary" | "instructions" | "evidence" | "checks";
-
-/**
- * Needs changes shares the warning family (amber) — the work ran but the
- * result is not acceptable yet — while failed keeps the danger color: the
- * harness could not run the work at all.
- */
-const STATE_COLORS: Record<TaskStateKey, StateColor> = {
-  ready: "foregroundMuted",
-  waiting: "foregroundMuted",
-  running: "accent",
-  blocked: "statusWarning",
-  finishing: "statusWarning",
-  "needs-changes": "statusWarning",
-  failed: "statusDanger",
-  completed: "statusSuccess",
-};
 
 /**
  * Full task brief shown behind the Instructions disclosure: the assignment,
@@ -90,18 +72,21 @@ function instructionLines(task: TaskDefinition): string[] {
 }
 
 /**
- * True when the summary is likely longer than a three-line clamp, since React
- * Native offers no reliable truncation callback across renderers.
+ * True when the summary may overflow the three-line clamp on a wide pane,
+ * since React Native offers no reliable truncation callback across renderers.
+ * At three visual lines of roughly 100 characters, a summary past this length
+ * clamps even at full prose width; occasional false positives only reveal
+ * text the reader already saw. Compact panes never depend on this estimate.
  */
 function summaryMayClamp(summary: string): boolean {
   return summary.length > 240 || summary.includes("\n");
 }
 
 /**
- * One trimmed task record: wrapping title with the agent action, a single
- * metadata line with a status dot, a three-line summary clamp, and a footer
- * that keeps Evidence and Checks behind one inset panel. Blocker messages and
- * failed checks stay visible without expanding anything.
+ * One trimmed task record: wrapping title with the agent action, a metadata
+ * row led by the shared status icon and label, a three-line summary clamp,
+ * and a quieter footer that keeps Evidence and Checks behind one inset panel.
+ * Blocker messages and failed checks stay visible without expanding anything.
  */
 export function SymphonyTaskCard({
   theme,
@@ -130,6 +115,7 @@ export function SymphonyTaskCard({
       ? attemptLoop(attempt)
       : undefined;
   const state = taskState(symphony, task);
+  const presentation = taskStatusPresentation(state);
   const report = attempt?.report ?? null;
   const failedChecks =
     report?.checks.filter((check) => check.status === "failed") ?? [];
@@ -155,15 +141,14 @@ export function SymphonyTaskCard({
         padding: compact ? 12 : 16,
         borderWidth: 1,
         borderColor: theme.colors.border,
-        borderRadius: 8,
+        borderRadius: 10,
+        backgroundColor: theme.colors.surface1,
       }}
     >
       <View
         style={{
           flexDirection: "row",
-          flexWrap: "wrap",
-          alignItems: "center",
-          justifyContent: "space-between",
+          alignItems: "flex-start",
           gap: 8,
         }}
       >
@@ -174,7 +159,8 @@ export function SymphonyTaskCard({
             fontSize: 15,
             lineHeight: 21,
             fontWeight: "600",
-            flexShrink: 1,
+            flex: 1,
+            minWidth: 0,
           }}
         >
           {task.title}
@@ -185,6 +171,7 @@ export function SymphonyTaskCard({
             variant="quiet"
             dense={!compact}
             label="Open agent"
+            icon="ArrowUpRight"
             accessibilityLabel={`Open ${task.id} agent`}
             onPress={() => {
               if (attempt) {
@@ -204,23 +191,26 @@ export function SymphonyTaskCard({
       >
         <View
           aria-hidden
-          style={{
-            width: 6,
-            height: 6,
-            borderRadius: 3,
-            backgroundColor: theme.colors[STATE_COLORS[state.key]],
-          }}
-        />
+          accessible={false}
+          accessibilityElementsHidden
+          importantForAccessibility="no-hide-descendants"
+        >
+          <Icon
+            name={presentation.icon}
+            size={14}
+            color={statusColor(theme, presentation.color)}
+          />
+        </View>
         <Text
           selectable
           style={{
-            color: theme.colors[STATE_COLORS[state.key]],
+            color: statusColor(theme, presentation.color),
             fontSize: 12,
             lineHeight: 17,
             fontWeight: "500",
           }}
         >
-          {state.label}
+          {presentation.label}
           {state.waitingFor.length
             ? ` · waiting for ${state.waitingFor.join(", ")}`
             : ""}
@@ -383,7 +373,7 @@ function ReopenDisclosure({
         {reopen.reason}
       </Text>
       {expanded && reopen.findings.length > 0 && (
-        <InsetPanel theme={theme}>
+        <InsetPanel theme={theme} nested>
           <FindingsPanel theme={theme} findings={reopen.findings} />
         </InsetPanel>
       )}
@@ -453,7 +443,7 @@ function WritesDisclosure({
         dense={!compact}
       />
       {expanded && (
-        <InsetPanel theme={theme}>
+        <InsetPanel theme={theme} nested>
           {grants.map((grant, index) => (
             <View
               key={`${grant.path}-${index}`}
@@ -496,9 +486,12 @@ function WritesDisclosure({
 }
 
 /**
- * Report prose clamped to three lines by default. The toggle appears only when
- * the text likely overflows the clamp; its expanded state lives in SymphonyDetail's
- * disclosure map so it survives refreshes.
+ * Report prose clamped to three visual lines by default. Whether the clamp
+ * actually hides text depends on scene width, so the toggle never relies on a
+ * character count alone: the length heuristic covers wide panes, and compact
+ * layouts always offer the toggle so clamped prose is never unreachable. The
+ * expanded state lives in SymphonyDetail's disclosure map so it survives
+ * refreshes.
  */
 function Summary({
   theme,
@@ -528,7 +521,7 @@ function Summary({
       >
         {summary}
       </Text>
-      {summaryMayClamp(summary) && (
+      {(summaryMayClamp(summary) || compact) && (
         <Button
           theme={theme}
           variant="quiet"
@@ -595,7 +588,7 @@ function InstructionPreview({
           dense={!compact}
         />
         {expanded && (
-          <InsetPanel theme={theme}>
+          <InsetPanel theme={theme} nested>
             {lines.map((line, index) => (
               <Text
                 key={index}
