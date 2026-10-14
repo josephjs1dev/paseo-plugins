@@ -563,10 +563,18 @@ test("needs changes, loop headers, findings, and unresolved stay readable", asyn
   const reviewRecheck = page.getByTestId("history-attempt-review-2");
   await expect(reviewRecheck).toContainText("Attempt 2");
   await expect(reviewRecheck).toContainText("Reopened — Confirm F1 and F2");
+  // Reopen findings are the attempt's input, labeled and collapsed so they
+  // never read as the attempt's own result.
+  const recheckFindings = page.getByTestId("history-reopen-findings-review-2");
+  await expect(recheckFindings).toContainText("from loop 1");
+  await expect(reviewRecheck).not.toContainText("✕ Blocking · F1");
+  await recheckFindings.click();
   await expect(reviewRecheck).toContainText("✕ Blocking · F1");
   await expect(reviewRecheck).toContainText("on api");
   const followUp = page.getByTestId("history-attempt-api-3");
   await expect(followUp).toContainText("Attempt 3");
+  await expect(followUp).toContainText("Addresses 1 finding from loop 2");
+  await page.getByTestId("history-reopen-findings-api-3").click();
   await expect(followUp).toContainText("✕ Blocking · F3");
   await expect(followUp).toContainText("orchestration.ts:1223");
   const finalReview = page.getByTestId("history-attempt-review-3");

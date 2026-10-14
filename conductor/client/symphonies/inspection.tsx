@@ -10,6 +10,7 @@ import {
   type Score,
   type StoredSymphony,
   type TaskDefinition,
+  type TaskFinding,
 } from "../../shared/symphonies/models";
 import {
   taskState,
@@ -663,6 +664,7 @@ function AttemptRow({
   const diagnosis = attempt.report?.diagnosis;
   const reopen = attempt.reopen;
   const [diagnosisOpen, setDiagnosisOpen] = useState(false);
+  const [findingsOpen, setFindingsOpen] = useState(false);
   const suffix = retried || forceNumber ? `-${number}` : "";
   return (
     <View
@@ -790,7 +792,22 @@ function AttemptRow({
             {`Reopened — ${reopen.reason}`}
           </Text>
           {reopen.findings.length > 0 && (
-            <FindingsPanel theme={theme} findings={reopen.findings} compact />
+            <Disclosure
+              theme={theme}
+              label={addressedFindingsLabel(reopen.findings, attempt)}
+              expanded={findingsOpen}
+              onToggle={() => setFindingsOpen((open) => !open)}
+              testID={`history-reopen-findings-${task.id}${suffix}`}
+              dense
+            >
+              <InsetPanel theme={theme}>
+                <FindingsPanel
+                  theme={theme}
+                  findings={reopen.findings}
+                  compact
+                />
+              </InsetPanel>
+            </Disclosure>
           )}
         </View>
       )}
@@ -849,6 +866,23 @@ function ChangedPaths({
       )}
     </View>
   );
+}
+
+/**
+ * Labels reopen findings as the attempt's input: the defects an earlier loop
+ * reported that this attempt was asked to fix or re-check, not its own result.
+ */
+function addressedFindingsLabel(
+  findings: readonly TaskFinding[],
+  attempt: Attempt,
+): string {
+  const blocking = findings.filter(
+    (finding) => finding.severity === "blocking",
+  ).length;
+  const count = `${findings.length} finding${findings.length === 1 ? "" : "s"}`;
+  return `Addresses ${count} from loop ${attemptLoop(attempt) - 1}${
+    blocking ? ` · ${blocking} blocking` : ""
+  }`;
 }
 
 function retryLabel(
