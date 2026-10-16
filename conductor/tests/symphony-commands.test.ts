@@ -11,6 +11,10 @@ import {
   taskReportSchema,
   taskSchema,
 } from "../shared/symphonies/models";
+import {
+  routingOverrideSchema,
+  routingProfileSchema,
+} from "../shared/symphonies/routing";
 import { symphonyAck } from "../server/entrypoints/commands/ack";
 
 const id = "6f1c2b9e-4b7a-4c1e-9f0a-2d3e4f5a6b7c";
@@ -670,6 +674,272 @@ void test("attempts without the recovery fields still parse and new fields are b
     attemptSchema.safeParse({
       ...basicAttempt,
       grantedWrites: [{ path: "src/a", reason: "", at: 1 }],
+    }).success,
+    false,
+  );
+});
+
+void test("routing profiles keep roles and size only", () => {
+  const configured = routingProfileSchema.parse({
+    roles: ["implementation"],
+    size: "medium",
+  });
+  assert.deepEqual(configured.roles, ["implementation"]);
+  assert.equal(configured.size, "medium");
+  assert.equal(
+    routingProfileSchema.parse({ roles: ["implementation"] }).size,
+    undefined,
+    "a size stays unset until the user picks one",
+  );
+  // The removed routing keys are rejected on new input.
+  for (const removed of [
+    { domains: ["frontend"] },
+    { preferenceTier: 1 },
+    { fallbacks: [id] },
+    { excludeWhen: ["architecture"] },
+  ]) {
+    assert.equal(
+      routingProfileSchema.safeParse({
+        roles: ["implementation"],
+        size: "small",
+        ...removed,
+      }).success,
+      false,
+      JSON.stringify(removed),
+    );
+  }
+});
+
+void test("routing override categories are allowlisted and need specific evidence", () => {
+  for (const category of [
+    "user-choice",
+    "capability-gap",
+    "observed-limitation",
+    "no-eligible-profile",
+  ]) {
+    assert.equal(
+      routingOverrideSchema.safeParse({
+        category,
+        evidence: "Named the concrete gap observed on the failed attempt.",
+      }).success,
+      true,
+      category,
+    );
+  }
+  // A generic category and empty (or whitespace) evidence are rejected.
+  assert.equal(
+    routingOverrideSchema.safeParse({
+      category: "needs-quality",
+      evidence: "The task needs a stronger model.",
+    }).success,
+    false,
+  );
+  assert.equal(
+    routingOverrideSchema.safeParse({
+      category: "user-choice",
+      evidence: "   ",
+    }).success,
+    false,
+  );
+  assert.equal(
+    routingOverrideSchema.safeParse({
+      category: "user-choice",
+      evidence: "ok",
+      extra: true,
+    }).success,
+    false,
+  );
+});
+
+void test("command tasks carry a routing role and enforce the role rules", () => {
+  const routed = {
+    kind: "define" as const,
+    symphonyId: id,
+    tasks: [
+      {
+        ...task,
+        role: "planning" as const,
+        openDecision: "Choose the routing metadata format.",
+        routing: {
+          reason: "Smallest eligible planner for an open decision.",
+          override: {
+            category: "user-choice" as const,
+            evidence: "The user asked for the Planner profile by name.",
+          },
+        },
+      },
+    ],
+  };
+  const parsed = symphonyCommandSchema.parse(routed);
+  if (parsed.kind !== "define") {
+    throw new Error("expected a define command");
+  }
+  assert.equal(parsed.tasks[0]?.routing?.override?.category, "user-choice");
+  // role review needs the review marker, and the marker keeps role review.
+  assert.equal(
+    symphonyCommandSchema.safeParse({
+      kind: "define",
+      symphonyId: id,
+      tasks: [{ ...task, role: "review" }],
+    }).success,
+    false,
+  );
+  assert.equal(
+    symphonyCommandSchema.safeParse({
+      kind: "define",
+      symphonyId: id,
+      tasks: [{ ...task, review: true, role: "implementation" }],
+    }).success,
+    false,
+  );
+  // Planning requires an open decision; other roles reject one.
+  assert.equal(
+    symphonyCommandSchema.safeParse({
+      kind: "define",
+      symphonyId: id,
+      tasks: [{ ...task, role: "planning" }],
+    }).success,
+    false,
+  );
+  assert.equal(
+    symphonyCommandSchema.safeParse({
+      kind: "define",
+      symphonyId: id,
+      tasks: [{ ...task, role: "implementation", openDecision: "Pick one" }],
+    }).success,
+    false,
+  );
+  // The removed subject-match fields are rejected on new command input.
+  assert.equal(
+    symphonyCommandSchema.safeParse({
+      kind: "define",
+      symphonyId: id,
+      tasks: [{ ...task, domains: ["frontend"] }],
+    }).success,
+    false,
+  );
+  assert.equal(
+    symphonyCommandSchema.safeParse({
+      kind: "define",
+      symphonyId: id,
+      tasks: [{ ...task, traits: ["documentation"] }],
+    }).success,
+    false,
+  );
+});
+
+void test("the route command parses a role and one worker source", () => {
+  assert.deepEqual(
+    symphonyCommandSchema.parse({
+      kind: "route",
+      role: "implementation",
+    }),
+    { kind: "route", role: "implementation" },
+  );
+  assert.equal(
+    symphonyCommandSchema.safeParse({
+      kind: "route",
+      role: "implementation",
+      domains: ["frontend"],
+    }).success,
+    false,
+    "removed routing intent is rejected",
+  );
+  assert.equal(
+    symphonyCommandSchema.safeParse({
+      kind: "route",
+      role: "review",
+      profile: "Small",
+      provider: "pi",
+    }).success,
+    false,
+  );
+  assert.equal(
+    symphonyCommandSchema.safeParse({ kind: "route", role: "design" }).success,
+    false,
+  );
+});
+
+void test("a loop reopen worker override pairs with routing and one source", () => {
+  const loop = {
+    kind: "loop" as const,
+    symphonyId: id,
+    reason: "Escalate after the review failed",
+    reopen: [
+      {
+        taskId: "api",
+        findings: ["review#F1"],
+        profile: "Small",
+        routing: {
+          reason: "The smaller profile missed the documented contract.",
+          override: {
+            category: "observed-limitation" as const,
+            evidence:
+              "Two bounded corrective attempts failed the same contract check.",
+          },
+        },
+      },
+    ],
+  };
+  assert.equal(symphonyCommandSchema.safeParse(loop).success, true);
+  // A worker override without a routing reason is rejected.
+  assert.equal(
+    symphonyCommandSchema.safeParse({
+      ...loop,
+      reopen: [{ taskId: "api", profile: "Small" }],
+    }).success,
+    false,
+  );
+  // Routing without a worker override is rejected.
+  assert.equal(
+    symphonyCommandSchema.safeParse({
+      ...loop,
+      reopen: [
+        {
+          taskId: "api",
+          routing: { reason: "Just because" },
+        },
+      ],
+    }).success,
+    false,
+  );
+  // A reopen cannot name both a profile and an inline model.
+  assert.equal(
+    symphonyCommandSchema.safeParse({
+      ...loop,
+      reopen: [{ taskId: "api", profile: "Small", model: "pi-test" }],
+    }).success,
+    false,
+  );
+});
+
+void test("dispatch routing requires a replacement worker choice", () => {
+  const dispatch = {
+    kind: "dispatch" as const,
+    symphonyId: id,
+    retryTaskId: "a",
+    profile: "Small",
+    routing: {
+      reason: "The user chose a specific replacement after the blocker.",
+      override: {
+        category: "user-choice" as const,
+        evidence: "The source conversation named the replacement profile.",
+      },
+    },
+  };
+  assert.equal(symphonyCommandSchema.safeParse(dispatch).success, true);
+  assert.equal(
+    symphonyCommandSchema.safeParse({
+      ...dispatch,
+      profile: undefined,
+    }).success,
+    false,
+  );
+  assert.equal(
+    symphonyCommandSchema.safeParse({
+      ...dispatch,
+      provider: "pi",
+      model: "pi-test",
     }).success,
     false,
   );

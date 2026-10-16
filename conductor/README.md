@@ -149,9 +149,15 @@ Conductor wait until its turn ends.
 Set `"conductor":"agent"` to create a dedicated Conductor agent instead. Optional
 `conductorProfile` selects its configured profile by name and implies
 `"conductor":"agent"`; otherwise it inherits the requesting agent's settings.
-`profiles` lists each worker profile's id, name, notes, provider, model, mode and
-thinking option; `models` lists available providers and model IDs. Only the
-Conductor agent can define or dispatch its symphony:
+`profiles` returns Conductor-owned profile identity, notes, provider/model and
+permission fields, routing classification, `hasInstructions`, one catalog
+revision and diagnostics. It does not return instruction text. Unclassified
+profiles are missing at least one role or a size; never infer size from a model name. Create
+and edit profiles in Podium › Profiles. The provider/model pickers use the
+`profiles.providers` catalog, which includes thinking options and modes. The
+Profiles tab also offers a one-time import from Paseo profiles; imported entries
+become independent Conductor profiles. Only the Conductor agent can define or
+dispatch its symphony:
 
 ```bash
 node "$CONDUCTOR_COMMAND" define <<'JSON'
@@ -162,14 +168,78 @@ node "$CONDUCTOR_COMMAND" dispatch <<'JSON'
 JSON
 ```
 
-Each task may select `profile` by configured id or name, or `provider`, `model`,
-and an optional `thinkingOptionId` from `models`; never both. `review: true` marks a
-read-only review task. A review task starts once each prerequisite is completed
+Route each task with `route`, a read-only preview taking `role` (`exploration`,
+`implementation`, `planning`, or `review`) and an optional explicit profile or
+inline worker choice. It returns the selected profile, eligible alternatives
+ordered by size, exclusions with the requirement each failed, and concise
+reasons. The Conductor filters by classification, role, provider availability
+and permission ceiling, then prefers the smallest eligible size (`small`,
+`medium`, `large`), followed by store order and profile ID. Match subject
+matter from the profile's “When to use” notes, even for prose or Markdown
+output. Run implementation work for an approved design; use planning only
+while design decisions remain open. Prefer a reviewer on a different
+provider/model from its implementer.
+
+Task routing intent uses an optional `role`. Use
+`role: "planning"` only with `openDecision` naming the unresolved design
+decision; planning without it is rejected. For example, create a planning task
+with `role: "planning"`, `openDecision: "Choose whether this API accepts a
+single id or a list"` while that choice is open. Once
+the choice is approved, implement it with `role: "implementation"` and omit
+`openDecision`. A writer count or shared contract alone never calls for a
+planning task.
+
+Conductor owns worker profiles in `<PASEO_HOME>/plugin-data/conductor/profiles.json`;
+create and edit them in Podium › Profiles. Each profile has a provider/model,
+optional thinking and permission mode, `roles`, a `size` (`small`, `medium`, or
+`large`), “When to use” notes, and free-text instructions. Roles are
+`exploration`, `implementation`, `planning`, and `review`. The notes guide the
+Conductor's subject-matter match. Profiles without at least one role and a size
+are unclassified, cannot be selected by routing, and show a warning in their
+Profiles card. The Conductor prefers the smallest eligible size for the role;
+choosing a larger size produces a warning in `warn` mode or requires an
+evidence-backed override in `strict` mode. A profile's instructions are
+delivered to its task agents in a clearly delimited section. They cannot
+override user instructions, repository rules, write scope, or the permission
+ceiling. Put skill names the agent should use in the instructions; Conductor
+does not discover skills. The global routing mode is `warn` by default; a
+missing store means no profiles are configured. Unknown and stale IDs appear in
+diagnostics.
+
+When a profile is eligible, omitted worker fields resolve to the first eligible
+route: the smallest size, then store order. Automatic routing does not read the
+“When to use” notes, so the skill tells the Conductor to omit worker fields only
+when exactly one eligible profile has the smallest size for the role, and to
+name a profile chosen by its notes when several share that size. Omitted fields
+never silently inherit the Conductor's model. For an explicit worker
+choice, set `profile`, inline `provider`/`model`/optional `thinkingOptionId`, or
+`profile: "inherit"` when no profile is eligible. Add `routing: {"reason":"..."}`
+to explain the selection; the automatic route supplies its own concise reason.
+Escalate only for a user choice, concrete capability gap, observed
+model limitation after bounded corrective attempts, or no eligible configured
+profile. Include `routing.override: {"category":"user-choice|capability-gap|observed-limitation|no-eligible-profile","evidence":"specific evidence"}`.
+“Needs quality” is not evidence. Diagnose missing input, permission and sandbox
+problems before blaming the model.
+When no profile is eligible, explicit `profile: "inherit"` requires
+`routing.reason`; strict mode also requires a valid `no-eligible-profile`
+override with specific evidence.
+
+`warn` mode is the default: larger-than-eligible by size, unclassified, ineligible,
+inline, or inherited choices are accepted with a warning in the acknowledgement
+and attempt. `strict` rejects these choices without a valid override and
+specific evidence. `define`, `loop` and `dispatch` validate worker choices;
+dispatch revalidates when the catalog revision changes. User-named profiles
+remain authoritative subject to availability and the existing permission
+ceiling. The permission mode is never selected inline: an explicit profile
+`modeId` overrides the inherited Conductor mode; otherwise a task agent on the
+same provider copies the Conductor's mode, and another provider starts in its
+default mode. Attempts retain the effective launch choice, catalog revision, routing
+reason, override and warnings. Podium task cards and reports show the worker
+profile/model, selection reason and any override or warning.
+
+`review: true` marks a read-only review task. A review task starts once each prerequisite is completed
 or needs changes and receives their open findings and failed checks; other tasks
-wait for completed prerequisites. Without a worker choice, the task agent
-inherits the Conductor's provider, model, thinking option, and mode. The permission
-mode is never selected inline: a task agent on the same provider copies the Conductor's
-mode, and another provider starts in its default mode. Assignments carry the goal,
+wait for completed prerequisites. Assignments carry the goal,
 prerequisite reports, declared scopes/checks, and exact symphony/attempt identity.
 Task agents call `report` or `block` for their existing assignment, then stop. They do
 not create another symphony or claim the Conductor's task. The scheduler observes
@@ -229,7 +299,10 @@ Findings are named `<reporter task>#<finding id>`; a bare id is accepted only
 when one reporter used it. A reopened task continues on its agent, with that
 agent's worker choice, when the agent is idle and can receive a message;
 otherwise a new agent starts with the previous report and the same worker
-choice. An active agent is never replaced. Its prompt carries the full finding
+choice. `reopen` may provide a worker override (`profile` or inline
+`provider`/`model`/`thinkingOptionId`); it must include `routing.reason`, and
+uses the same routing validation and override evidence as task definition. A
+check or review failure is not a harness failure for switching models. An active agent is never replaced. Its prompt carries the full finding
 objects, captured when `loop` is accepted. `note` and `addWrites` work as on a
 retry and are kept with the loop until the task starts, and `after` adds
 prerequisites for this loop only; `after` edges must not form a cycle with

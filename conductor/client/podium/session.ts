@@ -7,7 +7,7 @@ import type { Filter } from "../../shared/agents/attention";
 import type { SymphonySelection } from "../symphonies/selection";
 
 export interface ViewState {
-  section: "agents" | "symphonies";
+  section: "agents" | "symphonies" | "profiles";
   symphonyQuery: string;
   symphonyFilter: "all" | "active" | "blocked" | "completed";
   filter: Filter;
@@ -15,6 +15,7 @@ export interface ViewState {
   groupBy: "project" | "concert";
   selectedKey: string | null;
   symphonySelection: SymphonySelection | null;
+  profileSelection: string | null;
   showSnoozed: boolean;
   drafts: Readonly<Record<string, Decision>>;
   notices: Readonly<Record<string, AnswerResult["status"] | "sending">>;
@@ -29,6 +30,7 @@ export class PodiumSession {
     groupBy: "project",
     selectedKey: null,
     symphonySelection: null,
+    profileSelection: null,
     showSnoozed: false,
     drafts: {},
     notices: {},
@@ -74,6 +76,7 @@ export class PodiumSession {
       notices: {},
       selectedKey: null,
       symphonySelection: null,
+      profileSelection: null,
     };
     this.listeners.clear();
   }

@@ -207,6 +207,119 @@ test("fixture scenarios render their documented task and graph states", async ({
   await expect(detail).not.toContainText("No tasks were recorded.");
 });
 
+test("routing decisions show on cards, in reports and in history", async ({
+  page,
+}) => {
+  const detail = page.getByTestId("symphony-detail");
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await openSymphony(page, "routing");
+
+  // A takeover in the latest loop: the card shows the viewed attempt's launch
+  // choice and routing, not the task definition's original smaller-first
+  // pick, and the inline provider/model wins over the "inherit" sentinel so
+  // the real model choice stays visible.
+  const apiLine = page.getByTestId("symphony-task-api-routing");
+  await expect(apiLine).toContainText(
+    "Conductor chose openai/gpt-6-sol, thinking high — Escalated to inline after bounded smaller-worker failures",
+  );
+  await expect(apiLine).not.toContainText("the Conductor's worker");
+
+  // A running, report-less takeover card still exposes the override and the
+  // warning behind a compact Routing disclosure.
+  const apiCard = page.getByTestId("symphony-task-api");
+  await expect(apiCard).toContainText("Running");
+  await apiCard
+    .getByRole("button", { name: "Routing · 1 warning", exact: true })
+    .click();
+  await expect(apiCard).toContainText(
+    "Override (Observed limitation): Both corrective attempts on starter failed the same bundle parse check.",
+  );
+  const inlineWarning = apiCard
+    .getByText('Unconfigured model: Task "api": inline openai/gpt-6-sol', {
+      exact: false,
+    })
+    .first();
+  await expect(inlineWarning).toBeVisible();
+
+  // The task definition's stored reason stays behind Instructions.
+  await detailButton(detail, "Instructions").click();
+  await expect(detail).toContainText("Routing: First eligible implementation");
+
+  // A Conductor choice: the card line names the override reason, and the
+  // report's Routing disclosure holds the category, the evidence, the stored
+  // warning, and the catalog revision.
+  const uiCard = page.getByTestId("symphony-task-ui");
+  await expect(page.getByTestId("symphony-task-ui-routing")).toContainText(
+    "Conductor chose opus — The user asked for Opus",
+  );
+  await uiCard.getByRole("button", { name: "Routing", exact: true }).click();
+  await expect(uiCard.getByText("Launched", { exact: true })).toBeVisible();
+  await expect(uiCard).toContainText(
+    "Conductor chose opus — The user asked for Opus for this migration in the request",
+  );
+  await expect(uiCard).toContainText(
+    "Override (User choice): The original request says: run the migration on Opus.",
+  );
+  await expect(uiCard).toContainText(
+    'Larger than eligible: Task "ui": opus is larger than the smaller-first pick starter.',
+  );
+  await expect(uiCard).toContainText("Catalog revision: c9a1f7d2e6b3");
+
+  // A chosen profile with no routing entry surfaces its unclassified warning.
+  const reviewCard = page.getByTestId("symphony-task-review");
+  await expect(page.getByTestId("symphony-task-review-routing")).toContainText(
+    "Conductor chose docs — Only docs was free for the review pass",
+  );
+  await reviewCard
+    .getByRole("button", { name: "Routing", exact: true })
+    .click();
+  await expect(reviewCard).toContainText(
+    'Unclassified profile: Task "review": profile docs has no routing.json entry',
+  );
+
+  // A waiting record with no attempt falls back to the task definition's
+  // stored routing decision.
+  await expect(page.getByTestId("symphony-task-notes-routing")).toContainText(
+    "Routed to starter — Queued behind the api takeover",
+  );
+
+  // A legacy record with no routing fields renders exactly as before: no
+  // routing line on the card and no Routing disclosure in the report.
+  const collectCard = page.getByTestId("symphony-task-collect");
+  await expect(page.getByTestId("symphony-task-collect-routing")).toHaveCount(
+    0,
+  );
+  await expect(
+    collectCard.getByRole("button", { name: "Routing", exact: true }),
+  ).toHaveCount(0);
+  await expect(collectCard).toContainText("Completed");
+
+  // History repeats the decision per attempt, oldest first, and skips legacy
+  // attempts.
+  await detailButton(detail, "History").click();
+  await expect(page.getByTestId("history-routing-api-1")).toContainText(
+    "Routed to starter — First eligible implementation profile for the TypeScript domain",
+  );
+  await expect(page.getByTestId("history-routing-api-1")).toContainText(
+    "Catalog revision: c9a1f7d2e6b3",
+  );
+  await expect(page.getByTestId("history-routing-api-2")).toContainText(
+    "Conductor chose openai/gpt-6-sol, thinking high",
+  );
+  await expect(page.getByTestId("history-routing-api-2")).toContainText(
+    "Override (Observed limitation): Both corrective attempts on starter failed the same bundle parse check.",
+  );
+  await expect(page.getByTestId("history-routing-ui-1")).toContainText(
+    "Override (User choice): The original request says: run the migration on Opus.",
+  );
+  await expect(
+    page
+      .getByTestId("history-routing-ui-1")
+      .getByText("Larger than eligible", { exact: false }),
+  ).toHaveCSS("color", "rgb(148, 96, 18)");
+  await expect(page.getByTestId("history-routing-collect-1")).toHaveCount(0);
+});
+
 /** Geometry of a testid element within the symphony detail surface. */
 function boxOf(page: Page, testId: string) {
   return page.getByTestId(testId).evaluate((element: HTMLElement) => {
@@ -384,6 +497,18 @@ test("Tasks, Graph and Context show the latest loop and can show an earlier one"
   await expect(context).toContainText("Fix review findings F1 and F2");
   await expect(context).toContainText("Reopened api");
 
+  // The reopen's recorded worker override: the takeover worker, its routing
+  // reason, and the bypass category with its evidence stay on the loop
+  // record; the other reopen carried no worker, so it shows no line.
+  const apiWorkerTakeover = page.getByTestId("loop-reopen-worker-api");
+  await expect(apiWorkerTakeover).toContainText(
+    "Conductor chose opus — Escalated after two bounded fix rounds hit the same limitation",
+  );
+  await expect(context).toContainText(
+    "Override (Observed limitation): Loop 1's two corrective attempts failed on the same wake identity defect.",
+  );
+  await expect(page.getByTestId("loop-reopen-worker-ui")).toHaveCount(0);
+
   // Escape closes the list without choosing and refocuses the trigger.
   await trigger.click();
   await expect(listbox).toBeVisible();
@@ -411,16 +536,21 @@ test("Tasks, Graph and Context show the latest loop and can show an earlier one"
   await trigger.click();
   await expect(listbox).toBeVisible();
   expect(await noPageOverflow(page)).toBe(true);
-  const compactRowsHeights = await Promise.all(
-    [1, 2, 3].map(async (loop) =>
-      page
-        .getByTestId(`loop-option-${loop}`)
-        .evaluate((row: HTMLElement) => row.getBoundingClientRect().height),
-    ),
-  );
-  for (const height of compactRowsHeights) {
-    expect(height).toBe(44);
-  }
+  // The 390px resize recomputes the compact layout; the measured height only
+  // settles once the open dropdown finishes reflowing, so wait on it.
+  const compactRowHeights = async (): Promise<number[]> =>
+    Promise.all(
+      [1, 2, 3].map(async (loop) =>
+        page
+          .getByTestId(`loop-option-${loop}`)
+          .evaluate((row: HTMLElement) => row.getBoundingClientRect().height),
+      ),
+    );
+  await expect(async () => {
+    for (const height of await compactRowHeights()) {
+      expect(height).toBe(44);
+    }
+  }).toPass({ intervals: [100, 250, 500, 1000], timeout: 10_000 });
   const compactTriggerBox = await boxOf(page, "loop-select");
   const compactListBox = await boxOf(page, "loop-listbox");
   expect(

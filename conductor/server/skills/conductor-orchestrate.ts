@@ -71,9 +71,11 @@ node '<helper>' models <<'JSON'
 JSON
 \`\`\`
 
-- \`profiles\` returns \`id\`, \`name\`, \`notes\`, \`provider\`, \`model\`, \`modeId\` and \`thinkingOptionId\` for each profile.
-- The user configured these profiles for specific kinds of work. Read the notes.
-- \`models\` returns the available providers and model IDs.
+- \`profiles\` returns Conductor-owned profile identity, notes, provider/model/permission fields, routing classification, \`hasInstructions\`, one catalog revision and diagnostics. It does not return instruction text. A profile is classified only when it has at least one role and a size; never guess a size from a model name.
+- Create and edit profiles in Podium › Profiles. Choose a provider/model and configure roles and size there. Add skill names the task agent should use to the profile's instructions; Conductor does not discover skills.
+- \`profiles.providers\` supplies the provider/model/thinking-option/mode catalog used by the Podium pickers. \`models\` lists available providers and model IDs for worker selection. Podium › Profiles also offers a one-time import from Paseo profiles; imported entries become independent Conductor profiles.
+- \`route\` is read-only. Pass a \`role\` and optionally an explicit profile or inline worker choice. It returns the selected profile, eligible alternatives ordered by size (small, medium, large), exclusions and concise reasons. Subject-matter fit comes from profile notes, not model-name heuristics.
+- Profile data is stored by Conductor under \`<PASEO_HOME>/plugin-data/conductor/profiles.json\`; edit it through Podium › Profiles. A missing store means no profiles are configured and mode is \`warn\`.
 
 ### 4. Split the goal into tasks
 
@@ -90,7 +92,7 @@ Then build the score:
 4. Always set \`writes\`. Use \`[]\` for research and review. An omitted \`writes\` defaults to \`["."]\`, and that task then runs alone.
 5. Put exclusive non-file items in \`resources\`, such as a lockfile install, a port, a database or a plugin reload.
 6. Add \`dependsOn\` only for a real data flow or write order.
-7. Add a read-only planning task when the design is open or 3 or more writers share a contract.
+7. Add a planning task only to resolve a named open design decision. Writer count or a shared contract alone never calls for a planning task. Executing an approved design is implementation.
 8. End a writing score with a read-only review task: set \`review: true\`, \`writes: []\`, and its \`reads\` to the writers' \`writes\`. A review task starts once each prerequisite is \`completed\` or \`needs-changes\`, and receives their open findings and failed checks, so one loop collects every defect. Other tasks wait for \`completed\` prerequisites.
 9. Add an integration task when 2 or more writers change adjacent layers. It owns the glue files and runs the full checks.
 
@@ -103,6 +105,8 @@ Fields:
 - \`resources\`: names for exclusive non-file items, such as \`npm-install\` or \`port-8080\`. Names use the \`id\` format. Tasks that share a resource run one at a time.
 - \`checks\`: the exact commands or checks the task agent must run and report, such as \`npm run check\`.
 - \`review\`: \`true\` for a read-only review task. Only a review task may report findings against other tasks.
+- \`role\`: optional routing intent: \`exploration\`, \`implementation\`, \`planning\` or \`review\`.
+- \`openDecision\`: name the unresolved decision for a \`planning\` task. \`role: "planning"\` requires it; use \`implementation\` to carry out an approved decision. A \`review\` role requires \`review: true\`.
 
 Description contract:
 
@@ -123,25 +127,24 @@ Scheduling:
 
 ### 5. Choose a task agent for each task
 
-Split first, then route. Do not create tasks to match profiles. Use the first option that fits:
+Split first, then route. Do not create tasks to match profiles.
 
-1. A profile the user named for this task or role.
-2. A configured profile whose \`notes\` fit the task role. Set \`profile\` to its \`id\`.
-3. An inline \`provider\`, \`model\` and optional \`thinkingOptionId\` from \`models\`.
-4. No worker choice fields. The task agent inherits this session's provider, model, thinking setting and permission mode.
+1. Honor a profile the user named, subject to availability and the permission ceiling.
+2. Otherwise run \`route\` with the task role. Match subject matter from each profile's “When to use” notes. Pick the smallest eligible profile for the role (small, then medium, then large); ties follow store order, then profile ID. Do this even when the deliverable is prose or Markdown. Use \`implementation\` to execute an approved design; use \`planning\` only for open design decisions. Prefer a reviewer on a different provider/model from the implementer.
+3. Give each task focused context and a short visible selection reason in \`routing: {"reason":"..."}\`; an automatic route supplies its own concise reason. Automatic routing ignores “When to use” notes: it takes the smallest size, then store order. Omit worker fields only when exactly one eligible profile has the smallest size for the role. When two or more share the smallest size, name one with \`profile\`, chosen by its “When to use” notes, and give the reason. If none is eligible, choose an explicit profile, an inline \`provider\`/\`model\` (optional \`thinkingOptionId\`), or \`profile: "inherit"\` with a reason. Inherit is explicit opt-in; never silently inherit the Conductor's model.
+4. Escalate past the eligible smaller-first choice only for an explicit user choice, a concrete capability gap, an observed model limitation after bounded corrective attempts, or no eligible configured profile. Add \`routing.override: {"category":"user-choice|capability-gap|observed-limitation|no-eligible-profile","evidence":"specific evidence"}\`. When no profile is eligible, choose an explicit profile, inline worker, or \`profile: "inherit"\` with a reason; strict mode also requires a valid \`no-eligible-profile\` override. “Needs quality” is not evidence. Diagnose missing input, permissions and sandbox issues before treating failure as a model limitation.
 
-Do not set \`profile\` together with \`provider\`, \`model\` or \`thinkingOptionId\`.
-
-| Role | Prefer |
+| Role | Routing |
 |---|---|
-| Implementation | The strongest coding profile for that layer. |
-| Exploration or research | A fast or low-cost profile. |
-| Planning or design | A profile with a high thinking option. |
-| Review | A different provider or model than the implementer. |
+| Implementation | Smallest eligible implementation profile whose “When to use” notes fit the subject, including writing work. |
+| Exploration | Smallest eligible exploration profile whose “When to use” notes fit the subject. |
+| Planning | Use only while design decisions remain open. |
+| Review | Prefer a different provider/model than the implementer, while matching role and subject in the notes. |
 
-Permissions: a task agent never gets a broader permission mode than this session. A profile's \`modeId\` applies to its task agent. Conductor rejects an elevated mode when this session is not elevated. A task agent on a different provider without a \`modeId\` starts in that provider's default mode.
+Profiles are owned by Conductor and edited in Podium › Profiles. Each has routing fields (\`roles\` and \`size\`: \`small\`, \`medium\` or \`large\`), “When to use” notes, and free-text instructions. The notes guide subject-matter matching. A profile without roles or size is unclassified and shows a warning in its Profiles card; routing cannot select it. Instructions are delivered to the task agent in a clearly marked section; they cannot override user instructions, repository rules, write scope, or the permission ceiling. Put skill names the agent should use in these instructions. The Conductor filters by classification, role, provider availability and permission ceiling, then prefers the smallest eligible size. \`warn\` is the default: a larger-than-eligible, ineligible, unclassified or inline choice is accepted with a warning in the acknowledgement and attempt. \`strict\` requires a valid override category and specific evidence. Unknown/stale profile IDs appear in diagnostics.
 
-Fallback: if a worker choice fails with \`Unknown worker profile\`, \`Ambiguous worker profile\` or an elevated-mode error, use the next option in the list. State each fallback in the finish summary.
+Permissions: a task agent never gets a broader permission mode than this session. An explicit profile \`modeId\` overrides the inherited Conductor mode; a task agent on another provider without a profile mode starts in that provider's default mode. Conductor rejects an elevated mode when this session is not elevated. \`define\`, \`loop\` and \`dispatch\` validate choices; dispatch revalidates if the catalog revision changes.
+
 
 ### 6. Define the tasks
 
@@ -176,9 +179,7 @@ This step covers only \`failed\` (a harness problem) and \`blocked\` tasks. A \`
 - Act on the per-task notification summary first. Run \`get\` or open a task agent's conversation only when the summary does not explain the failure. Task agents diagnose and fix their own changes for up to 3 rounds; do not fix the cause yourself.
 - Choose the retry action from \`diagnosis.need\`. For \`scope\`, dispatch with \`retryTaskId\` and \`addWrites\` set to \`requestedWrites\`, or ask the user if those paths exceed the goal. For \`input\`, ask the user, then include the answer in \`note\`. For \`model\`, choose a different \`profile\` or \`provider\`/\`model\`/\`thinkingOptionId\`. For \`harness\` (or the older \`none\`), include a specific direction in \`note\`.
 - A failed task gets at most 2 retries per loop (3 attempts), counted only from \`failed\` attempts in that loop. Blocker resumes and nudges do not count, and failed retries never use the loop budget. A task agent that stops without reporting after the nudge, becomes unreachable, or whose launch stays unconfirmed is \`failed\` with \`need: "harness"\`; retrying an unconfirmed launch replays the same agent identity and counts. At the limit, \`dispatch\` refuses the retry; ask the user how to proceed.
-- Retry on the same worker choice first. Switch to a different \`profile\` or
-  \`provider\`/\`model\` when \`need\` is \`"model"\`, or when the task's second
-  attempt on the same worker choice also fails or stops without reporting. Never
+- Retry on the same worker choice first. A harness failure does not justify switching models: diagnose missing input, permissions and sandbox first. Escalate only for a concrete capability gap or observed model limitation, with a specific routing override. Never
   switch to a profile whose \`modeId\` is broader than this session's. If every
   available choice has failed, ask the user.
   Otherwise dispatch with \`retryTaskId\`; include \`note\` when giving guidance.
@@ -196,7 +197,7 @@ A loop ends when nothing runs and nothing more can start. Its wake states the ve
 - *Succeeded*: go to step 9.
 - *Needs changes*: the wake lists the blocking findings and failed checks with their owning tasks. Do not fix them yourself, and never start a new symphony for them.
   1. Group the findings by owning task: the finding's \`taskId\`, or the reporting task when it has none.
-  2. Send \`loop\` with \`reopen\` for each owning task and its findings. Each reopened task continues on its existing agent when that agent can receive a message; otherwise a new agent starts with the previous report. Use \`note\` for direction, \`addWrites\` for missing scope, and \`after\` for loop-only prerequisites.
+  2. Send \`loop\` with \`reopen\` for each owning task and its findings. Each reopened task continues on its existing agent when that agent can receive a message; otherwise a new agent starts with the previous report. Use \`note\` for direction, \`addWrites\` for missing scope, and \`after\` for loop-only prerequisites. Change workers after a check/review failure only through the reopen worker override (\`profile\` or inline \`provider\`/\`model\`/\`thinkingOptionId\`) with \`routing.reason\` and any required evidence-backed \`routing.override\`.
   3. Add a planning task through \`tasks\` only when the fix needs a design decision, and put it in the reopened task's \`after\`.
   4. Defer a finding or task in \`deferred\` only with a concrete reason. Every blocking finding and every \`needs-changes\` task must be reopened or deferred. A deferred item stays open: later wakes list it again, and every later \`loop\` must reopen or defer it again. Name a finding as \`<reporter task>#<id>\` when two reports use the same id.
   5. End your turn. Transitive dependents of reopened tasks, including the review, re-run automatically in the new loop; the review receives the previous findings and confirms each fix.
@@ -235,6 +236,13 @@ JSON
 | \`Ambiguous worker profile: <name>\` | Two profiles share the name. | Use the profile \`id\`. |
 | \`Task agent model is unavailable: <provider>/<model>\` | \`models\` does not list that model. | Run \`models\` and choose a listed ID. |
 | \`Worker profile requests elevated permission mode: <mode>\` | The profile asks for more access than this session has. | Choose another profile, or an inline choice. |
+| \`Task "<id>" routing: ... Add routing.override {category, evidence} or choose an eligible profile.\` | Strict routing rejected a larger, ineligible, unclassified, inline or inherited choice. | Run \`route\`; choose the first eligible profile or provide a valid override category and specific evidence. |
+| \`Task "<id>" needs routing.reason for its worker choice.\` | A task or reopen worker choice has no visible selection reason. | Add \`routing: {"reason":"..."}\`; reopen overrides require it. |
+| \`Task "<id>" override evidence is generic; name the concrete capability gap, observed failure or user statement.\` | Override evidence is vague or only says quality/complexity. | State the specific user choice, capability gap or observed limitation. |
+| \`Task "<id>" has no eligible configured profile. Set an explicit profile, provider/model, or profile "inherit" with routing.reason.\` | No eligible profile exists for automatic routing. | Choose an available worker explicitly, or use \`profile: "inherit"\` with a reason; strict mode also requires a specific \`no-eligible-profile\` override. |
+| \`Profile catalog changed since define (...); routing was revalidated.\` | Routing fields changed after definition; dispatch revalidated the choices. | Review \`profiles\` and \`route\`; reopen with a validated worker override if needed. |
+| \`Conductor profiles are invalid: ... Fix them in Podium › Profiles.\` | The profile store is unreadable or invalid. | Open Podium › Profiles, correct the reported profile data, and retry. |
+| \`Conductor could not load or save the worker profiles. Refresh and check conductor storage.\` | The profiles RPC could not read or persist the store. | Refresh Podium and check Conductor storage. |
 | \`\`Retry requires a settled failed or blocked task agent; a needs-changes task is resolved with \`loop\`, not a retry.\`\` | The task reported \`needs-changes\`, or its agent has not settled. | Wait for the loop to end, then reopen the task with \`loop\` (step 8b). |
 | \`Retry refused: task "<id>" already used its 2 failed retries in loop <N>. Ask the user how to proceed.\` | The task reached the failed-retry limit for this loop. | Ask the user. Do not start a new symphony. |
 | \`A loop starts only after the current loop ends needing changes with no failed, blocked or running tasks.\` | Tasks still run or can start, a task is \`failed\` or \`blocked\`, or the loop succeeded. | Wait for the loop-end wake, resolve failed and blocked tasks with step 8, or finish a succeeded loop. |

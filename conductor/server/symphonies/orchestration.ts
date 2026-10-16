@@ -51,6 +51,16 @@ import {
   type SymphonyCommand,
   type WorkerChoice,
 } from "../../shared/symphonies/commands";
+import {
+  resolveProfileRef,
+  type ConductorProfile,
+} from "../../shared/symphonies/profiles";
+import {
+  profileIdSchema,
+  type AttemptRouting,
+  type CommandRouting,
+  type RoutingWarning,
+} from "../../shared/symphonies/routing";
 import { commandSymphonyId, type ExecutionRuntime } from "./identity";
 import {
   recordChangedPaths,
@@ -66,6 +76,14 @@ import {
   symphonyHoldsResources,
 } from "./results";
 import { nextLaunchCheckDelay, type WorkerRuntime } from "./workers";
+import {
+  choiceKind,
+  resolveCommandTaskRouting,
+  route,
+  validateChoice,
+  type ResolvedTaskRouting,
+  type RoutingCatalogSource,
+} from "./routing";
 
 /** Truncates a field so a large symphony cannot flood the Conductor. */
 const clamp = (value: string, max: number) =>
@@ -227,11 +245,19 @@ function loopEndMessage(
   return `Loop ${verdict.loop} needs changes: ${detail}. Start loop ${verdict.loop + 1} with \`loop\`, reopening the owning tasks.`;
 }
 
-/** The worker choice a launch uses; "inherit" means no profile is passed. */
-function launchChoice(launch: NonNullable<Attempt["launch"]>): WorkerChoice {
+/**
+ * The worker choice a launch resolves with. A persisted `profileId` is the
+ * stable identity and wins over the original reference (id or name), which is
+ * kept only as historical context, so a rename cannot change which profile a
+ * pending or resumed attempt uses. "inherit" means no profile is passed.
+ */
+export function launchChoice(
+  launch: NonNullable<Attempt["launch"]>,
+): WorkerChoice {
   const { profile, ...inline } = workerChoice(launch);
+  const reference = launch.profileId ?? profile;
   return {
-    ...(profile && profile !== "inherit" ? { profile } : {}),
+    ...(reference && reference !== "inherit" ? { profile: reference } : {}),
     ...inline,
   };
 }
@@ -253,6 +279,7 @@ export function orchestration(
   runtime: () => ExecutionRuntime & Partial<SymphonyChangesRuntime>,
   workers: () => WorkerRuntime,
   command: CommandLine,
+  routing: RoutingCatalogSource,
 ) {
   const change = async (
     id: string,
@@ -271,6 +298,7 @@ export function orchestration(
     workers,
     change,
     command,
+    routing,
   );
   /**
    * The reason a task cannot start an attempt now, or null when it can. A task
@@ -642,6 +670,197 @@ export function orchestration(
         : {}),
     };
   };
+  /** The available providers and the Conductor's permission mode for routing. */
+  const routingContext = async (conductorId: string | null) => {
+    const workerRuntime = workers();
+    const parentModeId =
+      conductorId !== null
+        ? await workerRuntime.modeOf?.(conductorId)
+        : undefined;
+    const availableProviders = workerRuntime.providers
+      ? new Set(
+          (await workerRuntime.providers())
+            .filter((entry) => entry.available)
+            .map((entry) => entry.provider),
+        )
+      : null;
+    return { parentModeId, availableProviders };
+  };
+  interface LaunchRoutingResolution {
+    routing?: AttemptRouting | undefined;
+    warnings: RoutingWarning[];
+    catalogRevision: string;
+    errors: string[];
+    /** The chosen Conductor profile, persisted and injected into the prompt. */
+    profile?: ConductorProfile | undefined;
+  }
+  /** The Conductor profile a worker choice names, if it resolves. */
+  const chosenProfile = (
+    profiles: readonly ConductorProfile[],
+    choice: WorkerChoice,
+  ): ConductorProfile | undefined => {
+    if (!choice.profile || choice.profile === "inherit") {
+      return undefined;
+    }
+    const resolution = resolveProfileRef(profiles, choice.profile);
+    return "profile" in resolution ? resolution.profile : undefined;
+  };
+  /**
+   * The profile fields snapshotted on an attempt launch. `profileId` is only
+   * persisted when it is a schema-valid UUID, so the launch record stays valid
+   * even for a test or imported id; the name always accompanies it.
+   */
+  const profileSnapshot = (profile: ConductorProfile) => ({
+    profileName: profile.name,
+    ...(profileIdSchema.safeParse(profile.id).success
+      ? { profileId: profile.id }
+      : {}),
+  });
+  /**
+   * One validation path for a concrete launch choice. It loads the catalog,
+   * keeps the recorded routing warnings, and revalidates against the current
+   * catalog when the choice was last validated at a different revision. Warn
+   * mode records a catalog-changed warning; strict mode returns errors so no
+   * continuation or reuse path bypasses it.
+   */
+  const resolveLaunchRouting = async (input: {
+    agentId: string | null;
+    task: TaskDefinition;
+    choice: WorkerChoice;
+    /** Routing to apply; defaults to the task's define-time routing. */
+    routing?: AttemptRouting | undefined;
+    /** Warnings already recorded with this decision. */
+    warnings?: RoutingWarning[] | undefined;
+    /** The revision the choice was last validated at. */
+    baselineRevision?: string | undefined;
+  }): Promise<LaunchRoutingResolution> => {
+    const catalog = await routing.load();
+    const profile = chosenProfile(catalog.profiles, input.choice);
+    const withProfile = (
+      resolution: LaunchRoutingResolution,
+    ): LaunchRoutingResolution =>
+      profile ? { ...resolution, profile } : resolution;
+    const baseRouting: AttemptRouting | undefined =
+      input.routing ??
+      (input.task.routing
+        ? {
+            reason: input.task.routing.reason,
+            selectedBy: input.task.routing.selectedBy,
+            ...(input.task.routing.override
+              ? { override: input.task.routing.override }
+              : {}),
+          }
+        : undefined);
+    const warnings = [...(input.warnings ?? [])];
+    const baseline =
+      input.baselineRevision ?? input.task.routing?.catalogRevision;
+    if (baseline === undefined || baseline === catalog.catalogRevision) {
+      return withProfile({
+        routing: baseRouting,
+        warnings,
+        catalogRevision: catalog.catalogRevision,
+        errors: [],
+      });
+    }
+    if (catalog.state === "invalid") {
+      warnings.push({
+        code: "catalog-changed",
+        message:
+          "Conductor profiles are invalid; kept the define-time routing.",
+      });
+      return withProfile({
+        routing: baseRouting,
+        warnings,
+        catalogRevision: catalog.catalogRevision,
+        errors: [],
+      });
+    }
+    const { parentModeId, availableProviders } = await routingContext(
+      input.agentId,
+    );
+    const result = route(catalog, {
+      intent: { role: input.task.routing?.role ?? "implementation" },
+      parentModeId,
+      availableProviders,
+    });
+    const validation = validateChoice({
+      taskId: input.task.id,
+      choice: choiceKind(input.choice),
+      ...(baseRouting?.reason !== undefined
+        ? { reason: baseRouting.reason }
+        : {}),
+      ...(baseRouting?.override !== undefined
+        ? { override: baseRouting.override }
+        : {}),
+      route: result,
+      catalog,
+      mode: catalog.mode,
+    });
+    if (validation.errors.length) {
+      return withProfile({
+        routing: baseRouting,
+        warnings,
+        catalogRevision: catalog.catalogRevision,
+        errors: validation.errors,
+      });
+    }
+    warnings.push(...validation.warnings, {
+      code: "catalog-changed",
+      message: `Profile catalog changed since define (${baseline.slice(0, 8)} to ${catalog.catalogRevision.slice(0, 8)}); routing was revalidated.`,
+    });
+    return withProfile({
+      routing: baseRouting,
+      warnings,
+      catalogRevision: catalog.catalogRevision,
+      errors: [],
+    });
+  };
+  /**
+   * In strict mode, the first validation error for the attempt's actual worker
+   * choice whose catalog revision changed since it was validated. A retry
+   * throws this before mutating.
+   */
+  const staleRoutingError = async (
+    agentId: string,
+    task: TaskDefinition,
+    attempt: Attempt,
+  ): Promise<string | null> => {
+    if (!attempt.launch) {
+      return null;
+    }
+    const resolved = await resolveLaunchRouting({
+      agentId,
+      task,
+      // Resolve the persisted profile identity, matching launch and
+      // continuation, so a rename cannot invalidate an otherwise valid retry.
+      choice: launchChoice(attempt.launch),
+      routing: attempt.launch.routing,
+      warnings: [],
+      baselineRevision: attempt.launch.catalogRevision,
+    });
+    return resolved.errors[0]
+      ? `${resolved.errors[0]} The profile catalog changed; reopen the task with a worker override or update the Conductor profiles.`
+      : null;
+  };
+  const catalogChangedMessage = (validation: { errors: string[] }) =>
+    `${validation.errors[0]} The profile catalog changed; reopen the task with a worker override or update the Conductor profiles.`;
+  /** Merges warning lists without duplicates, preserving order. */
+  const mergeWarnings = (
+    ...lists: Array<readonly RoutingWarning[] | undefined>
+  ): RoutingWarning[] => {
+    const seen = new Set<string>();
+    const merged: RoutingWarning[] = [];
+    for (const list of lists) {
+      for (const warning of list ?? []) {
+        const key = `${warning.code}|${warning.message}`;
+        if (!seen.has(key)) {
+          seen.add(key);
+          merged.push(warning);
+        }
+      }
+    }
+    return merged;
+  };
   const reserve = async (
     symphonyId: string,
     task: TaskDefinition,
@@ -658,6 +877,12 @@ export function orchestration(
       recheck?: RecheckPromptInput;
       /** A re-running review's previous-loop findings to confirm. */
       previous?: PreviousFindingsInput;
+      /** The routing decision for a replacement worker, if any. */
+      routing?: AttemptRouting;
+      /** Warnings recorded with a replacement worker choice. */
+      warnings?: RoutingWarning[];
+      /** The catalog revision the replacement was last validated at. */
+      baselineRevision?: string;
     } = {},
   ) => {
     const override = workerChoice(options.replacement ?? {});
@@ -666,6 +891,36 @@ export function orchestration(
       ? { profile: "inherit", ...override }
       : { ...workerChoice(task.worker), profile: task.worker.profile };
     const { symphony } = await store.read(symphonyId);
+    // A replacement worker choice replaces the previous decision as a whole,
+    // so its validated warnings (even none) are authoritative. The task's
+    // define-time warnings apply only to an initial launch or when the task's
+    // own routing is actually carried.
+    const replacing =
+      options.replacement !== undefined || options.routing !== undefined;
+    const resolved = await resolveLaunchRouting({
+      agentId: symphony.source.agentId,
+      task,
+      choice,
+      ...(options.routing ? { routing: options.routing } : {}),
+      warnings: replacing
+        ? options.warnings
+        : mergeWarnings(task.routing?.warnings, options.warnings),
+      ...(options.baselineRevision !== undefined ||
+      task.routing?.catalogRevision !== undefined
+        ? {
+            baselineRevision:
+              options.baselineRevision ?? task.routing?.catalogRevision,
+          }
+        : {}),
+    });
+    if (resolved.errors.length) {
+      await change(symphonyId, (current) => {
+        current.execution.interruption = catalogChangedMessage(resolved);
+      });
+      return false;
+    }
+    const baseRouting = resolved.routing;
+    const launchWarnings = resolved.warnings;
     let reserved = false;
     await store.update(symphonyId, symphony.version, async (current) => {
       const execution = current.execution;
@@ -707,6 +962,9 @@ export function orchestration(
               report: options.prior?.report ?? null,
               ...handoffPaths(current, task.id),
               ...(options.prior?.note ? { note: options.prior.note } : {}),
+              ...(resolved.profile?.instructions
+                ? { instructions: resolved.profile.instructions }
+                : {}),
             })
           : null;
       const prompt = agentPrompt(
@@ -719,6 +977,9 @@ export function orchestration(
           ...(options.reopen ? { reopen: options.reopen } : {}),
           ...(options.recheck ? { recheck: options.recheck } : {}),
           ...(options.previous ? { previous: options.previous } : {}),
+          ...(resolved.profile?.instructions
+            ? { instructions: resolved.profile.instructions }
+            : {}),
           budget: assignmentBudget(handoff),
         }),
         handoff,
@@ -749,6 +1010,12 @@ export function orchestration(
           prompt,
           settled: false,
           ...choice,
+          ...(resolved.profile ? profileSnapshot(resolved.profile) : {}),
+          ...(baseRouting ? { routing: baseRouting } : {}),
+          ...(launchWarnings.length
+            ? { warnings: launchWarnings.slice(0, 8) }
+            : {}),
+          catalogRevision: resolved.catalogRevision,
           generation: 0,
         },
       });
@@ -1049,9 +1316,33 @@ export function orchestration(
     } = {},
   ): Promise<boolean> => {
     const attemptId = randomUUID();
-    // The continuation keeps the previous attempt's worker choice.
-    const choice = workerChoice(launch);
+    // Continue the same agent under its persisted profile identity, falling back
+    // to the original reference only for a record stored before profileId.
+    const choice = launchChoice(launch);
     const initial = (await store.read(symphonyId)).symphony;
+    // Validate the actual continued choice before creating or waking anything,
+    // so a continuation cannot bypass strict mode after a profile takeover.
+    const resolved = await resolveLaunchRouting({
+      agentId: initial.source.agentId,
+      task,
+      choice,
+      ...(launch.routing ? { routing: launch.routing } : {}),
+      warnings: launch.warnings ?? [],
+      ...(launch.catalogRevision !== undefined ||
+      task.routing?.catalogRevision !== undefined
+        ? {
+            baselineRevision:
+              launch.catalogRevision ?? task.routing?.catalogRevision,
+          }
+        : {}),
+    });
+    if (resolved.errors.length) {
+      await change(symphonyId, (current) => {
+        current.execution.interruption = catalogChangedMessage(resolved);
+        current.status = executionStatus(current);
+      });
+      return false;
+    }
     const writes = nextAttemptWrites(initial, task, additions ?? []);
     // The continued agent starts from the checkout as it is now, so its own
     // changed paths are measured against this baseline. Persist it before the
@@ -1132,6 +1423,14 @@ export function orchestration(
           generation: 0,
           ...choice,
           profile: launch.profile,
+          ...(launch.profileId ? { profileId: launch.profileId } : {}),
+          ...(launch.profileName ? { profileName: launch.profileName } : {}),
+          ...(resolved.routing ? { routing: resolved.routing } : {}),
+          ...(resolved.warnings.length
+            ? { warnings: resolved.warnings.slice(0, 8) }
+            : {}),
+          ...(launch.config ? { config: launch.config } : {}),
+          catalogRevision: resolved.catalogRevision,
         },
       });
       execution.interruption = null;
@@ -1176,6 +1475,7 @@ export function orchestration(
         continue;
       }
       const { entry, ...prompt } = context;
+      const overrideWorker = entry?.worker;
       const additions = entry?.addedWrites?.length
         ? entry.addedWrites
         : undefined;
@@ -1188,7 +1488,9 @@ export function orchestration(
         ...(entry?.note ? { note: entry.note } : {}),
       };
       let created = false;
-      if (previous?.launch) {
+      // A reopen worker override never reuses the previous agent, so the
+      // replacement starts with the previous report and a handoff.
+      if (previous?.launch && !overrideWorker) {
         const status = await workers().inspect(previous.agentId);
         if (status.active) {
           continue;
@@ -1206,12 +1508,42 @@ export function orchestration(
         }
       }
       if (!created) {
+        let replacementOptions: {
+          replacement?: WorkerChoice;
+          routing?: AttemptRouting;
+          warnings?: RoutingWarning[];
+          baselineRevision?: string;
+        } = {};
+        if (overrideWorker) {
+          replacementOptions = {
+            replacement: workerChoice(overrideWorker),
+            ...(entry?.routing ? { routing: entry.routing } : {}),
+            ...(entry?.warnings?.length ? { warnings: entry.warnings } : {}),
+            ...(previous?.launch?.catalogRevision !== undefined
+              ? { baselineRevision: previous.launch.catalogRevision }
+              : {}),
+          };
+        } else if (previous?.launch) {
+          replacementOptions = {
+            replacement: launchChoice(previous.launch),
+            // Carry the previous launch's routing, override and warnings, not
+            // the task's older define-time routing, so a takeover is validated
+            // and recorded with the evidence that actually chose it.
+            ...(previous.launch.routing
+              ? { routing: previous.launch.routing }
+              : {}),
+            ...(previous.launch.warnings?.length
+              ? { warnings: previous.launch.warnings }
+              : {}),
+            ...(previous.launch.catalogRevision !== undefined
+              ? { baselineRevision: previous.launch.catalogRevision }
+              : {}),
+          };
+        }
         created = await reserve(symphony.id, task, {
           loop,
           prior,
-          ...(previous?.launch
-            ? { replacement: launchChoice(previous.launch) }
-            : {}),
+          ...replacementOptions,
           ...(additions ? { additions } : {}),
           ...prompt,
         });
@@ -1230,6 +1562,7 @@ export function orchestration(
     replacement?: WorkerChoice,
     note?: string,
     addWrites?: string[],
+    routingCommand?: CommandRouting,
   ) => {
     let symphony = await owner(agentId, symphonyId);
     if (
@@ -1238,6 +1571,14 @@ export function orchestration(
     ) {
       throw new SymphonyError("This symphony is not ready to dispatch.");
     }
+    let replacementRouting: AttemptRouting | undefined;
+    let replacementWarnings: RoutingWarning[] | undefined;
+    let replacementRevision: string | undefined;
+    // Every attempt that already existed before this command, so the
+    // acknowledgement can report only the warnings this call produced.
+    const attemptIdsBefore = new Set(
+      symphony.execution.attempts.map((entry) => entry.id),
+    );
     if (retryTaskId) {
       const attempt = latestAttempt(symphony, retryTaskId);
       if (
@@ -1283,6 +1624,47 @@ export function orchestration(
           "This task's launch is unconfirmed; dispatch without a replacement worker choice to reconcile it first.",
         );
       }
+      if (Object.keys(requested).length > 0) {
+        const catalog = await routing.load();
+        if (catalog.state === "invalid") {
+          throw new SymphonyError(
+            `Conductor profiles are invalid: ${catalog.error ?? "unknown error."} Fix them in Podium › Profiles.`,
+          );
+        }
+        const { parentModeId, availableProviders } =
+          await routingContext(agentId);
+        const resolved = resolveCommandTaskRouting({
+          catalog,
+          task: {
+            id: currentTask.id,
+            ...requested,
+            ...(routingCommand ? { routing: routingCommand } : {}),
+            ...(currentTask.routing?.role
+              ? { role: currentTask.routing.role }
+              : {}),
+            ...(currentTask.review !== undefined
+              ? { review: currentTask.review }
+              : {}),
+            writes: currentTask.writes,
+          },
+          parentModeId,
+          availableProviders,
+        });
+        if (resolved.errors.length) {
+          throw new SymphonyError(resolved.errors.slice(0, 5).join(" "));
+        }
+        replacementRouting = {
+          reason: resolved.routing.reason,
+          selectedBy: resolved.routing.selectedBy,
+          ...(resolved.routing.override
+            ? { override: resolved.routing.override }
+            : {}),
+        };
+        // Keep an explicitly validated empty list: a warning-free replacement
+        // must not fall back to the previous attempt's obsolete warnings.
+        replacementWarnings = resolved.warnings;
+        replacementRevision = catalog.catalogRevision;
+      }
       // Decide before any mutation, including addWrites, whether the retry can
       // start now. Otherwise dispatch would report success while the retry
       // silently never started and any added writes stayed saved.
@@ -1308,6 +1690,14 @@ export function orchestration(
         ?.score.tasks.find((entry) => entry.id === retryTaskId);
       if (!task) {
         throw new SymphonyError("Unknown task.");
+      }
+      // Revalidate the actual attempt's worker choice before any mutation when
+      // the catalog changed; a replacement choice was already validated above.
+      if (Object.keys(requested).length === 0) {
+        const stale = await staleRoutingError(agentId, task, attempt);
+        if (stale) {
+          throw new SymphonyError(stale);
+        }
       }
       const prior: { report: TaskReport | null; note?: string } = {
         report: attempt.report,
@@ -1361,7 +1751,9 @@ export function orchestration(
           const newAgentId = commandSymphonyId(symphonyId, randomUUID());
           const choice = replacement
             ? { profile: "inherit", ...workerChoice(replacement) }
-            : workerChoice(attempt.launch);
+            : launchChoice(attempt.launch);
+          const catalog = await routing.load();
+          const profile = chosenProfile(catalog.profiles, choice);
           const { context } = await store.read(symphonyId);
           const handoff = handoffInstructions({
             attempt: position,
@@ -1371,6 +1763,9 @@ export function orchestration(
             ...(attempt.blockedBy ? { blockedBy: attempt.blockedBy } : {}),
             ...(attempt.message ? { blockMessage: attempt.message } : {}),
             ...(note ? { note } : {}),
+            ...(profile?.instructions
+              ? { instructions: profile.instructions }
+              : {}),
           });
           const prompt = agentPrompt(
             taskAssignmentPrompt({
@@ -1380,6 +1775,9 @@ export function orchestration(
               plan: context.plan,
               writes,
               ...retryContext,
+              ...(profile?.instructions
+                ? { instructions: profile.instructions }
+                : {}),
               budget: assignmentBudget(handoff),
             }),
             handoff,
@@ -1387,6 +1785,14 @@ export function orchestration(
           if (prompt.length > SYMPHONY_LIMITS.promptChars) {
             throw new SymphonyError(oversizedPrompt(task.id));
           }
+          // With no replacement choice, carry the attempt's own routing,
+          // override, warnings and revision so the takeover is validated and
+          // recorded with the evidence that chose it.
+          const carriedRouting = replacementRouting ?? attempt.launch.routing;
+          const carriedWarnings =
+            replacementWarnings ?? attempt.launch.warnings;
+          const carriedRevision =
+            replacementRevision ?? attempt.launch.catalogRevision;
           await change(symphonyId, (current) => {
             const a = latestAttempt(current, retryTaskId);
             if (!a?.launch) {
@@ -1405,6 +1811,7 @@ export function orchestration(
               settled: false,
               generation: 0,
               profile: choice.profile ?? "inherit",
+              ...(profile ? profileSnapshot(profile) : {}),
               ...(choice.provider !== undefined
                 ? { provider: choice.provider }
                 : {}),
@@ -1412,6 +1819,9 @@ export function orchestration(
               ...(choice.thinkingOptionId !== undefined
                 ? { thinkingOptionId: choice.thinkingOptionId }
                 : {}),
+              ...(carriedRouting ? { routing: carriedRouting } : {}),
+              ...(carriedWarnings?.length ? { warnings: carriedWarnings } : {}),
+              ...(carriedRevision ? { catalogRevision: carriedRevision } : {}),
             };
             if (additions?.length) {
               a.addedWrites = mergeAddedWrites(a.addedWrites, additions);
@@ -1479,9 +1889,20 @@ export function orchestration(
             retryContext,
           );
         } else {
+          const carryRouting = replacementRouting ?? attempt.launch.routing;
+          const carryWarnings = replacementWarnings ?? attempt.launch.warnings;
+          const carryRevision =
+            replacementRevision ?? attempt.launch.catalogRevision;
           await reserve(symphonyId, task, {
             retry: true,
-            ...(replacement ? { replacement } : {}),
+            // Carry the attempt's actual choice and routing when the caller did
+            // not name a replacement, never the task's older routing.
+            replacement: replacement ?? launchChoice(attempt.launch),
+            ...(carryRouting ? { routing: carryRouting } : {}),
+            ...(carryWarnings ? { warnings: carryWarnings } : {}),
+            ...(carryRevision !== undefined
+              ? { baselineRevision: carryRevision }
+              : {}),
             prior,
             ...(additions ? { additions } : {}),
             ...retryContext,
@@ -1498,7 +1919,34 @@ export function orchestration(
       await launchAttempt(symphonyId, task);
     }
     symphony = (await store.read(symphonyId)).symphony;
-    return { symphony };
+    const routingWarnings = new Map<
+      string,
+      { taskId: string; code: RoutingWarning["code"]; message: string }
+    >();
+    const addWarning = (taskId: string, warning: RoutingWarning): void => {
+      routingWarnings.set(`${taskId}|${warning.code}|${warning.message}`, {
+        taskId,
+        code: warning.code,
+        message: warning.message,
+      });
+    };
+    for (const warning of replacementWarnings ?? []) {
+      addWarning(retryTaskId ?? "", warning);
+    }
+    for (const attempt of symphony.execution.attempts) {
+      if (attemptIdsBefore.has(attempt.id)) {
+        continue;
+      }
+      for (const warning of attempt.launch?.warnings ?? []) {
+        addWarning(attempt.taskId, warning);
+      }
+    }
+    return {
+      symphony,
+      ...(routingWarnings.size
+        ? { routingWarnings: [...routingWarnings.values()] }
+        : {}),
+    };
   };
   /**
    * Starts loop N+1 after loop N ended needing changes. Reopens the owning
@@ -1512,6 +1960,11 @@ export function orchestration(
     command: Extract<SymphonyCommand, { kind: "loop" }>,
   ) => {
     let symphony = await owner(agentId, command.symphonyId);
+    // Every attempt that already existed before this loop, so the
+    // acknowledgement can report only the warnings this call produced.
+    const attemptIdsBefore = new Set(
+      symphony.execution.attempts.map((entry) => entry.id),
+    );
     const meta = symphony.execution.conducting;
     if (
       !meta ||
@@ -1625,7 +2078,68 @@ export function orchestration(
       );
     }
 
-    const newTasks = (command.tasks ?? []).map(commandTaskDefinition);
+    const catalog = await routing.load();
+    if (catalog.state === "invalid") {
+      throw new SymphonyError(
+        `Conductor profiles are invalid: ${catalog.error ?? "unknown error."} Fix them in Podium › Profiles.`,
+      );
+    }
+    const { parentModeId, availableProviders } = await routingContext(agentId);
+    const newTaskResolution = (command.tasks ?? []).map((commandTask) =>
+      resolveCommandTaskRouting({
+        catalog,
+        task: commandTask,
+        parentModeId,
+        availableProviders,
+      }),
+    );
+    const routingErrors = newTaskResolution.flatMap((entry) => entry.errors);
+    const reopenResolution = new Map<string, ResolvedTaskRouting>();
+    for (const entry of command.reopen) {
+      const hasWorker = Boolean(
+        entry.profile ||
+          entry.provider ||
+          entry.model ||
+          entry.thinkingOptionId,
+      );
+      if (!hasWorker) {
+        continue;
+      }
+      const currentTask = score.tasks.find((task) => task.id === entry.taskId);
+      if (!currentTask) {
+        continue;
+      }
+      const resolvedEntry = resolveCommandTaskRouting({
+        catalog,
+        task: {
+          id: entry.taskId,
+          ...(entry.profile !== undefined ? { profile: entry.profile } : {}),
+          ...(entry.provider !== undefined ? { provider: entry.provider } : {}),
+          ...(entry.model !== undefined ? { model: entry.model } : {}),
+          ...(entry.thinkingOptionId !== undefined
+            ? { thinkingOptionId: entry.thinkingOptionId }
+            : {}),
+          ...(entry.routing ? { routing: entry.routing } : {}),
+          ...(currentTask.routing?.role
+            ? { role: currentTask.routing.role }
+            : {}),
+          ...(currentTask.review !== undefined
+            ? { review: currentTask.review }
+            : {}),
+          writes: currentTask.writes,
+        },
+        parentModeId,
+        availableProviders,
+      });
+      reopenResolution.set(entry.taskId, resolvedEntry);
+      routingErrors.push(...resolvedEntry.errors);
+    }
+    if (routingErrors.length) {
+      throw new SymphonyError(routingErrors.slice(0, 5).join(" "));
+    }
+    const newTasks = (command.tasks ?? []).map((commandTask, index) =>
+      commandTaskDefinition(commandTask, newTaskResolution[index]),
+    );
     const newIds = new Set(newTasks.map((entry) => entry.id));
     if (newIds.size !== newTasks.length) {
       throw new SymphonyError("New task IDs must be unique.");
@@ -1771,6 +2285,7 @@ export function orchestration(
           startedAt,
           reopened: command.reopen.map((entry) => {
             const grants = additions.get(entry.taskId);
+            const replacement = reopenResolution.get(entry.taskId);
             return {
               taskId: entry.taskId,
               findings: entry.findings ?? [],
@@ -1778,6 +2293,26 @@ export function orchestration(
               ...(entry.note ? { note: entry.note } : {}),
               ...(grants ? { addedWrites: grants } : {}),
               resolved: resolved.get(entry.taskId) ?? [],
+              ...(replacement
+                ? {
+                    worker: {
+                      ...replacement.choice,
+                      ...(replacement.profile
+                        ? { profileName: replacement.profile.name }
+                        : {}),
+                    },
+                    routing: {
+                      reason: replacement.routing.reason,
+                      selectedBy: replacement.routing.selectedBy,
+                      ...(replacement.routing.override
+                        ? { override: replacement.routing.override }
+                        : {}),
+                    },
+                    ...(replacement.warnings.length
+                      ? { warnings: replacement.warnings }
+                      : {}),
+                  }
+                : {}),
             };
           }),
           added: newTasks.map((task) => task.id),
@@ -1798,7 +2333,42 @@ export function orchestration(
       await launchAttempt(symphony.id, task);
     }
     symphony = (await store.read(symphony.id)).symphony;
-    return { symphony };
+    const routingWarnings = new Map<
+      string,
+      { taskId: string; code: RoutingWarning["code"]; message: string }
+    >();
+    const addWarning = (taskId: string, warning: RoutingWarning): void => {
+      routingWarnings.set(`${taskId}|${warning.code}|${warning.message}`, {
+        taskId,
+        code: warning.code,
+        message: warning.message,
+      });
+    };
+    for (const [index, entry] of newTaskResolution.entries()) {
+      for (const warning of entry.warnings) {
+        addWarning(command.tasks?.[index]?.id ?? "", warning);
+      }
+    }
+    for (const [taskId, entry] of reopenResolution) {
+      for (const warning of entry.warnings) {
+        addWarning(taskId, warning);
+      }
+    }
+    for (const attempt of symphony.execution.attempts) {
+      if (attemptIdsBefore.has(attempt.id)) {
+        continue;
+      }
+      for (const warning of attempt.launch?.warnings ?? []) {
+        addWarning(attempt.taskId, warning);
+      }
+    }
+    return {
+      symphony,
+      catalogRevision: catalog.catalogRevision,
+      ...(routingWarnings.size
+        ? { routingWarnings: [...routingWarnings.values()] }
+        : {}),
+    };
   };
 
   /**

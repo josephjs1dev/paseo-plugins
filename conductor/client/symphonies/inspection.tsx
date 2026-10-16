@@ -28,6 +28,15 @@ import {
 } from "./history";
 import { Button, Disclosure, Label, Notice, rowStyle } from "../ui/controls";
 import { ScoreView } from "./graph";
+import {
+  launchWorker,
+  overrideLine,
+  reopenWorker,
+  routingLine,
+  shortRevision,
+  warningLine,
+  workerSelection,
+} from "./routing";
 import { DiagnosisPanel, FindingsPanel, InsetPanel } from "./task-report";
 
 export function SymphonyInspection({
@@ -166,6 +175,32 @@ function LoopContext({
                 {`Note: ${reopen.note}`}
               </Text>
             )}
+            {reopen.worker && (
+              <Text
+                selectable
+                testID={`loop-reopen-worker-${reopen.taskId}`}
+                style={muted}
+              >
+                {reopen.routing
+                  ? routingLine(reopen.routing, reopenWorker(reopen.worker))
+                  : `Worker: ${workerSelection(reopen.worker)}`}
+              </Text>
+            )}
+            {reopen.routing?.override && (
+              <Text selectable style={muted}>
+                {overrideLine(reopen.routing)}
+              </Text>
+            )}
+            {(reopen.warnings?.length ?? 0) > 0 &&
+              (reopen.warnings ?? []).map((warning, index) => (
+                <Text
+                  key={`${warning.code}-${index}`}
+                  selectable
+                  style={{ ...muted, color: theme.colors.statusWarning }}
+                >
+                  {warningLine(warning)}
+                </Text>
+              ))}
           </View>
         );
       })}
@@ -813,6 +848,12 @@ function AttemptRow({
       )}
       <ScopeChanges theme={theme} attempt={attempt} indented={retried} />
       <ChangedPaths theme={theme} attempt={attempt} indented={retried} />
+      <RoutingLines
+        theme={theme}
+        attempt={attempt}
+        suffix={suffix}
+        indented={retried}
+      />
       {diagnosis && (
         <Disclosure
           theme={theme}
@@ -863,6 +904,68 @@ function ChangedPaths({
         <Text selectable style={line}>
           "+ more"
         </Text>
+      )}
+    </View>
+  );
+}
+
+/**
+ * An attempt's persisted routing decision, as History lines under the attempt
+ * row: how the worker was picked and why, the override with its category and
+ * evidence, the validation warnings, and the catalog revision. Absent on
+ * records stored before routing existed, which render nothing here.
+ */
+function RoutingLines({
+  theme,
+  attempt,
+  suffix,
+  indented,
+}: {
+  theme: PluginTheme;
+  attempt: Attempt;
+  suffix: string;
+  indented: boolean;
+}) {
+  const launch = attempt.launch;
+  const routing = launch?.routing;
+  if (!routing && !launch?.warnings?.length) {
+    return null;
+  }
+  const line = {
+    color: theme.colors.foregroundMuted,
+    fontSize: 12,
+    lineHeight: 17,
+  } as const;
+  const warnings = launch?.warnings ?? [];
+  const override = routing ? overrideLine(routing) : null;
+  const revision = shortRevision(launch?.catalogRevision);
+  return (
+    <View
+      testID={`history-routing-${attempt.taskId}${suffix}`}
+      style={{ width: "100%", gap: 2, paddingLeft: indented ? 12 : 0 }}
+    >
+      {launch?.routing && (
+        <Text selectable numberOfLines={2} style={line}>
+          {routingLine(launch.routing, launchWorker(launch))}
+        </Text>
+      )}
+      {override && (
+        <Text selectable numberOfLines={2} style={line}>
+          {override}
+        </Text>
+      )}
+      {warnings.map((warning, index) => (
+        <Text
+          key={`${warning.code}-${index}`}
+          selectable
+          numberOfLines={2}
+          style={{ ...line, color: theme.colors.statusWarning }}
+        >
+          {warningLine(warning)}
+        </Text>
+      ))}
+      {revision && (
+        <Text selectable style={line}>{`Catalog revision: ${revision}`}</Text>
       )}
     </View>
   );

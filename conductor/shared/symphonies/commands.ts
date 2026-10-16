@@ -9,6 +9,13 @@ import {
   unresolvedItemSchema,
   loopApprovalSchema,
 } from "./models";
+import {
+  commandRoutingSchema,
+  routingRoleSchema,
+  type WorkerChoice,
+} from "./routing";
+
+export type { WorkerChoice };
 
 const text = (max: number) => z.string().trim().min(1).max(max);
 // A task agent comes from a configured profile or an inline provider/model
@@ -20,15 +27,13 @@ const workerChoiceFields = {
   model: text(160).optional(),
   thinkingOptionId: text(80).optional(),
 };
-export interface WorkerChoice {
-  profile?: string;
-  provider?: string;
-  model?: string;
-  thinkingOptionId?: string;
-}
 type LooseWorkerChoice = {
   [Key in keyof WorkerChoice]?: WorkerChoice[Key] | undefined;
 };
+const hasWorkerSource = (value: LooseWorkerChoice) =>
+  Boolean(
+    value.profile || value.provider || value.model || value.thinkingOptionId,
+  );
 /** Keeps only the set worker choice fields, so stored records stay minimal. */
 export function workerChoice(value: LooseWorkerChoice): WorkerChoice {
   const choice: WorkerChoice = {};
@@ -62,10 +67,52 @@ export const commandTaskSchema = z
     checks: z.array(text(1000)).max(16).default([]),
     /** A read-only review of the other tasks' work; sets `role: "review"`. */
     review: z.boolean().optional(),
+    /** The routing role; inferred from `review` and `writes` when omitted. */
+    role: routingRoleSchema.optional(),
+    /** The unresolved design decision a planning task exists to settle. */
+    openDecision: text(500).optional(),
+    routing: commandRoutingSchema.optional(),
     ...workerChoiceFields,
   })
   .strict()
-  .refine(oneWorkerSource, workerSourceMessage);
+  .superRefine((task, ctx) => {
+    if (!oneWorkerSource(task)) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: workerSourceMessage,
+        path: ["profile"],
+      });
+    }
+    if (task.role === "review" && !task.review) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "role review requires review: true.",
+        path: ["role"],
+      });
+    }
+    if (task.review && task.role && task.role !== "review") {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "A review task uses role review.",
+        path: ["role"],
+      });
+    }
+    if (task.role === "planning" && !task.openDecision) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message:
+          "Role planning needs openDecision naming the unresolved design decision; executing an approved design is implementation.",
+        path: ["openDecision"],
+      });
+    }
+    if (task.openDecision && task.role !== "planning") {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "openDecision applies only to role planning.",
+        path: ["openDecision"],
+      });
+    }
+  });
 export const symphonyCommandSchema = z.discriminatedUnion("kind", [
   z
     .object({
@@ -119,8 +166,33 @@ export const symphonyCommandSchema = z.discriminatedUnion("kind", [
                 .array(taskIdSchema)
                 .max(SYMPHONY_LIMITS.tasks)
                 .optional(),
+              ...workerChoiceFields,
+              routing: commandRoutingSchema.optional(),
             })
-            .strict(),
+            .strict()
+            .superRefine((entry, ctx) => {
+              if (!oneWorkerSource(entry)) {
+                ctx.addIssue({
+                  code: z.ZodIssueCode.custom,
+                  message: workerSourceMessage,
+                  path: ["profile"],
+                });
+              }
+              if (hasWorkerSource(entry) && entry.routing === undefined) {
+                ctx.addIssue({
+                  code: z.ZodIssueCode.custom,
+                  message: "A reopen worker override needs routing.reason.",
+                  path: ["routing"],
+                });
+              }
+              if (entry.routing !== undefined && !hasWorkerSource(entry)) {
+                ctx.addIssue({
+                  code: z.ZodIssueCode.custom,
+                  message: "routing on a reopen requires a worker override.",
+                  path: ["routing"],
+                });
+              }
+            }),
         )
         .max(SYMPHONY_LIMITS.tasks)
         .default([]),
@@ -142,6 +214,7 @@ export const symphonyCommandSchema = z.discriminatedUnion("kind", [
       note: text(2000).optional(),
       addWrites: z.array(scopeSchema).min(1).max(32).optional(),
       ...workerChoiceFields,
+      routing: commandRoutingSchema.optional(),
     })
     .strict()
     .refine(oneWorkerSource, workerSourceMessage)
@@ -150,7 +223,19 @@ export const symphonyCommandSchema = z.discriminatedUnion("kind", [
         value.retryTaskId !== undefined ||
         (value.note === undefined && value.addWrites === undefined),
       "note and addWrites require retryTaskId.",
+    )
+    .refine(
+      (value) => value.routing === undefined || hasWorkerSource(value),
+      "routing requires a replacement worker choice.",
     ),
+  z
+    .object({
+      kind: z.literal("route"),
+      role: routingRoleSchema,
+      ...workerChoiceFields,
+    })
+    .strict()
+    .refine(oneWorkerSource, workerSourceMessage),
   z.object({ kind: z.literal("profiles") }).strict(),
   z.object({ kind: z.literal("models") }).strict(),
   z

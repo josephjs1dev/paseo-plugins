@@ -6,7 +6,7 @@
   "description": "Coordinate agents and concerts, answer blockers, and follow work through to completion.",
   "scripts": {
     "typecheck": "tsc --noEmit && tsc --noEmit -p tests/preview && tsc --noEmit -p tests/browser",
-    "lint": "eslint .",
+    "lint": "eslint client && eslint tests && eslint server shared index.server.ts index.client.tsx playwright.config.ts vite.config.ts eslint.config.mjs",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "test": "tsx --test tests/*.test.ts",

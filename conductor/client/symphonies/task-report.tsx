@@ -2,14 +2,32 @@ import { useState } from "react";
 import { Pressable, Text, View } from "react-native";
 import type { PluginTheme } from "@getpaseo/plugin";
 import type {
+  Attempt,
   FailureNeed,
   TaskDiagnosis,
   TaskFinding,
   TaskReport,
 } from "../../shared/symphonies/models";
+import {
+  launchWorker,
+  overrideLine,
+  routingLine,
+  shortRevision,
+  warningLine,
+  workerSelection,
+} from "./routing";
 
 /** Readable line length for task prose in cards and report panels. */
 export const PROSE_WIDTH = 760;
+
+/**
+ * A launch's routing decision as the report panel shows it: the effective
+ * launch choice plus what was stored on it. Absent on records stored before
+ * routing existed, which then render no Routing disclosure at all.
+ */
+export interface ReportRouting {
+  readonly launch: NonNullable<Attempt["launch"]>;
+}
 
 export type StateColor =
   | "foregroundMuted"
@@ -31,6 +49,7 @@ export function ReportFooter({
   checksOpen,
   onToggle,
   nested = false,
+  routing,
 }: {
   theme: PluginTheme;
   taskId: string;
@@ -41,6 +60,8 @@ export function ReportFooter({
   onToggle(this: void, selection: "evidence" | "checks"): void;
   /** Inset fill inside an already raised card. */
   nested?: boolean;
+  /** The attempt's persisted launch routing, when the record carries one. */
+  routing?: ReportRouting;
 }) {
   const failedChecks = report.checks.filter(
     (check) => check.status === "failed",
@@ -57,6 +78,9 @@ export function ReportFooter({
   ).length;
   const [diagnosisOpen, setDiagnosisOpen] = useState(false);
   const [findingsOpen, setFindingsOpen] = useState(false);
+  const [routingOpen, setRoutingOpen] = useState(false);
+  const launch = routing?.launch;
+  const routingShown = Boolean(launch?.routing || launch?.warnings?.length);
   return (
     <View
       style={{
@@ -107,6 +131,16 @@ export function ReportFooter({
             dense={!compact}
           />
         )}
+        {routingShown && launch && (
+          <FooterToggle
+            theme={theme}
+            label="Routing"
+            expanded={routingOpen}
+            onToggle={() => setRoutingOpen((open) => !open)}
+            testID={`symphony-task-routing-${taskId}`}
+            dense={!compact}
+          />
+        )}
         {findings.length > 0 && (
           <FooterToggle
             theme={theme}
@@ -134,6 +168,11 @@ export function ReportFooter({
       {checksOpen && (
         <InsetPanel theme={theme} nested={nested}>
           <ChecksPanel theme={theme} checks={report.checks} />
+        </InsetPanel>
+      )}
+      {routingOpen && launch && (
+        <InsetPanel theme={theme} nested={nested}>
+          <RoutingPanel theme={theme} launch={launch} />
         </InsetPanel>
       )}
       {diagnosisOpen && report.diagnosis && (
@@ -237,6 +276,105 @@ export function DiagnosisPanel({
           </Text>
         ))}
       </View>
+    </View>
+  );
+}
+
+/**
+ * An attempt's persisted routing decision: the effective launch choice, how
+ * it was picked and why, the override with its category and evidence when the
+ * Conductor bypassed the smaller-first route, the validation warnings the
+ * server returned, and the catalog revision the choice was validated
+ * against. Every section is optional on stored records, so absent pieces are
+ * skipped rather than shown empty.
+ */
+export function RoutingPanel({
+  theme,
+  launch,
+}: {
+  theme: PluginTheme;
+  launch: NonNullable<Attempt["launch"]>;
+}) {
+  const routing = launch.routing;
+  const labelStyle = {
+    fontSize: 12,
+    lineHeight: 17,
+    fontWeight: "600",
+  } as const;
+  const muted = {
+    color: theme.colors.foregroundMuted,
+    fontSize: 13,
+    lineHeight: 20,
+    maxWidth: PROSE_WIDTH,
+  } as const;
+  const warnings = launch.warnings ?? [];
+  const override = routing ? overrideLine(routing) : null;
+  const revision = shortRevision(launch.catalogRevision);
+  const selection = launchWorker(launch);
+  return (
+    <View style={{ gap: 8 }}>
+      <View style={{ gap: 4 }}>
+        <Text style={{ color: theme.colors.foregroundMuted, ...labelStyle }}>
+          Launched
+        </Text>
+        <Text
+          selectable
+          style={{
+            color: theme.colors.foreground,
+            fontSize: 13,
+            lineHeight: 20,
+            maxWidth: PROSE_WIDTH,
+          }}
+        >
+          {routing
+            ? routingLine(routing, selection)
+            : workerSelection(selection)}
+        </Text>
+      </View>
+      {override && (
+        <View style={{ gap: 4 }}>
+          <Text style={{ color: theme.colors.foregroundMuted, ...labelStyle }}>
+            Override
+          </Text>
+          <Text
+            selectable
+            style={{
+              color: theme.colors.foreground,
+              fontSize: 13,
+              lineHeight: 20,
+              maxWidth: PROSE_WIDTH,
+            }}
+          >
+            {override}
+          </Text>
+        </View>
+      )}
+      {warnings.length > 0 && (
+        <View style={{ gap: 4 }}>
+          <Text style={{ color: theme.colors.foregroundMuted, ...labelStyle }}>
+            Warnings
+          </Text>
+          {warnings.map((warning, index) => (
+            <Text
+              key={`${warning.code}-${index}`}
+              selectable
+              style={{
+                color: theme.colors.statusWarning,
+                fontSize: 13,
+                lineHeight: 20,
+                maxWidth: PROSE_WIDTH,
+              }}
+            >
+              {warningLine(warning)}
+            </Text>
+          ))}
+        </View>
+      )}
+      {revision && (
+        <Text selectable style={muted}>
+          {`Catalog revision: ${revision}`}
+        </Text>
+      )}
     </View>
   );
 }

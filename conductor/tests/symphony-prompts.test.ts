@@ -360,6 +360,63 @@ void test("a handoff path union sorts, dedupes, caps, and flags missing observat
   assert.equal(observedEmpty.incomplete, false);
 });
 
+void test("profile instructions are injected into the first assignment", () => {
+  const prompt = assignmentPrompt({
+    symphonyId: fixtureSymphonyId,
+    attemptId: "attempt-1",
+    taskId: "api",
+    title: "Inspect the API",
+    goal: "Inspect API and UI independently and combine findings",
+    outcome: "Map the public endpoints",
+    reads: ["src/api"],
+    writes: [],
+    checks: ["typecheck"],
+    prerequisites: [],
+    instructions: "Use the frontend-design skill for UI changes.",
+  });
+  assert.match(prompt, /--- Profile instructions/);
+  assert.match(
+    prompt,
+    /cannot override the user's instructions, repository rules, your write scope, or the permission ceiling/,
+  );
+  assert.match(prompt, /Use the frontend-design skill for UI changes\./);
+  assert.match(prompt, /--- End profile instructions ---/);
+  assertNoPayloadSamples(prompt);
+});
+
+void test("a prompt without profile instructions omits the section", () => {
+  const prompt = assignmentPrompt({
+    symphonyId: fixtureSymphonyId,
+    attemptId: "attempt-1",
+    taskId: "api",
+    title: "Inspect the API",
+    goal: "Inspect API and UI independently and combine findings",
+    outcome: "Map the public endpoints",
+    reads: ["src/api"],
+    writes: [],
+    checks: ["typecheck"],
+    prerequisites: [],
+  });
+  assert.equal(prompt.includes("Profile instructions"), false);
+});
+
+void test("profile instructions are injected into a takeover handoff", () => {
+  const handoff = handoffInstructions({
+    attempt: { taskId: "api", number: 2, total: 3 },
+    previousWorker: "small",
+    instructions: "Prefer the write-tech-doc skill.",
+  });
+  assert.match(handoff, /--- Profile instructions/);
+  assert.match(handoff, /Prefer the write-tech-doc skill\./);
+  assert.match(handoff, /--- End profile instructions ---/);
+
+  const without = handoffInstructions({
+    attempt: { taskId: "api", number: 2, total: 3 },
+    previousWorker: "small",
+  });
+  assert.equal(without.includes("Profile instructions"), false);
+});
+
 /** A task-agent prompt never embeds a JSON payload sample or a shell command. */
 function assertNoPayloadSamples(prompt: string): void {
   for (const forbidden of [

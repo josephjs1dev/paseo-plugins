@@ -1,17 +1,33 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
+import { createHash } from "node:crypto";
 import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { promisify } from "node:util";
 import test from "node:test";
 import { symphonyExecution } from "../server/symphonies/execution";
+import { launchChoice } from "../server/symphonies/orchestration";
 import { fileSymphonyStore } from "../server/symphonies/store";
+import {
+  canonicalJson,
+  type ProfilesCatalog,
+  type ProfilesSource,
+} from "../server/symphonies/profiles";
+import type { ConductorProfile } from "../shared/symphonies/profiles";
+import {
+  isClassifiedRouting,
+  type RoutingProfile,
+} from "../shared/symphonies/routing";
 import { executionStatus } from "../server/symphonies/results";
 import {
   SymphonyError,
   LaunchRejectedError,
 } from "../server/symphonies/errors";
-import type { WorkerLaunch, WorkerRuntime } from "../server/symphonies/workers";
+import type {
+  WorkerLaunch,
+  WorkerProfile,
+  WorkerRuntime,
+} from "../server/symphonies/workers";
 import type { ExecutionRuntime } from "../server/symphonies/identity";
 import {
   changesRuntime,
@@ -20,6 +36,7 @@ import {
 import {
   latestAttempt,
   SYMPHONY_LIMITS,
+  type Attempt,
   type StoredSymphony,
 } from "../shared/symphonies/models";
 import { currentLoop, effectiveTask } from "../shared/symphonies/score";
@@ -27,8 +44,67 @@ import { historyLoops } from "../client/symphonies/history";
 import { placement } from "./symphony-fixtures";
 import { testDirectory } from "./fixtures";
 
-async function fixture() {
-  const store = fileSymphonyStore(await testDirectory());
+interface FixtureRouting {
+  version?: number;
+  mode?: "warn" | "strict";
+  profiles: Record<string, Partial<RoutingProfile>>;
+}
+
+/** A fixture profile, optionally carrying Conductor instructions. */
+type FixtureProfile = WorkerProfile & { instructions?: string };
+
+/** An in-memory Conductor profile catalog for the routing scenarios. */
+function fixtureCatalog(
+  profiles: readonly FixtureProfile[],
+  routing: FixtureRouting | undefined,
+): ProfilesCatalog {
+  const list: ConductorProfile[] = profiles.map((profile) => {
+    const configured = routing?.profiles?.[profile.id];
+    return {
+      id: profile.id,
+      name: profile.name,
+      notes: profile.notes,
+      provider: profile.provider,
+      ...(profile.model ? { model: profile.model } : {}),
+      ...(profile.modeId ? { modeId: profile.modeId } : {}),
+      ...(profile.thinkingOptionId
+        ? { thinkingOptionId: profile.thinkingOptionId }
+        : {}),
+      routing: configured
+        ? {
+            roles: configured.roles ?? ["implementation"],
+            ...(configured.size !== undefined ? { size: configured.size } : {}),
+          }
+        : null,
+      instructions: profile.instructions ?? "",
+    };
+  });
+  const mode = routing?.mode ?? "warn";
+  const revision = createHash("sha256")
+    .update(canonicalJson({ version: 1, mode, profiles: list }))
+    .digest("hex");
+  return {
+    state: "valid",
+    mode,
+    profiles: list,
+    revision,
+    catalogRevision: revision,
+    diagnostics: list
+      .filter((profile) => !isClassifiedRouting(profile.routing))
+      .map((profile) => ({
+        code: "unclassified-profile" as const,
+        profileId: profile.id,
+        message: `Profile "${profile.name}" has no routing classification.`,
+      })),
+  };
+}
+
+async function fixture(
+  options: { routing?: FixtureRouting; profiles?: FixtureProfile[] } = {},
+) {
+  const directory = await testDirectory();
+  let routingConfig = options.routing;
+  const store = fileSymphonyStore(directory);
   const launches = new Map<string, WorkerLaunch>();
   const active = new Map<string, boolean>();
   const wakes: string[] = [];
@@ -41,19 +117,30 @@ async function fixture() {
   let rejected = false;
   const busy = new Set<string>();
   const undeliverable = new Set<string>();
+  const profileList: FixtureProfile[] = options.profiles ?? [
+    {
+      id: "small",
+      name: "Small",
+      notes: "Bounded read-only assignments",
+      provider: "fake",
+    },
+  ];
+  const profilesSource: ProfilesSource = {
+    path: null,
+    load: async () => fixtureCatalog(profileList, routingConfig),
+    save: async () => {
+      throw new Error("profile saves are not used by this fixture");
+    },
+    importFromPaseo: async () => {
+      throw new Error("profile imports are not used by this fixture");
+    },
+  };
   let validateScore: (score: {
     tasks: { writes: string[] }[];
   }) => void = () => {};
   const workers: WorkerRuntime = {
     prepare: async () => JSON.stringify({ provider: "fake/model" }),
-    profiles: async () => [
-      {
-        id: "small",
-        name: "Small",
-        notes: "Bounded read-only assignments",
-        provider: "fake",
-      },
-    ],
+    profiles: async () => profileList,
     models: async () => [{ provider: "fake", models: ["model", "other"] }],
     launchCheckDelaysMs: [],
     inspect: async (id) => ({
@@ -102,6 +189,8 @@ async function fixture() {
     store,
     () => runtime,
     () => workers,
+    undefined,
+    profilesSource,
   );
   const send = (agentId: string, command: unknown) =>
     engine.execute({ agentId, command });
@@ -157,6 +246,7 @@ async function fixture() {
   };
   return {
     store,
+    directory,
     launches,
     active,
     wakes,
@@ -175,10 +265,19 @@ async function fixture() {
         store,
         () => runtime,
         () => workers,
+        undefined,
+        profilesSource,
       );
     },
     busy,
     undeliverable,
+    setRouting: (next: FixtureRouting) => {
+      routingConfig = next;
+    },
+    setProfiles: (next: FixtureProfile[]) => {
+      profileList.length = 0;
+      profileList.push(...next);
+    },
     setValidate: (fn: (score: { tasks: { writes: string[] }[] }) => void) => {
       validateScore = fn;
     },
@@ -2490,6 +2589,10 @@ void test("loops reopen the owning task and re-run its review until the loop suc
   assert.ok(api2);
   assert.equal(api2.loop, 2);
   assert.equal(api2.agentId, api.agentId);
+  // The continuation keeps the effective launch config and records the
+  // catalog revision it was validated at.
+  assert.ok(api2.launch?.config);
+  assert.match(api2.launch?.catalogRevision ?? "", /^[a-f0-9]{64}$/);
   assert.deepEqual(
     api2.reopen?.findings.map((entry) => entry.id),
     ["F1"],
@@ -3761,4 +3864,1108 @@ void test("a task that cannot start wakes the Conductor once", async () => {
   assert.equal(wakes.length, 1);
   assert.ok(wakes[0]?.key?.startsWith(`${plan.id}:interruption:`));
   assert.match(wakes[0]?.prompt ?? "", /A task cannot start\. Task "review"/);
+});
+
+// === Routing enforcement (warn/strict, explicit choices, catalog changes) ===
+
+const routedProfiles: WorkerProfile[] = [
+  { id: "small", name: "Small", notes: "Bounded work", provider: "fake" },
+  {
+    id: "escalate",
+    name: "Escalate",
+    notes: "Larger fallback",
+    provider: "fake",
+  },
+  {
+    id: "planner",
+    name: "Planner",
+    notes: "Open design decisions",
+    provider: "fake",
+  },
+];
+
+const routedConfig: FixtureRouting = {
+  version: 1,
+  mode: "warn",
+  profiles: {
+    small: {
+      roles: ["implementation", "exploration", "review"],
+      size: "small",
+    },
+    escalate: {
+      roles: ["implementation"],
+      size: "medium",
+    },
+    planner: { roles: ["planning"], size: "small" },
+  },
+};
+
+const routedTask = (id: string, overrides: Record<string, unknown> = {}) => ({
+  id,
+  title: `Implement ${id}`,
+  description: `Implement ${id}`,
+  dependsOn: [],
+  reads: [],
+  writes: ["src/api"],
+  checks: [],
+  role: "implementation",
+  ...overrides,
+});
+
+void test("define auto-routes a worker-less task to the first eligible profile", async () => {
+  const f = await fixture({
+    routing: routedConfig,
+    profiles: routedProfiles,
+  });
+  const plan = await f.start("route-auto");
+  assert.ok(plan.source.agentId);
+  const ack = (await f.send(plan.source.agentId, {
+    kind: "define",
+    symphonyId: plan.id,
+    tasks: [
+      routedTask("api", {
+        routing: { reason: "Smallest eligible backend worker." },
+      }),
+    ],
+  })) as {
+    catalogRevision?: string;
+    routingWarnings?: Array<{ taskId: string; code: string }>;
+  };
+  const stored = await f.read(plan.id);
+  const definition = stored.revisions
+    .at(-1)
+    ?.score.tasks.find((entry) => entry.id === "api");
+  assert.equal(definition?.worker.profile, "small");
+  assert.equal(definition?.routing?.selectedBy, "route");
+  assert.equal(
+    definition?.routing?.reason,
+    "Smallest eligible backend worker.",
+  );
+  assert.match(ack.catalogRevision ?? "", /^[a-f0-9]{64}$/);
+  assert.equal(ack.routingWarnings, undefined);
+});
+
+void test("a worker-less task with no eligible profile is rejected in warn mode", async () => {
+  const f = await fixture({
+    routing: {
+      version: 1,
+      mode: "warn",
+      profiles: { small: { roles: ["review"], size: "small" } },
+    },
+    profiles: routedProfiles,
+  });
+  const plan = await f.start("route-inherit");
+  assert.ok(plan.source.agentId);
+  await assert.rejects(
+    f.send(plan.source.agentId, {
+      kind: "define",
+      symphonyId: plan.id,
+      tasks: [routedTask("api")],
+    }),
+    /no eligible configured profile/,
+  );
+  // The refused define stored no score revision.
+  assert.equal((await f.read(plan.id)).revisions.length, 0);
+});
+
+void test("strict routing rejects an omitted worker and a larger explicit profile", async () => {
+  const none = await fixture({
+    routing: {
+      version: 1,
+      mode: "strict",
+      profiles: { small: { roles: ["review"], size: "small" } },
+    },
+    profiles: routedProfiles,
+  });
+  const plan = await none.start("strict-none");
+  assert.ok(plan.source.agentId);
+  await assert.rejects(
+    none.send(plan.source.agentId, {
+      kind: "define",
+      symphonyId: plan.id,
+      tasks: [routedTask("api")],
+    }),
+    /no eligible configured profile/,
+  );
+
+  const larger = await fixture({
+    routing: {
+      version: 1,
+      mode: "strict",
+      profiles: {
+        small: {
+          roles: ["implementation"],
+          size: "small",
+        },
+        escalate: {
+          roles: ["implementation"],
+          size: "medium",
+        },
+      },
+    },
+    profiles: routedProfiles,
+  });
+  const plan2 = await larger.start("strict-larger");
+  assert.ok(plan2.source.agentId);
+  await assert.rejects(
+    larger.send(plan2.source.agentId, {
+      kind: "define",
+      symphonyId: plan2.id,
+      tasks: [
+        routedTask("api", {
+          profile: "escalate",
+          routing: { reason: "Escalate after a named capability gap." },
+        }),
+      ],
+    }),
+    /larger than eligible/,
+  );
+});
+
+void test("the route command previews the policy and validates an explicit choice", async () => {
+  const f = await fixture({
+    routing: routedConfig,
+    profiles: routedProfiles,
+  });
+  const result = (await f.send("requester", {
+    kind: "route",
+    role: "implementation",
+  })) as {
+    revision: string;
+    selected?: { profileId: string };
+    alternatives: Array<{ profileId: string }>;
+  };
+  assert.equal(result.selected?.profileId, "small");
+  assert.equal(result.alternatives[0]?.profileId, "escalate");
+  assert.match(result.revision, /^[a-f0-9]{64}$/);
+
+  const explicit = (await f.send("requester", {
+    kind: "route",
+    role: "implementation",
+    profile: "escalate",
+  })) as { explicit?: { warnings: Array<{ code: string }> } };
+  assert.equal(explicit.explicit?.warnings[0]?.code, "larger-than-eligible");
+});
+
+void test("a loop reopen worker override starts a new agent and records routing", async () => {
+  const f = await fixture({
+    routing: routedConfig,
+    profiles: routedProfiles,
+  });
+  const plan = await f.start("loop-override");
+  assert.ok(plan.source.agentId);
+  let symphony = await f.define(plan, [
+    task("api", [], ["src/api"]),
+    reviewTask("review", ["api"]),
+  ]);
+  const api = latestAttempt(symphony, "api");
+  assert.ok(api);
+  await f.report(plan.id, "api");
+  f.active.set(api.agentId, false);
+  await f.reconcile();
+  const review1 = latestAttempt(await f.read(plan.id), "review");
+  assert.ok(review1);
+  await f.send(review1.agentId, {
+    kind: "report",
+    symphonyId: plan.id,
+    attemptId: review1.id,
+    report: needsChangesReport(),
+  });
+  f.active.set(review1.agentId, false);
+  await f.reconcile();
+
+  const before = f.launches.size;
+  await f.send(plan.source.agentId, {
+    kind: "loop",
+    symphonyId: plan.id,
+    reason: "Escalate after the review failed",
+    reopen: [
+      {
+        taskId: "api",
+        findings: ["review#F1"],
+        profile: "escalate",
+        routing: {
+          reason: "The smaller worker missed the documented contract.",
+          override: {
+            category: "observed-limitation",
+            evidence:
+              "Two bounded corrective attempts failed the same contract check.",
+          },
+        },
+      },
+    ],
+  });
+  symphony = await f.read(plan.id);
+  const api2 = latestAttempt(symphony, "api");
+  assert.ok(api2);
+  assert.notEqual(api2.agentId, api.agentId, "a new agent takes over");
+  assert.equal(f.launches.size, before + 1);
+  assert.equal(f.launches.get(api2.agentId)?.profile, "escalate");
+  assert.equal(api2.launch?.routing?.selectedBy, "conductor");
+  assert.match(api2.launch?.prompt ?? "", /Inspected assignment/);
+  const reopened = symphony.execution.conducting?.loops?.at(-1)?.reopened[0];
+  assert.equal(reopened?.worker?.profile, "escalate");
+  assert.equal(reopened?.routing?.selectedBy, "conductor");
+});
+
+void test("a dispatch replacement records its routing on the new attempt", async () => {
+  const f = await fixture({
+    routing: routedConfig,
+    profiles: routedProfiles,
+  });
+  const plan = await f.start("dispatch-routing");
+  f.rejectNext();
+  const symphony = await f.define(plan, [task("a", [], ["src/api"])]);
+  const a = latestAttempt(symphony, "a");
+  assert.ok(a && plan.source.agentId);
+  assert.equal(a.state, "failed");
+  await f.send(plan.source.agentId, {
+    kind: "dispatch",
+    symphonyId: plan.id,
+    retryTaskId: "a",
+    profile: "escalate",
+    routing: {
+      reason: "The launcher rejected the previous profile.",
+      override: {
+        category: "capability-gap",
+        evidence:
+          "The prior profile could not load the required project toolchain.",
+      },
+    },
+  });
+  const next = latestAttempt(await f.read(plan.id), "a");
+  assert.ok(next);
+  assert.notEqual(next.id, a.id);
+  assert.equal(next.launch?.routing?.selectedBy, "conductor");
+  assert.equal(next.launch?.routing?.override?.category, "capability-gap");
+  assert.match(next.launch?.catalogRevision ?? "", /^[a-f0-9]{64}$/);
+});
+
+void test("a warning-free retry replacement drops the previous choice's warnings", async () => {
+  const f = await fixture({
+    routing: routedConfig,
+    profiles: routedProfiles,
+  });
+  const plan = await f.start("retry-clean-warnings");
+  assert.ok(plan.source.agentId);
+  f.rejectNext();
+  const symphony = await f.define(plan, [
+    { ...task("a", [], ["src/api"]), profile: "deleted-profile" },
+  ]);
+  const a = latestAttempt(symphony, "a");
+  assert.ok(a);
+  assert.equal(a.state, "failed");
+  assert.deepEqual(
+    a.launch?.warnings?.map((warning) => warning.code),
+    ["ineligible-profile", "missing-reason"],
+    "the original choice records its problems",
+  );
+  const ack = (await f.send(plan.source.agentId, {
+    kind: "dispatch",
+    symphonyId: plan.id,
+    retryTaskId: "a",
+    profile: "small",
+    routing: { reason: "The launcher rejected the previous profile." },
+  })) as { routingWarnings?: Array<{ taskId: string; code: string }> };
+  const next = latestAttempt(await f.read(plan.id), "a");
+  assert.ok(next);
+  assert.notEqual(next.id, a.id);
+  assert.equal(next.launch?.routing?.selectedBy, "conductor");
+  assert.equal(
+    next.launch?.routing?.reason,
+    "The launcher rejected the previous profile.",
+  );
+  assert.equal(
+    next.launch?.warnings,
+    undefined,
+    "the validated replacement is warning-free",
+  );
+  assert.equal(
+    ack.routingWarnings,
+    undefined,
+    "the acknowledgement reports no stale warnings",
+  );
+});
+
+void test("a warning-free blocked rebind drops the previous choice's warnings", async () => {
+  const f = await fixture({
+    routing: routedConfig,
+    profiles: routedProfiles,
+  });
+  const plan = await f.start("rebind-clean-warnings");
+  assert.ok(plan.source.agentId);
+  const symphony = await f.define(plan, [
+    { ...task("a", [], ["src/api"]), profile: "deleted-profile" },
+  ]);
+  const a = latestAttempt(symphony, "a");
+  assert.ok(a);
+  assert.equal(a.launch?.warnings?.[0]?.code, "ineligible-profile");
+  await f.send(a.agentId, {
+    kind: "block",
+    symphonyId: plan.id,
+    attemptId: a.id,
+    message: "Need the user's decision on the API shape.",
+  });
+  f.active.set(a.agentId, false);
+  await f.reconcile();
+  assert.equal(latestAttempt(await f.read(plan.id), "a")?.state, "blocked");
+  const ack = (await f.send(plan.source.agentId, {
+    kind: "dispatch",
+    symphonyId: plan.id,
+    retryTaskId: "a",
+    profile: "small",
+    routing: { reason: "Move the task to an eligible profile." },
+  })) as { routingWarnings?: Array<{ taskId: string; code: string }> };
+  const rebound = latestAttempt(await f.read(plan.id), "a");
+  assert.ok(rebound);
+  assert.equal(rebound.id, a.id);
+  assert.notEqual(rebound.agentId, a.agentId, "a fresh agent takes over");
+  assert.equal(
+    rebound.launch?.warnings,
+    undefined,
+    "the validated replacement is warning-free",
+  );
+  assert.equal(
+    ack.routingWarnings,
+    undefined,
+    "the acknowledgement reports no stale warnings",
+  );
+});
+
+void test("a changed catalog revalidates at reserve and warns in warn mode", async () => {
+  const f = await fixture({
+    routing: routedConfig,
+    profiles: routedProfiles,
+  });
+  const plan = await f.start("catalog-change");
+  assert.ok(plan.source.agentId);
+  await f.send(plan.source.agentId, {
+    kind: "define",
+    symphonyId: plan.id,
+    tasks: [routedTask("api")],
+  });
+  // A profile edit changes the catalog revision, so the next reserve
+  // revalidates and records a catalog-changed warning.
+  const changed: FixtureRouting = {
+    ...routedConfig,
+    profiles: {
+      ...routedConfig.profiles,
+      small: { ...routedConfig.profiles.small, size: "large" },
+    },
+  };
+  f.setRouting(changed);
+  const ack = (await f.send(plan.source.agentId, {
+    kind: "dispatch",
+    symphonyId: plan.id,
+  })) as {
+    routingWarnings?: Array<{ taskId: string; code: string }>;
+  };
+  const attempt = latestAttempt(await f.read(plan.id), "api");
+  assert.ok(attempt);
+  assert.ok(
+    attempt.launch?.warnings?.some(
+      (warning) => warning.code === "catalog-changed",
+    ),
+  );
+  assert.ok(
+    ack.routingWarnings?.some(
+      (warning) =>
+        warning.taskId === "api" && warning.code === "catalog-changed",
+    ),
+    "the dispatch acknowledgement carries the revalidation warning",
+  );
+});
+
+void test("a replayed define is idempotent through the recorded hash", async () => {
+  const f = await fixture({
+    routing: routedConfig,
+    profiles: routedProfiles,
+  });
+  const plan = await f.start("define-replay");
+  assert.ok(plan.source.agentId);
+  const tasks = [routedTask("api")];
+  const first = (await f.send(plan.source.agentId, {
+    kind: "define",
+    symphonyId: plan.id,
+    tasks,
+  })) as { catalogRevision?: string };
+  const stored = await f.read(plan.id);
+  assert.match(stored.execution.conducting?.defineHash ?? "", /^[a-f0-9]{64}$/);
+  const replay = (await f.send(plan.source.agentId, {
+    kind: "define",
+    symphonyId: plan.id,
+    tasks,
+  })) as { catalogRevision?: string };
+  assert.equal(replay.catalogRevision, first.catalogRevision);
+  await assert.rejects(
+    f.send(plan.source.agentId, {
+      kind: "define",
+      symphonyId: plan.id,
+      tasks: [routedTask("different")],
+    }),
+    /already has a different score/,
+  );
+});
+
+void test("strict routing accepts an explicit inherit covered by a no-eligible-profile override", async () => {
+  const f = await fixture({
+    routing: {
+      version: 1,
+      mode: "strict",
+      profiles: { small: { roles: ["review"], size: "small" } },
+    },
+    profiles: routedProfiles,
+  });
+  const plan = await f.start("strict-override");
+  assert.ok(plan.source.agentId);
+  const ack = (await f.send(plan.source.agentId, {
+    kind: "define",
+    symphonyId: plan.id,
+    tasks: [
+      routedTask("api", {
+        profile: "inherit",
+        routing: {
+          reason: "No configured worker serves this role.",
+          override: {
+            category: "no-eligible-profile",
+            evidence:
+              "The only configured profile is review-only and cannot implement this task.",
+          },
+        },
+      }),
+    ],
+  })) as { catalogRevision?: string };
+  const definition = (await f.read(plan.id)).revisions.at(-1)?.score.tasks[0];
+  assert.equal(definition?.worker.profile, "inherit");
+  assert.equal(definition?.routing?.selectedBy, "conductor");
+  assert.equal(definition?.routing?.override?.category, "no-eligible-profile");
+  assert.match(ack.catalogRevision ?? "", /^[a-f0-9]{64}$/);
+});
+void test("a loop continuation is revalidated against a changed strict catalog", async () => {
+  const warnConfig: FixtureRouting = {
+    version: 1,
+    mode: "warn",
+    profiles: {
+      small: {
+        roles: ["implementation", "review"],
+        size: "small",
+      },
+      big: {
+        roles: ["implementation"],
+        size: "medium",
+      },
+    },
+  };
+  const profiles: WorkerProfile[] = [
+    { id: "small", name: "Small", notes: "", provider: "fake" },
+    { id: "big", name: "Big", notes: "", provider: "fake" },
+  ];
+  const f = await fixture({ routing: warnConfig, profiles });
+  const plan = await f.start("continue-strict");
+  assert.ok(plan.source.agentId);
+  let symphony = await f.define(plan, [
+    { ...task("api", [], ["src/api"]), profile: "big" },
+    reviewTask("review", ["api"]),
+  ]);
+  const api = latestAttempt(symphony, "api");
+  assert.ok(api);
+  assert.equal(api.launch?.warnings?.[0]?.code, "larger-than-eligible");
+  await f.report(plan.id, "api");
+  f.active.set(api.agentId, false);
+  await f.reconcile();
+  const review1 = latestAttempt(await f.read(plan.id), "review");
+  assert.ok(review1);
+  await f.send(review1.agentId, {
+    kind: "report",
+    symphonyId: plan.id,
+    attemptId: review1.id,
+    report: needsChangesReport(),
+  });
+  f.active.set(review1.agentId, false);
+  await f.reconcile();
+
+  // The catalog flips to strict before the loop continuation starts.
+  f.setRouting({ ...warnConfig, mode: "strict" });
+  await f.send(plan.source.agentId, {
+    kind: "loop",
+    symphonyId: plan.id,
+    reason: "Fix F1 without a worker override",
+    reopen: [{ taskId: "api", findings: ["review#F1"] }],
+  });
+  symphony = await f.read(plan.id);
+  assert.equal(
+    latestAttempt(symphony, "api")?.id,
+    api.id,
+    "no continuation was created",
+  );
+  assert.match(symphony.execution.interruption ?? "", /larger than eligible/);
+});
+
+void test("define-time routing warnings persist to the first launch and the dispatch acknowledgement", async () => {
+  const warnConfig: FixtureRouting = {
+    version: 1,
+    mode: "warn",
+    profiles: {
+      small: {
+        roles: ["implementation"],
+        size: "small",
+      },
+      big: {
+        roles: ["implementation"],
+        size: "medium",
+      },
+    },
+  };
+  const profiles: WorkerProfile[] = [
+    { id: "small", name: "Small", notes: "", provider: "fake" },
+    { id: "big", name: "Big", notes: "", provider: "fake" },
+  ];
+  const f = await fixture({ routing: warnConfig, profiles });
+  const plan = await f.start("warn-audit");
+  assert.ok(plan.source.agentId);
+  const defineAck = (await f.send(plan.source.agentId, {
+    kind: "define",
+    symphonyId: plan.id,
+    tasks: [{ ...task("api", [], ["src/api"]), profile: "big" }],
+  })) as {
+    routingWarnings?: Array<{ taskId: string; code: string; message: string }>;
+  };
+  assert.equal(defineAck.routingWarnings?.[0]?.taskId, "api");
+  assert.equal(defineAck.routingWarnings?.[0]?.code, "larger-than-eligible");
+  const dispatchAck = (await f.send(plan.source.agentId, {
+    kind: "dispatch",
+    symphonyId: plan.id,
+  })) as {
+    routingWarnings?: Array<{ taskId: string; code: string; message: string }>;
+  };
+  assert.ok(
+    dispatchAck.routingWarnings?.some(
+      (warning) =>
+        warning.taskId === "api" && warning.code === "larger-than-eligible",
+    ),
+    "the dispatch acknowledgement carries the define-time warning",
+  );
+  const attempt = latestAttempt(await f.read(plan.id), "api");
+  assert.equal(attempt?.launch?.warnings?.[0]?.code, "larger-than-eligible");
+  assert.match(attempt?.launch?.catalogRevision ?? "", /^[a-f0-9]{64}$/);
+});
+
+void test("a multi-loop takeover keeps the previous routing and blocks a strict flip", async () => {
+  const warnConfig: FixtureRouting = {
+    version: 1,
+    mode: "warn",
+    profiles: {
+      small: {
+        roles: ["implementation", "review"],
+        size: "small",
+      },
+      big: {
+        roles: ["implementation"],
+        size: "medium",
+      },
+    },
+  };
+  const profiles: WorkerProfile[] = [
+    { id: "small", name: "Small", notes: "", provider: "fake" },
+    { id: "big", name: "Big", notes: "", provider: "fake" },
+  ];
+  const f = await fixture({ routing: warnConfig, profiles });
+  const plan = await f.start("takeover-strict");
+  assert.ok(plan.source.agentId);
+  let symphony = await f.define(plan, [
+    {
+      ...task("api", [], ["src/api"]),
+      profile: "small",
+      routing: {
+        reason: "The user asked for the Small profile by name.",
+        override: {
+          category: "user-choice",
+          evidence: "The user asked for the Small profile by name.",
+        },
+      },
+    },
+    reviewTask("review", ["api"]),
+  ]);
+  const api = latestAttempt(symphony, "api");
+  assert.ok(api);
+
+  // Loop 1: api completes and the review finds F1.
+  await f.report(plan.id, "api");
+  f.active.set(api.agentId, false);
+  await f.reconcile();
+  const review1 = latestAttempt(await f.read(plan.id), "review");
+  assert.ok(review1);
+  await f.send(review1.agentId, {
+    kind: "report",
+    symphonyId: plan.id,
+    attemptId: review1.id,
+    report: needsChangesReport(),
+  });
+  f.active.set(review1.agentId, false);
+  await f.reconcile();
+
+  // Loop 2 takes api over onto Big with no override.
+  await f.send(plan.source.agentId, {
+    kind: "loop",
+    symphonyId: plan.id,
+    reason: "Move api to Big",
+    reopen: [
+      {
+        taskId: "api",
+        findings: ["review#F1"],
+        profile: "big",
+        routing: { reason: "Big has capacity for this now." },
+      },
+    ],
+  });
+  symphony = await f.read(plan.id);
+  const api2 = latestAttempt(symphony, "api");
+  assert.ok(api2);
+  assert.notEqual(api2.agentId, api.agentId);
+  assert.equal(
+    api2.launch?.routing?.override,
+    undefined,
+    "the takeover records no override",
+  );
+
+  // Loop 2 ends needs-changes again.
+  await f.report(plan.id, "api");
+  f.active.set(api2.agentId, false);
+  await f.reconcile();
+  const review2 = latestAttempt(await f.read(plan.id), "review");
+  assert.ok(review2);
+  await f.send(review2.agentId, {
+    kind: "report",
+    symphonyId: plan.id,
+    attemptId: review2.id,
+    report: needsChangesReport(),
+  });
+  f.active.set(review2.agentId, false);
+  await f.reconcile();
+
+  // Strict flip, then loop 3 without a worker override must not fall back to
+  // the task's older Small user-choice override.
+  f.setRouting({ ...warnConfig, mode: "strict" });
+  await f.send(plan.source.agentId, {
+    kind: "loop",
+    symphonyId: plan.id,
+    reason: "Fix F1 again",
+    reopen: [{ taskId: "api", findings: ["review#F1"] }],
+  });
+  symphony = await f.read(plan.id);
+  assert.equal(
+    latestAttempt(symphony, "api")?.id,
+    api2.id,
+    "no bypass launch was created",
+  );
+  assert.equal(
+    latestAttempt(symphony, "api")?.launch?.routing?.override,
+    undefined,
+  );
+  assert.match(symphony.execution.interruption ?? "", /larger than eligible/);
+});
+
+void test("an undeliverable takeover agent keeps a valid previous override", async () => {
+  const strictConfig: FixtureRouting = {
+    version: 1,
+    mode: "strict",
+    profiles: {
+      small: {
+        roles: ["implementation", "review"],
+        size: "small",
+      },
+      big: {
+        roles: ["implementation"],
+        size: "medium",
+      },
+    },
+  };
+  const profiles: WorkerProfile[] = [
+    { id: "small", name: "Small", notes: "", provider: "fake" },
+    { id: "big", name: "Big", notes: "", provider: "fake" },
+  ];
+  const f = await fixture({ routing: strictConfig, profiles });
+  const plan = await f.start("undeliverable-override");
+  assert.ok(plan.source.agentId);
+  let symphony = await f.define(plan, [
+    {
+      ...task("api", [], ["src/api"]),
+      profile: "small",
+      routing: { reason: "Smallest eligible backend worker." },
+    },
+    {
+      ...reviewTask("review", ["api"]),
+      routing: { reason: "Independent review of the change." },
+    },
+  ]);
+  const api = latestAttempt(symphony, "api");
+  assert.ok(api);
+  await f.report(plan.id, "api");
+  f.active.set(api.agentId, false);
+  await f.reconcile();
+  const review1 = latestAttempt(await f.read(plan.id), "review");
+  assert.ok(review1);
+  await f.send(review1.agentId, {
+    kind: "report",
+    symphonyId: plan.id,
+    attemptId: review1.id,
+    report: needsChangesReport(),
+  });
+  f.active.set(review1.agentId, false);
+  await f.reconcile();
+
+  // Loop 2 takes api over onto Big with a valid user-choice override.
+  await f.send(plan.source.agentId, {
+    kind: "loop",
+    symphonyId: plan.id,
+    reason: "Move api to Big",
+    reopen: [
+      {
+        taskId: "api",
+        findings: ["review#F1"],
+        profile: "big",
+        routing: {
+          reason: "The user named Big for this takeover.",
+          override: {
+            category: "user-choice",
+            evidence: "The user asked for the Big profile by name.",
+          },
+        },
+      },
+    ],
+  });
+  symphony = await f.read(plan.id);
+  const api2 = latestAttempt(symphony, "api");
+  assert.ok(api2);
+  assert.equal(api2.launch?.routing?.override?.category, "user-choice");
+
+  // The Big agent can no longer receive a wake.
+  f.undeliverable.add(api2.agentId);
+  await f.report(plan.id, "api", "needs-changes", {
+    findings: [blockingFinding],
+  });
+  f.active.set(api2.agentId, false);
+  await f.reconcile();
+  const review2 = latestAttempt(await f.read(plan.id), "review");
+  assert.ok(review2);
+  await f.send(review2.agentId, {
+    kind: "report",
+    symphonyId: plan.id,
+    attemptId: review2.id,
+    report: needsChangesReport(),
+  });
+  f.active.set(review2.agentId, false);
+  await f.reconcile();
+
+  // Loop 3 without a worker override must carry Big's valid override to the
+  // fresh agent instead of falling back to the task's older routing.
+  await f.send(plan.source.agentId, {
+    kind: "loop",
+    symphonyId: plan.id,
+    reason: "Fix F1 again",
+    reopen: [{ taskId: "api", findings: ["review#F1"] }],
+  });
+  symphony = await f.read(plan.id);
+  const api3 = latestAttempt(symphony, "api");
+  assert.ok(api3);
+  assert.notEqual(api3.id, api2.id, "a fresh attempt takes over");
+  assert.notEqual(api3.agentId, api2.agentId);
+  assert.equal(api3.launch?.routing?.override?.category, "user-choice");
+  assert.match(api3.launch?.catalogRevision ?? "", /^[a-f0-9]{64}$/);
+});
+
+void test("a profile's instructions reach the first launch and the name is snapshotted", async () => {
+  const f = await fixture({
+    routing: {
+      profiles: {
+        small: {
+          roles: ["implementation"],
+          size: "small",
+        },
+      },
+    },
+    profiles: [
+      {
+        id: "small",
+        name: "Small",
+        notes: "",
+        provider: "fake",
+        instructions: "Use the frontend-design skill for UI changes.",
+      },
+    ],
+  });
+  const plan = await f.start("profile-instructions");
+  assert.ok(plan.source.agentId);
+  const symphony = await f.define(plan, [
+    { ...routedTask("api"), profile: "small" },
+  ]);
+  const api = latestAttempt(symphony, "api");
+  assert.ok(api);
+  const launch = f.launches.get(api.agentId);
+  assert.ok(launch);
+  assert.match(launch.prompt, /--- Profile instructions \(additional guidance/);
+  assert.match(launch.prompt, /Use the frontend-design skill for UI changes\./);
+  assert.match(launch.prompt, /--- End profile instructions ---/);
+  assert.equal(api.launch?.profileName, "Small");
+});
+
+void test("launchChoice prefers the persisted profile id over the original reference", () => {
+  const profileId = "11111111-1111-4111-8111-111111111111";
+  const launch: NonNullable<Attempt["launch"]> = {
+    state: "pending",
+    profile: "Old name",
+    profileId,
+    profileName: "Old name",
+    generation: 0,
+    prompt: "Carry out the task",
+    settled: false,
+  };
+  assert.deepEqual(launchChoice(launch), { profile: profileId });
+  // A record stored before profileId falls back to its reference.
+  assert.deepEqual(launchChoice({ ...launch, profileId: undefined }), {
+    profile: "Old name",
+  });
+  // "inherit" is never sent as a profile reference.
+  assert.deepEqual(
+    launchChoice({ ...launch, profile: "inherit", profileId: undefined }),
+    {},
+  );
+});
+
+void test("define snapshots the resolved profile name on the task worker", async () => {
+  const profileId = "11111111-1111-4111-8111-111111111111";
+  const f = await fixture({
+    routing: {
+      profiles: {
+        [profileId]: { roles: ["implementation"], size: "small" },
+      },
+    },
+    profiles: [{ id: profileId, name: "Named", notes: "", provider: "fake" }],
+  });
+  const plan = await f.start("define-name-snapshot");
+  assert.ok(plan.source.agentId);
+  await f.send(plan.source.agentId, {
+    kind: "define",
+    symphonyId: plan.id,
+    tasks: [routedTask("api")],
+  });
+  const definition = (await f.read(plan.id)).revisions.at(-1)?.score.tasks[0];
+  assert.equal(definition?.worker.profile, profileId);
+  assert.equal(definition?.worker.profileName, "Named");
+});
+
+void test("a same-agent continuation snapshots the profile name and id", async () => {
+  const profileId = "11111111-1111-4111-8111-111111111111";
+  const f = await fixture({
+    routing: {
+      profiles: {
+        [profileId]: { roles: ["implementation"], size: "small" },
+      },
+    },
+    profiles: [
+      { id: profileId, name: "Original profile", notes: "", provider: "fake" },
+    ],
+  });
+  const plan = await f.start("continuation-snapshot");
+  assert.ok(plan.source.agentId);
+  const symphony = await f.define(plan, [
+    { ...routedTask("api"), profile: profileId },
+  ]);
+  const first = latestAttempt(symphony, "api");
+  assert.ok(first);
+  assert.equal(first.launch?.profileName, "Original profile");
+  assert.equal(first.launch?.profileId, profileId);
+
+  await f.report(plan.id, "api", "failed", {
+    diagnosis: {
+      tried: ["Ran the required check"],
+      suspectedCause: "A transient fixture failure",
+      need: "none",
+    },
+  });
+  f.active.set(first.agentId, false);
+  await f.reconcile();
+  // Rename the profile before the retry: the continuation keeps the snapshot
+  // its agent was actually launched with, so History still renders it.
+  f.setProfiles([
+    { id: profileId, name: "Renamed profile", notes: "", provider: "fake" },
+  ]);
+  await f.send(plan.source.agentId, {
+    kind: "dispatch",
+    symphonyId: plan.id,
+    retryTaskId: "api",
+  });
+  const continuation = latestAttempt(await f.read(plan.id), "api");
+  assert.ok(continuation);
+  assert.equal(continuation.agentId, first.agentId, "the same agent continues");
+  assert.equal(continuation.launch?.profileName, "Original profile");
+  assert.equal(continuation.launch?.profileId, profileId);
+});
+
+void test("a pending name-selected launch resumes by the persisted profile id across a rename", async () => {
+  const profileId = "11111111-1111-4111-8111-111111111111";
+  const decoyId = "22222222-2222-4222-8222-222222222222";
+  const f = await fixture({
+    routing: {
+      profiles: {
+        [profileId]: { roles: ["implementation"], size: "small" },
+      },
+    },
+    profiles: [{ id: profileId, name: "Named", notes: "", provider: "fake" }],
+  });
+  const plan = await f.start("pending-rename");
+  assert.ok(plan.source.agentId);
+  const symphony = await f.define(plan, [
+    { ...routedTask("api"), profile: "Named" },
+  ]);
+  const first = latestAttempt(symphony, "api");
+  assert.ok(first);
+  assert.equal(first.launch?.profileId, profileId);
+
+  // Rename the original and let a decoy adopt the old name.
+  f.setProfiles([
+    { id: profileId, name: "Renamed", notes: "", provider: "fake" },
+    { id: decoyId, name: "Named", notes: "", provider: "fake" },
+  ]);
+  // Restart with the attempt still pending.
+  const current = await f.read(plan.id);
+  await f.store.update(plan.id, current.version, (value) => {
+    const attempt = value.execution.attempts.find(
+      (entry) => entry.id === first.id,
+    );
+    if (attempt?.launch) {
+      attempt.launch.state = "pending";
+      attempt.launch.settled = false;
+    }
+    return value;
+  });
+  f.reload();
+  await f.reconcile();
+
+  assert.equal(f.launches.get(first.agentId)?.profile, profileId);
+});
+
+void test("a loop reopen override snapshots the replacement profile name", async () => {
+  const f = await fixture({
+    routing: {
+      profiles: {
+        small: {
+          roles: ["implementation", "review"],
+          size: "small",
+        },
+        big: {
+          roles: ["implementation"],
+          size: "medium",
+        },
+      },
+    },
+    profiles: [
+      { id: "small", name: "Small", notes: "", provider: "fake" },
+      { id: "big", name: "Big", notes: "", provider: "fake" },
+    ],
+  });
+  const plan = await f.start("reopen-name-snapshot");
+  assert.ok(plan.source.agentId);
+  const symphony = await f.define(plan, [
+    { ...task("api", [], ["src/api"]), profile: "small" },
+    reviewTask("review", ["api"]),
+  ]);
+  const api = latestAttempt(symphony, "api");
+  assert.ok(api);
+  await f.report(plan.id, "api");
+  f.active.set(api.agentId, false);
+  await f.reconcile();
+  const review1 = latestAttempt(await f.read(plan.id), "review");
+  assert.ok(review1);
+  await f.send(review1.agentId, {
+    kind: "report",
+    symphonyId: plan.id,
+    attemptId: review1.id,
+    report: needsChangesReport(),
+  });
+  f.active.set(review1.agentId, false);
+  await f.reconcile();
+
+  await f.send(plan.source.agentId, {
+    kind: "loop",
+    symphonyId: plan.id,
+    reason: "Fix F1 with the larger worker",
+    reopen: [
+      {
+        taskId: "api",
+        findings: ["review#F1"],
+        profile: "big",
+        routing: { reason: "Escalate to the larger backend worker." },
+      },
+    ],
+  });
+  const loop = (await f.read(plan.id)).execution.conducting?.loops?.at(-1);
+  assert.ok(loop);
+  assert.equal(loop.reopened[0]?.worker?.profile, "big");
+  assert.equal(loop.reopened[0]?.worker?.profileName, "Big");
+});
+
+void test("a strict retry preflight validates the persisted profile id after a rename", async () => {
+  const originalId = "11111111-1111-4111-8111-111111111111";
+  const decoyId = "22222222-2222-4222-8222-222222222222";
+  const f = await fixture({
+    routing: {
+      version: 1,
+      mode: "strict",
+      profiles: {
+        [originalId]: {
+          roles: ["implementation"],
+          size: "small",
+        },
+        [decoyId]: {
+          roles: ["implementation"],
+          size: "medium",
+        },
+      },
+    },
+    profiles: [
+      { id: originalId, name: "Original name", notes: "", provider: "fake" },
+      { id: decoyId, name: "Decoy", notes: "", provider: "fake" },
+    ],
+  });
+  const plan = await f.start("strict-retry-identity");
+  assert.ok(plan.source.agentId);
+  const symphony = await f.define(plan, [
+    {
+      ...routedTask("api"),
+      profile: "Original name",
+      routing: { reason: "Chosen by name." },
+    },
+  ]);
+  const first = latestAttempt(symphony, "api");
+  assert.ok(first);
+  assert.equal(first.launch?.profileId, originalId);
+
+  await f.report(plan.id, "api", "failed", {
+    diagnosis: {
+      tried: ["Ran the required check"],
+      suspectedCause: "A transient fixture failure",
+      need: "none",
+    },
+  });
+  f.active.set(first.agentId, false);
+  await f.reconcile();
+
+  // Rename the original and let the decoy take the old name. The stored task
+  // still references the old name, but the persisted UUID must win.
+  f.setProfiles([
+    { id: originalId, name: "Renamed", notes: "", provider: "fake" },
+    { id: decoyId, name: "Original name", notes: "", provider: "fake" },
+  ]);
+  await f.send(plan.source.agentId, {
+    kind: "dispatch",
+    symphonyId: plan.id,
+    retryTaskId: "api",
+  });
+  const retried = latestAttempt(await f.read(plan.id), "api");
+  assert.ok(retried);
+  assert.notEqual(retried.id, first.id, "a retry attempt was created");
+  assert.equal(retried.agentId, first.agentId, "the same agent continues");
+  assert.equal(retried.launch?.profileId, originalId);
+  assert.equal(retried.launch?.profileName, "Original name");
 });

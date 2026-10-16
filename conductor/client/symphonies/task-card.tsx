@@ -12,6 +12,16 @@ import {
   type TaskDefinition,
 } from "../../shared/symphonies/models";
 import { attemptLoop } from "../../shared/symphonies/score";
+import type {
+  AttemptRouting,
+  RoutingWarning,
+} from "../../shared/symphonies/routing";
+import {
+  launchWorker,
+  overrideLine,
+  routingLine,
+  warningLine,
+} from "./routing";
 import { Button, Disclosure, Notice } from "../ui/controls";
 import { statusColor, taskStatusPresentation } from "../ui/status";
 import {
@@ -19,6 +29,7 @@ import {
   InsetPanel,
   PROSE_WIDTH,
   ReportFooter,
+  type ReportRouting,
 } from "./task-report";
 
 /**
@@ -62,11 +73,16 @@ function instructionLines(task: TaskDefinition): string[] {
     [provider, model].filter(Boolean).join("/"),
     thinkingOptionId ? `thinking ${thinkingOptionId}` : "",
   ].filter(Boolean);
+  // The stored name snapshot keeps the card readable after a profile is
+  // renamed or deleted; the raw reference only shows when none was stored.
   lines.push(
     inline.length
       ? `Task agent: ${inline.join(", ")}`
-      : `Task agent profile: ${task.worker.profile}`,
+      : `Task agent profile: ${task.worker.profileName ?? task.worker.profile}`,
   );
+  if (task.routing) {
+    lines.push(`Routing: ${task.routing.reason}`);
+  }
   lines.push(`Stop when: ${task.stopWhen}`);
   return lines;
 }
@@ -109,11 +125,17 @@ export function SymphonyTaskCard({
   openAgent?: (id: string) => void;
 }) {
   const attempt = latestAttempt(symphony, task.id);
+  const launch = attempt?.launch;
   // A task that did not re-run in the viewed loop keeps an earlier result.
   const carriedFrom =
     loop !== undefined && attempt && attemptLoop(attempt) < loop
       ? attemptLoop(attempt)
       : undefined;
+  // The viewed attempt's own launch choice and routing win: a takeover keeps
+  // showing the worker that actually runs. Waiting or legacy records without
+  // a launch fall back to the task definition as last routed.
+  const cardRouting = launch?.routing ?? task.routing;
+  const cardWorker = launch ? launchWorker(launch) : task.worker;
   const state = taskState(symphony, task);
   const presentation = taskStatusPresentation(state);
   const report = attempt?.report ?? null;
@@ -249,6 +271,30 @@ export function SymphonyTaskCard({
           </Text>
         )}
       </View>
+      {cardRouting && (
+        <Text
+          testID={`symphony-task-${task.id}-routing`}
+          selectable
+          numberOfLines={1}
+          ellipsizeMode="tail"
+          style={{
+            color: theme.colors.foregroundMuted,
+            fontSize: 12,
+            lineHeight: 17,
+          }}
+        >
+          {routingLine(cardRouting, cardWorker)}
+        </Text>
+      )}
+      {report === null && (
+        <RoutingDisclosure
+          theme={theme}
+          taskId={task.id}
+          routing={cardRouting}
+          warnings={launch?.warnings}
+          compact={compact}
+        />
+      )}
       {report?.summary && (
         <Summary
           theme={theme}
@@ -299,6 +345,11 @@ export function SymphonyTaskCard({
           evidenceOpen={disclosures?.evidence === true}
           checksOpen={disclosures?.checks === true}
           onToggle={(selection) => onToggle?.(selection)}
+          {...(attempt?.launch
+            ? {
+                routing: { launch: attempt.launch } satisfies ReportRouting,
+              }
+            : {})}
         />
       )}
       {addedWrites.length > 0 && attempt && (
@@ -318,6 +369,86 @@ export function SymphonyTaskCard({
           grants={grantedWrites}
           compact={compact}
         />
+      )}
+    </View>
+  );
+}
+
+/**
+ * Compact accessible routing details for a card with no report yet: the
+ * override category and evidence plus any stored warnings, behind a shared
+ * Disclosure so a running takeover's card stays compact. Nothing renders
+ * when the record carries neither an override nor warnings; with a report,
+ * the same details live in the report's Routing disclosure instead.
+ */
+function RoutingDisclosure({
+  theme,
+  taskId,
+  routing,
+  warnings,
+  compact,
+}: {
+  theme: PluginTheme;
+  taskId: string;
+  routing?:
+    | Pick<AttemptRouting, "reason" | "selectedBy" | "override">
+    | undefined;
+  warnings?: readonly RoutingWarning[] | undefined;
+  compact: boolean;
+}) {
+  const [open, setOpen] = useState(false);
+  const override = routing ? overrideLine(routing) : null;
+  const stored = warnings ?? [];
+  if (!override && !stored.length) {
+    return null;
+  }
+  return (
+    <View
+      style={{
+        borderTopWidth: 1,
+        borderTopColor: theme.colors.border,
+        paddingTop: 8,
+        gap: 8,
+      }}
+    >
+      <Disclosure
+        theme={theme}
+        label={`Routing${stored.length ? ` · ${stored.length} warning${stored.length === 1 ? "" : "s"}` : ""}`}
+        expanded={open}
+        onToggle={() => setOpen((value) => !value)}
+        testID={`symphony-task-routing-${taskId}`}
+        dense={!compact}
+      />
+      {open && (
+        <InsetPanel theme={theme} nested>
+          {override && (
+            <Text
+              selectable
+              style={{
+                color: theme.colors.foreground,
+                fontSize: 13,
+                lineHeight: 20,
+                maxWidth: PROSE_WIDTH,
+              }}
+            >
+              {override}
+            </Text>
+          )}
+          {stored.map((warning, index) => (
+            <Text
+              key={`${warning.code}-${index}`}
+              selectable
+              style={{
+                color: theme.colors.statusWarning,
+                fontSize: 13,
+                lineHeight: 20,
+                maxWidth: PROSE_WIDTH,
+              }}
+            >
+              {warningLine(warning)}
+            </Text>
+          ))}
+        </InsetPanel>
       )}
     </View>
   );

@@ -16,6 +16,12 @@ import { commandSymphonyId, type ExecutionRuntime } from "./identity";
 import { contentHash, type SymphonyStore } from "./store";
 import { SymphonyError } from "./errors";
 import type { WorkerRuntime } from "./workers";
+import {
+  catalogView,
+  resolveCommandTaskRouting,
+  type ResolvedTaskRouting,
+  type RoutingCatalogSource,
+} from "./routing";
 
 type Start = Extract<SymphonyCommand, { kind: "orchestrate" }>;
 type Define = Extract<SymphonyCommand, { kind: "define" }>;
@@ -26,13 +32,23 @@ type CommandTask = z.infer<typeof commandTaskSchema>;
  * `review: true` task is read-only work over the other tasks and gets the
  * canonical `review` role, so the server can tell a reviewer from a researcher.
  */
-export function commandTaskDefinition(task: CommandTask): TaskDefinition {
+export function commandTaskDefinition(
+  task: CommandTask,
+  resolved?: ResolvedTaskRouting,
+): TaskDefinition {
   let role: TaskDefinition["worker"]["role"] = "exploration";
   if (task.review) {
     role = "review";
   } else if (task.writes.length) {
     role = "implementation";
   }
+  const choice = resolved
+    ? resolved.choice
+    : workerChoice({
+        provider: task.provider,
+        model: task.model,
+        thinkingOptionId: task.thinkingOptionId,
+      });
   return {
     id: task.id,
     title: task.title,
@@ -44,14 +60,12 @@ export function commandTaskDefinition(task: CommandTask): TaskDefinition {
     resources: task.resources,
     worker: {
       role,
-      ...workerChoice({
-        provider: task.provider,
-        model: task.model,
-        thinkingOptionId: task.thinkingOptionId,
-      }),
-      profile: task.profile ?? "inherit",
+      ...choice,
+      profile: choice.profile ?? "inherit",
+      ...(resolved?.profile ? { profileName: resolved.profile.name } : {}),
     },
     ...(task.review ? { review: true } : {}),
+    ...(resolved ? { routing: resolved.routing } : {}),
     criteria: ["Return evidence and required check results"],
     checks: task.checks,
     stopWhen:
@@ -67,6 +81,7 @@ export function symphonyConductor(
     update: (symphony: StoredSymphony) => void,
   ) => Promise<StoredSymphony>,
   commandLine: CommandLine,
+  routing: RoutingCatalogSource,
 ) {
   const owner = async (agentId: string, symphonyId: string) => {
     const source = await runtime().source(agentId);
@@ -149,7 +164,8 @@ export function symphonyConductor(
     const id = commandSymphonyId(identity, `orchestrate:${command.key}`);
     const conductorId =
       self && agentId ? agentId : commandSymphonyId(id, "conductor");
-    const profiles = await workers().profiles();
+    const catalog = await routing.load();
+    const profiles = catalogView(catalog).profiles;
     const context = {
       plan: command.goal,
       provenance: "Conductor orchestration request",
@@ -161,7 +177,7 @@ export function symphonyConductor(
     const intro = self
       ? `You are now the Conductor agent for symphony ${id}, coordinating it from this conversation. The user authorized this work:\n${command.goal}\n\nUse your existing conversation context to break this request into small bounded tasks with dependencies. Delegate implementation to separate agents; do not do all the work yourself. While task agents are working, do not edit this checkout yourself; route changes through tasks so writers stay serialized.`
       : `You are the Conductor agent for symphony ${id}. The user authorized this work:\n${command.goal}\n\nInspect the concert and break this request into small bounded tasks with dependencies. Delegate implementation to separate agents; do not do all the work yourself.`;
-    const prompt = `${intro} Use the existing symphony, not start or orchestrate again.\nSplit by work and file ownership first, then choose a task agent for each task. Prefer the user's configured profiles: match the task role to each profile's notes, provider, model and thinking option, and set profile to its id: ${JSON.stringify(profiles)}. If no profile fits, set provider, model and optional thinkingOptionId directly; run ${commandLine(conductorId, "models")} to list choices. Never set both. Omit all only when nothing fits; the task agent then inherits your settings. Task agents never get a broader permission mode than yours. Always set writes; an omitted writes covers the whole checkout and runs that task alone.\nRun ${commandLine(conductorId, "help")}. JSON command data must be sent on stdin, not a positional argument. Shell tool environments may lack CONDUCTOR variables; use these explicit paths and flags. Define the score with this structure, replacing sample assignments and optionally adding a worker choice per task:\n${jsonCommand(commandLine(conductorId, "define"), { symphonyId: id, tasks: [{ id: "task-id", title: "Concrete assignment", description: "Assignment and acceptance criteria", dependsOn: [], reads: ["."], writes: [], checks: [] }] })}\n Use real literal checkout-relative scopes; writes [] is only for read-only work. Include at least two useful assignments for multi-part work and a final integration task where needed.\nThen dispatch using:\n${jsonCommand(commandLine(conductorId, "dispatch"), { symphonyId: id })}\n This spawns real child agents and follows dependencies automatically. Readers can run concurrently; writers in the same checkout are serialized. Let task agents run and end your turn while waiting; you will receive their reports. Use ${commandLine(conductorId, "get")} with symphonyId JSON on stdin to inspect. Every successful command must return a JSON acknowledgement; empty output is not success. If a task agent is blocked, help resolve it or ask the user; dispatch with retryTaskId resumes a settled blocked task agent or retries a settled failed attempt. Never replace a still-active task agent. A failed task gets at most 2 retries per loop; at the limit, ask the user. Keep fixes for review findings in this symphony: when a loop ends needing changes, call ${commandLine(conductorId, "loop")} to reopen the owning tasks with their findings; never start a new symphony for them. List every open blocking finding or needs-changes task in reopen or deferred with a reason, and mark a read-only review task with review: true.\nAfter every task has explicitly reported completion and stopped, inspect the reports, then call ${commandLine(conductorId, "finish")} with symphonyId and an honest summary on stdin. Do not infer success from idle. Do not use the source-only claim workflow. Do not commit or push unless the user authorized it.`;
+    const prompt = `${intro} Use the existing symphony, not start or orchestrate again.\nSplit by work and file ownership first. Route each task with ${commandLine(conductorId, "route")} (role): use the smallest eligible configured profile for the role, even for prose deliverables; give every task routing.reason; escalate only with routing.override {category: user-choice|capability-gap|observed-limitation|no-eligible-profile, evidence}. Omitted worker fields auto-route only when an eligible profile exists; otherwise set an explicit profile, provider/model, or profile "inherit" with routing.reason. Escalate only with a specific routing.override. Read the combined catalog with ${commandLine(conductorId, "profiles")}: ${JSON.stringify(profiles)}. Task agents never get a broader permission mode than yours. Always set writes; an omitted writes covers the whole checkout and runs that task alone.\nRun ${commandLine(conductorId, "help")}. JSON command data must be sent on stdin, not a positional argument. Shell tool environments may lack CONDUCTOR variables; use these explicit paths and flags. Define the score with this structure, replacing sample assignments and optionally adding a worker choice per task:\n${jsonCommand(commandLine(conductorId, "define"), { symphonyId: id, tasks: [{ id: "task-id", title: "Concrete assignment", description: "Assignment and acceptance criteria", dependsOn: [], reads: ["."], writes: [], checks: [] }] })}\n Use real literal checkout-relative scopes; writes [] is only for read-only work. Include at least two useful assignments for multi-part work and a final integration task where needed.\nThen dispatch using:\n${jsonCommand(commandLine(conductorId, "dispatch"), { symphonyId: id })}\n This spawns real child agents and follows dependencies automatically. Readers can run concurrently; writers in the same checkout are serialized. Let task agents run and end your turn while waiting; you will receive their reports. Use ${commandLine(conductorId, "get")} with symphonyId JSON on stdin to inspect. Every successful command must return a JSON acknowledgement; empty output is not success. If a task agent is blocked, help resolve it or ask the user; dispatch with retryTaskId resumes a settled blocked task agent or retries a settled failed attempt. Never replace a still-active task agent. A failed task gets at most 2 retries per loop; at the limit, ask the user. Keep fixes for review findings in this symphony: when a loop ends needing changes, call ${commandLine(conductorId, "loop")} to reopen the owning tasks with their findings; never start a new symphony for them. List every open blocking finding or needs-changes task in reopen or deferred with a reason, and mark a read-only review task with review: true.\nAfter every task has explicitly reported completion and stopped, inspect the reports, then call ${commandLine(conductorId, "finish")} with symphonyId and an honest summary on stdin. Do not infer success from idle. Do not use the source-only claim workflow. Do not commit or push unless the user authorized it.`;
     const symphony = await store.create(
       {
         schemaVersion: 1,
@@ -214,38 +230,82 @@ export function symphonyConductor(
   };
   const define = async (agentId: string, command: Define) => {
     const symphony = await owner(agentId, command.symphonyId);
+    const catalog = await routing.load();
+    if (catalog.state === "invalid") {
+      throw new SymphonyError(
+        `Conductor profiles are invalid: ${catalog.error ?? "unknown error."} Fix them in Podium › Profiles.`,
+      );
+    }
+    const conductorRuntime = workers();
+    const parentModeId = await conductorRuntime.modeOf?.(agentId);
+    const availableProviders = conductorRuntime.providers
+      ? new Set(
+          (await conductorRuntime.providers())
+            .filter((entry) => entry.available)
+            .map((entry) => entry.provider),
+        )
+      : null;
+    const resolved = command.tasks.map((task) =>
+      resolveCommandTaskRouting({
+        catalog,
+        task,
+        parentModeId,
+        availableProviders,
+      }),
+    );
+    const errors = resolved.flatMap((entry) => entry.errors);
+    if (errors.length) {
+      throw new SymphonyError(errors.slice(0, 5).join(" "));
+    }
     const score = {
-      tasks: command.tasks.map(commandTaskDefinition),
+      tasks: command.tasks.map((task, index) =>
+        commandTaskDefinition(task, resolved[index]),
+      ),
     };
     const issues = scoreIssues(score);
     if (issues.length) {
       throw new SymphonyError(issues.slice(0, 5).join(" "));
     }
+    const defineHash = contentHash(JSON.stringify(command.tasks));
+    const routingWarnings = resolved.flatMap((entry, index) =>
+      entry.warnings.map((warning) => ({
+        taskId: command.tasks[index]?.id ?? "",
+        ...warning,
+      })),
+    );
+    const ack = {
+      catalogRevision: catalog.catalogRevision,
+      ...(routingWarnings.length ? { routingWarnings } : {}),
+    };
     if (symphony.execution.conducting?.phase !== "planning") {
-      if (
-        JSON.stringify(symphony.revisions[0]?.score) === JSON.stringify(score)
-      ) {
-        return { symphony };
+      const conducting = symphony.execution.conducting;
+      const same =
+        conducting?.defineHash !== undefined
+          ? conducting.defineHash === defineHash
+          : JSON.stringify(symphony.revisions[0]?.score) ===
+            JSON.stringify(score);
+      if (same) {
+        return { symphony, ...ack };
       }
       throw new SymphonyError("This symphony already has a different score.");
     }
     await runtime().validate(symphony.source, score);
-    return {
-      symphony: await change(symphony.id, (current) => {
-        if (!current.execution.conducting) {
-          return;
-        }
-        current.revisions.push({
-          number: 1,
-          parent: null,
-          reason: "Conductor agent decomposed the request",
-          acceptedAt: Date.now(),
-          score,
-        });
-        current.execution.conducting.phase = "working";
-        current.execution.interruption = null;
-      }),
-    };
+    const updated = await change(symphony.id, (current) => {
+      if (!current.execution.conducting) {
+        return;
+      }
+      current.revisions.push({
+        number: 1,
+        parent: null,
+        reason: "Conductor agent decomposed the request",
+        acceptedAt: Date.now(),
+        score,
+      });
+      current.execution.conducting.phase = "working";
+      current.execution.conducting.defineHash = defineHash;
+      current.execution.interruption = null;
+    });
+    return { symphony: updated, ...ack };
   };
   return {
     owner,

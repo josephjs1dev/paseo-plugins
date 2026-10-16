@@ -11,6 +11,7 @@ import { Queue } from "../agents/queue";
 import { RequestDetail, type DetailActions } from "../agents/request-detail";
 import type { SymphoniesData } from "../symphonies/list";
 import { SymphonyBrowser } from "../symphonies/browser";
+import { ProfileBrowser, type ProfilesData } from "../symphonies/profiles";
 
 export interface PodiumViewProps {
   theme: PluginTheme;
@@ -26,6 +27,7 @@ export interface PodiumViewProps {
   scroll: { offset: number };
   actions: DetailActions;
   symphonies?: SymphoniesData;
+  profiles?: ProfilesData;
   deleteSymphony?: (symphony: StoredSymphony) => Promise<void>;
   refresh(this: void): void;
 }
@@ -37,6 +39,8 @@ export function PodiumView(props: PodiumViewProps) {
   const hasSelection = Boolean(state.selectedKey);
   const isSymphonies =
     state.section === "symphonies" && Boolean(props.symphonies);
+  const isProfiles = state.section === "profiles" && Boolean(props.profiles);
+  const showAgents = !isSymphonies && !isProfiles;
   const items = visibleItems(
     data?.items ?? [],
     state.filter,
@@ -150,11 +154,28 @@ export function PodiumView(props: PodiumViewProps) {
           />
         </View>
       )}
+      {props.profiles && (
+        <View
+          style={{
+            flex: 1,
+            minHeight: 0,
+            display: isProfiles ? "flex" : "none",
+          }}
+        >
+          <ProfileBrowser
+            theme={theme}
+            data={props.profiles}
+            state={state}
+            session={session}
+            compact={compact}
+          />
+        </View>
+      )}
       <View
         style={{
           flex: 1,
           minHeight: 0,
-          display: isSymphonies ? "none" : "flex",
+          display: showAgents ? "flex" : "none",
         }}
       >
         {props.loading && !data ? (

@@ -3,6 +3,7 @@ import type { PodiumSession } from "../../client/podium/session";
 import type { SymphoniesData } from "../../client/symphonies/list";
 import {
   summarizeSymphony,
+  type Attempt,
   type StoredSymphony,
   type SymphonyContext,
   type TaskFinding,
@@ -380,7 +381,21 @@ const loopsSymphony = (): StoredSymphony => {
             reason: "Fix review findings F1 and F2",
             startedAt: LOOP_T0 + 45 * LOOP_MINUTE,
             reopened: [
-              { taskId: "api", findings: ["F1"] },
+              {
+                taskId: "api",
+                findings: ["F1"],
+                worker: { profile: "opus" },
+                routing: {
+                  reason:
+                    "Escalated after two bounded fix rounds hit the same limitation",
+                  selectedBy: "conductor",
+                  override: {
+                    category: "observed-limitation",
+                    evidence:
+                      "Loop 1's two corrective attempts failed on the same wake identity defect.",
+                  },
+                },
+              },
               { taskId: "ui", findings: ["F2"] },
             ],
             added: [],
@@ -573,6 +588,299 @@ Object.assign(extendedFixtureSymphonies, {
   "needs-changes": needsChangesSymphony,
   loops: loopsSymphony,
   unresolved: unresolvedSymphony,
+});
+
+/** A routing catalog revision hash; only its display prefix is asserted. */
+const routingRevision =
+  "c9a1f7d2e6b34a0591c8d3e2f4a5b6c7d8e9f0a1b2c3d4e5f6a7b8c9d0e1f2a3";
+
+/** A task routing decision whose launch mirrors it, as the server stores. */
+function routedLaunch(
+  profile: string,
+  extra: Partial<NonNullable<Attempt["launch"]>> = {},
+): NonNullable<Attempt["launch"]> {
+  return {
+    state: "started",
+    profile,
+    generation: 0,
+    prompt: "Carry out the task and report evidence",
+    settled: true,
+    ...extra,
+  };
+}
+
+/**
+ * Routing decisions across one symphony: a smaller-first routed task, a
+ * Conductor choice with a user-choice override and a larger-than-eligible
+ * warning, a chosen review profile reported as unclassified, and a legacy
+ * task and attempt with no routing fields that must render exactly as before.
+ */
+const routedSymphony = (): StoredSymphony => {
+  const api = task("api", {
+    title: "Export the routing catalog",
+    worker: { role: "implementation", profile: "starter" },
+    routing: {
+      role: "implementation",
+      domains: ["typescript"],
+      reason: "First eligible implementation profile for the TypeScript domain",
+      selectedBy: "route",
+      catalogRevision: routingRevision,
+    },
+  });
+  const ui = task("ui", {
+    title: "Migrate the export surface to cursor pagination",
+    worker: { role: "implementation", profile: "opus" },
+    routing: {
+      role: "implementation",
+      reason: "The user asked for Opus for this migration in the request",
+      selectedBy: "conductor",
+      override: {
+        category: "user-choice",
+        evidence: "The original request says: run the migration on Opus.",
+      },
+      catalogRevision: routingRevision,
+      warnings: [
+        {
+          code: "larger-than-eligible",
+          message:
+            'Task "ui": opus is larger than the smaller-first pick starter.',
+        },
+      ],
+    },
+  });
+  const review = task("review", {
+    title: "Review the routing display",
+    prerequisites: ["api", "ui"],
+    worker: { role: "review", profile: "docs" },
+    review: true,
+    routing: {
+      role: "review",
+      reason: "Only docs was free for the review pass",
+      selectedBy: "conductor",
+      catalogRevision: routingRevision,
+      warnings: [
+        {
+          code: "unclassified-profile",
+          message:
+            'Task "review": profile docs has no routing.json entry, so it is reported as unclassified.',
+        },
+      ],
+    },
+  });
+  // An old record: stored before routing existed, so it renders as before.
+  const collect = task("collect", { prerequisites: ["api"] });
+  // A waiting record: no attempt yet, so the card falls back to the task
+  // definition's stored routing decision.
+  const notes = task("notes", {
+    title: "Note the takeover outcome",
+    prerequisites: ["api"],
+    worker: { role: "exploration", profile: "starter" },
+    routing: {
+      role: "exploration",
+      reason: "Queued behind the api takeover",
+      selectedBy: "route",
+      catalogRevision: routingRevision,
+    },
+  });
+  const base = storedSymphony();
+  return {
+    ...base,
+    id: "f1151538-5302-4fbf-b50b-f6a55f2a5c26",
+    title: "Routed pagination work",
+    status: "running",
+    revisions: [
+      {
+        number: 1,
+        parent: null,
+        reason: "Conductor task breakdown",
+        acceptedAt: LOOP_T0,
+        score: { tasks: [api, ui, review, collect, notes] },
+      },
+    ],
+    execution: {
+      origin: "conducted",
+      conducting: {
+        phase: "working",
+        concurrency: 2,
+        requestedBy: null,
+        conductor: "agent",
+        conductorLaunch: "started",
+        prompt: "Coordinate the routed pagination work",
+        notification: null,
+        maxLoops: 3,
+        loops: [
+          {
+            number: 2,
+            reason: "Take api over with an inline model after loop 1 failed",
+            startedAt: LOOP_T0 + 30 * LOOP_MINUTE,
+            reopened: [
+              {
+                taskId: "api",
+                findings: [],
+                // The server's real takeover shape: the "inherit" sentinel
+                // alongside the inline provider/model choice.
+                worker: {
+                  profile: "inherit",
+                  provider: "openai",
+                  model: "gpt-6-sol",
+                },
+                routing: {
+                  reason:
+                    "Escalated to inline after bounded smaller-worker failures",
+                  selectedBy: "conductor",
+                  override: {
+                    category: "observed-limitation",
+                    evidence:
+                      "Both corrective attempts on starter failed the same bundle parse check.",
+                  },
+                },
+              },
+            ],
+            added: [],
+            deferred: [],
+          },
+        ],
+      },
+      attempts: [
+        // Failed smaller-worker run: the reason loop 2 took the task over.
+        loopAttempt("api", "failed", 1, 1, 25, {
+          message: "Starter failed the bundle parse check twice.",
+          launch: routedLaunch("starter", {
+            catalogRevision: routingRevision,
+            routing: {
+              reason:
+                "First eligible implementation profile for the TypeScript domain",
+              selectedBy: "route",
+            },
+          }),
+        }),
+        // The loop-2 takeover now runs: the card shows this attempt's launch
+        // choice and routing, not the task definition's original pick.
+        loopAttempt("api", "running", 5, 2, 40, {
+          reopen: {
+            reason: "Fix the repeated bundle parse failure on an inline model.",
+            findings: [],
+          },
+          launch: routedLaunch("inherit", {
+            provider: "openai",
+            model: "gpt-6-sol",
+            thinkingOptionId: "high",
+            catalogRevision: routingRevision,
+            routing: {
+              reason:
+                "Escalated to inline after bounded smaller-worker failures",
+              selectedBy: "conductor",
+              override: {
+                category: "observed-limitation",
+                evidence:
+                  "Both corrective attempts on starter failed the same bundle parse check.",
+              },
+            },
+            warnings: [
+              {
+                code: "unconfigured-model",
+                message:
+                  'Task "api": inline openai/gpt-6-sol has no routing classification.',
+              },
+            ],
+          }),
+        }),
+        loopAttempt("ui", "completed", 2, 1, 30, {
+          report: {
+            outcome: "completed",
+            summary: "The migration runs on Opus as the user asked.",
+            evidence: ["focused export suite passes"],
+            checks: [{ name: "UI suite", status: "passed", detail: "green" }],
+          },
+          launch: routedLaunch("opus", {
+            catalogRevision: routingRevision,
+            routing: {
+              reason:
+                "The user asked for Opus for this migration in the request",
+              selectedBy: "conductor",
+              override: {
+                category: "user-choice",
+                evidence:
+                  "The original request says: run the migration on Opus.",
+              },
+            },
+            warnings: [
+              {
+                code: "larger-than-eligible",
+                message:
+                  'Task "ui": opus is larger than the smaller-first pick starter.',
+              },
+            ],
+          }),
+        }),
+        loopAttempt("review", "completed", 3, 1, 20, {
+          report: {
+            outcome: "completed",
+            summary: "The routing display reads cleanly on cards and history.",
+            evidence: ["Read the rendered cards"],
+            checks: [],
+          },
+          launch: routedLaunch("docs", {
+            catalogRevision: routingRevision,
+            routing: {
+              reason: "Only docs was free for the review pass",
+              selectedBy: "conductor",
+            },
+            warnings: [
+              {
+                code: "unclassified-profile",
+                message:
+                  'Task "review": profile docs has no routing.json entry, so it is reported as unclassified.',
+              },
+            ],
+          }),
+        }),
+        loopAttempt("collect", "completed", 4, 1, 15, {
+          report: {
+            outcome: "completed",
+            summary: "Collected the findings with no routing fields stored.",
+            evidence: ["Read the recorded findings"],
+            checks: [],
+          },
+          launch: fixtureLaunch(true),
+        }),
+      ],
+      summary: null,
+      finishedAt: null,
+      interruption: null,
+    },
+  };
+};
+
+Object.assign(extendedFixtureSymphonies, { routing: routedSymphony });
+
+Object.assign(extendedFixtureSymphonies, {
+  /** The profile a rename or delete removed: definition, launch and takeover
+   * lines still render the stored name snapshot, never a raw id. */
+  "profile-snapshot": () => {
+    const symphony = routedSymphony();
+    const apiTask = symphony.revisions[0]?.score.tasks.find(
+      (task) => task.id === "api",
+    );
+    if (apiTask) {
+      apiTask.worker = {
+        ...apiTask.worker,
+        profile: "aa100000-0000-4000-8000-000000000009",
+        profileName: "Deep reviewer",
+      };
+    }
+    const failedApi = symphony.execution.attempts.find(
+      (attempt) => attempt.taskId === "api" && attempt.state === "failed",
+    );
+    if (failedApi?.launch) {
+      failedApi.launch = {
+        ...failedApi.launch,
+        profile: "aa100000-0000-4000-8000-000000000009",
+        profileName: "Deep reviewer",
+      };
+    }
+    return symphony;
+  },
 });
 
 /**

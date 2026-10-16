@@ -30,6 +30,8 @@ import { orchestration } from "./orchestration";
 import type { SymphonyCommandAccess } from "./command-access";
 import { agentCommand } from "./prompts";
 import type { WorkerRuntime } from "./workers";
+import { catalogView, route, type RoutingCatalogSource } from "./routing";
+import { profileStoreSource } from "./profiles";
 import {
   executionStatus,
   requirePassingReport,
@@ -45,6 +47,7 @@ export function symphonyExecution(
   getRuntime: () => ExecutionRuntime & Partial<SymphonyChangesRuntime>,
   getWorkers?: () => WorkerRuntime,
   getAccess?: () => SymphonyCommandAccess,
+  routing: RoutingCatalogSource = profileStoreSource(null),
 ) {
   const conductor = orchestration(
     store,
@@ -56,6 +59,7 @@ export function symphonyExecution(
       return getWorkers();
     },
     (agentId, verb) => agentCommand(getAccess?.(), agentId, verb),
+    routing,
   );
   // Serializes read/version/mutate in this controller; SymphonyStore fences other processes too.
   let queue = Promise.resolve();
@@ -236,6 +240,7 @@ export function symphonyExecution(
           | "loop"
           | "profiles"
           | "models"
+          | "route"
           | "widen";
       }
     >,
@@ -715,16 +720,15 @@ export function symphonyExecution(
             workerChoice(command),
             command.note,
             command.addWrites,
+            command.routing,
           );
         }
         if (command.kind === "loop") {
           return conductor.loop(agentId, command);
         }
         if (command.kind === "profiles") {
-          if (!getWorkers) {
-            throw new SymphonyError("Task agent runtime is unavailable.");
-          }
-          return { profiles: await getWorkers().profiles() };
+          const catalog = await routing.load();
+          return catalogView(catalog);
         }
         if (command.kind === "models") {
           if (!getWorkers) {
@@ -756,6 +760,28 @@ export function symphonyExecution(
             );
           }
           return data;
+        }
+        if (command.kind === "route") {
+          if (!getWorkers) {
+            throw new SymphonyError("Task agent runtime is unavailable.");
+          }
+          const workerRuntime = getWorkers();
+          const parentModeId = await workerRuntime.modeOf?.(agentId);
+          const availableProviders = workerRuntime.providers
+            ? new Set(
+                (await workerRuntime.providers())
+                  .filter((entry) => entry.available)
+                  .map((entry) => entry.provider),
+              )
+            : null;
+          const catalog = await routing.load();
+          const explicit = workerChoice(command);
+          return route(catalog, {
+            intent: { role: command.role },
+            parentModeId,
+            availableProviders,
+            ...(Object.keys(explicit).length ? { explicit } : {}),
+          });
         }
         return mutate(agentId, command);
       }),

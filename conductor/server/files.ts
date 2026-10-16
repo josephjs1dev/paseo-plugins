@@ -9,6 +9,64 @@ export function missing(error: unknown): boolean {
 export function exists(error: unknown): boolean {
   return error instanceof Error && "code" in error && error.code === "EEXIST";
 }
+/**
+ * Reads a UTF-8 text file that stays under `maxBytes`, refusing symlinks so a
+ * link cannot redirect a read outside the plugin data directory. Returns
+ * undefined when the file does not exist. Reads at most `maxBytes + 1` so a
+ * file that grows after the size check is still rejected.
+ */
+export async function readBoundedText(
+  file: string,
+  maxBytes: number,
+): Promise<string | undefined> {
+  let handle;
+  try {
+    handle = await open(file, constants.O_RDONLY | constants.O_NOFOLLOW);
+  } catch (error) {
+    if (missing(error)) {
+      return undefined;
+    }
+    throw error;
+  }
+  try {
+    const stat = await handle.stat();
+    if (!stat.isFile() || stat.size > maxBytes) {
+      throw new Error("Conductor storage is invalid");
+    }
+    return await readBoundedHandle(handle, maxBytes);
+  } finally {
+    await handle.close();
+  }
+}
+
+/**
+ * Reads at most `maxBytes` from an already-open handle, allocating only
+ * `maxBytes + 1` bytes. A file that grew after its size was checked is rejected
+ * once the extra byte arrives. Exported so the grow-after-stat cap is testable.
+ */
+export async function readBoundedHandle(
+  handle: Awaited<ReturnType<typeof open>>,
+  maxBytes: number,
+): Promise<string> {
+  const buffer = Buffer.alloc(maxBytes + 1);
+  let offset = 0;
+  while (offset < buffer.length) {
+    const { bytesRead } = await handle.read(
+      buffer,
+      offset,
+      buffer.length - offset,
+      null,
+    );
+    if (!bytesRead) {
+      break;
+    }
+    offset += bytesRead;
+  }
+  if (offset > maxBytes) {
+    throw new Error("Conductor storage is invalid");
+  }
+  return buffer.subarray(0, offset).toString("utf8");
+}
 export async function readJson(file: string): Promise<unknown> {
   let handle;
   try {

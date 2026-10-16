@@ -20,6 +20,10 @@ import {
   type TaskReport,
 } from "../shared/symphonies/models";
 import {
+  attemptRoutingSchema,
+  taskRoutingSchema,
+} from "../shared/symphonies/routing";
+import {
   attemptLoop,
   currentLoop,
   effectiveTask,
@@ -783,4 +787,193 @@ void test("an older addWrites revision and attempt additions still load and work
   const attempt = stored.execution.attempts[0];
   assert.ok(attempt);
   assert.equal(attemptNumber(stored, attempt), 1);
+});
+
+void test("records stored before routing parse without the new fields", async () => {
+  const directory = await testDirectory();
+  const store = fileSymphonyStore(directory);
+  const symphony = executionSymphony(randomUUID(), "failed", [
+    failedUnsettledAttempt("work"),
+  ]);
+  await createSymphony(store, symphony);
+  const stored = (await store.read(symphony.id)).symphony;
+  // Neither the task, its launch, the reopen record nor the conducting block
+  // gains a routing field merely by being read.
+  assert.equal(stored.revisions[0]?.score.tasks[0]?.routing, undefined);
+  assert.equal(stored.execution.attempts[0]?.launch?.routing, undefined);
+  assert.equal(
+    stored.execution.attempts[0]?.launch?.catalogRevision,
+    undefined,
+  );
+  assert.equal(stored.execution.attempts[0]?.launch?.warnings, undefined);
+  assert.equal(stored.execution.conducting?.defineHash, undefined);
+  const raw = JSON.parse(
+    await readFile(
+      join(directory, "symphonies", `${symphony.id}.json`),
+      "utf8",
+    ),
+  ) as {
+    execution: { attempts: { launch?: Record<string, unknown> }[] };
+    revisions: { score: { tasks: Record<string, unknown>[] } }[];
+  };
+  assert.equal(raw.execution.attempts[0]?.launch?.routing, undefined);
+  assert.equal(raw.execution.attempts[0]?.launch?.catalogRevision, undefined);
+  assert.equal(raw.revisions[0]?.score.tasks[0]?.routing, undefined);
+});
+
+void test("routing decisions round-trip on tasks, launches and reopened loops", async () => {
+  const directory = await testDirectory();
+  const store = fileSymphonyStore(directory);
+  const catalogRevision = "a".repeat(64);
+  const routedTask = task("work", {
+    writes: ["src/api"],
+    worker: { role: "implementation", profile: "small" },
+    routing: {
+      role: "implementation",
+      domains: ["backend"],
+      traits: ["contracts"],
+      reason: "Smallest eligible backend worker.",
+      selectedBy: "route",
+      catalogRevision,
+      override: {
+        category: "capability-gap",
+        evidence: "No configured profile claimed the backend domain.",
+      },
+      warnings: [
+        {
+          code: "unclassified-profile",
+          message: 'Task "work" profile "big" is unclassified in routing.json.',
+        },
+      ],
+    },
+  });
+  const settled = settledAttempt("work");
+  const attempt: Attempt = {
+    ...settled,
+    launch: {
+      ...(settled.launch ?? {
+        state: "started" as const,
+        profile: "inherit",
+        generation: 0,
+        prompt: "Carry out the task",
+        settled: true,
+      }),
+      catalogRevision,
+      routing: {
+        reason: "Smallest eligible backend worker.",
+        selectedBy: "route",
+        override: {
+          category: "user-choice",
+          evidence: "The source conversation named the replacement.",
+        },
+      },
+      warnings: [
+        { code: "catalog-changed", message: 'Task "work" catalog changed.' },
+      ],
+    },
+  };
+  const base = executionSymphony(randomUUID(), "completed", [attempt]);
+  const conducting = base.execution.conducting;
+  if (!conducting) {
+    throw new Error("expected conducting metadata");
+  }
+  const symphony: StoredSymphony = {
+    ...base,
+    revisions: [
+      {
+        number: 1,
+        parent: null,
+        reason: "Accepted the routed plan",
+        acceptedAt: executionStart,
+        score: { tasks: [routedTask] },
+      },
+    ],
+    execution: {
+      ...base.execution,
+      conducting: {
+        ...conducting,
+        defineHash: "b".repeat(64),
+        loops: [
+          {
+            number: 2,
+            reason: "Escalate after review",
+            startedAt: executionStart,
+            reopened: [
+              {
+                taskId: "work",
+                findings: [],
+                worker: { profile: "small" },
+                routing: {
+                  reason: "The smaller profile missed the documented contract.",
+                  selectedBy: "conductor",
+                },
+                warnings: [
+                  {
+                    code: "larger-than-eligible",
+                    message:
+                      'Task "work" profile "big" (tier 2) is larger than eligible profile "small" (tier 1).',
+                  },
+                ],
+              },
+            ],
+            added: [],
+            deferred: [],
+          },
+        ],
+      },
+    },
+  };
+  await createSymphony(store, symphony);
+  const stored = (await store.read(symphony.id)).symphony;
+  const storedTask = stored.revisions[0]?.score.tasks[0];
+  assert.equal(storedTask?.routing?.selectedBy, "route");
+  assert.equal(storedTask?.routing?.catalogRevision, catalogRevision);
+  assert.equal(storedTask?.routing?.override?.category, "capability-gap");
+  assert.equal(
+    storedTask?.routing?.warnings?.[0]?.code,
+    "unclassified-profile",
+  );
+  const storedLaunch = stored.execution.attempts[0]?.launch;
+  assert.equal(storedLaunch?.catalogRevision, catalogRevision);
+  assert.equal(storedLaunch?.routing?.selectedBy, "route");
+  assert.equal(storedLaunch?.routing?.override?.category, "user-choice");
+  assert.equal(storedLaunch?.warnings?.[0]?.code, "catalog-changed");
+  const reopened = stored.execution.conducting?.loops?.[0]?.reopened[0];
+  assert.deepEqual(reopened?.worker, { profile: "small" });
+  assert.equal(reopened?.routing?.selectedBy, "conductor");
+  assert.equal(reopened?.warnings?.[0]?.code, "larger-than-eligible");
+  assert.equal(stored.execution.conducting?.defineHash, "b".repeat(64));
+});
+
+void test("malformed override categories and short catalog revisions are rejected", () => {
+  const routing = {
+    role: "implementation" as const,
+    reason: "Smallest eligible worker.",
+    selectedBy: "route" as const,
+  };
+  assert.equal(taskRoutingSchema.safeParse(routing).success, true);
+  assert.equal(
+    taskRoutingSchema.safeParse({
+      ...routing,
+      override: { category: "needs-quality", evidence: "Strong model" },
+    }).success,
+    false,
+  );
+  assert.equal(
+    taskRoutingSchema.safeParse({ ...routing, catalogRevision: "a".repeat(63) })
+      .success,
+    false,
+  );
+  assert.equal(
+    taskRoutingSchema.safeParse({ ...routing, catalogRevision: "a".repeat(64) })
+      .success,
+    true,
+  );
+  assert.equal(
+    attemptRoutingSchema.safeParse({
+      reason: "Smallest eligible worker.",
+      selectedBy: "conductor",
+    }).success,
+    true,
+  );
 });

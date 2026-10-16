@@ -1,5 +1,11 @@
 import { z } from "zod";
 import { identifier } from "../schema";
+import {
+  attemptRoutingSchema,
+  profileIdSchema,
+  routingWarningSchema,
+  taskRoutingSchema,
+} from "./routing";
 
 export const SYMPHONY_LIMITS = {
   symphonies: 200,
@@ -76,6 +82,9 @@ export const taskSchema = z
       .object({
         role: z.enum(["exploration", "implementation", "review"]),
         profile: text(160),
+        // The profile's name at definition time, so History renders after a
+        // rename or delete. Absent on records stored before profiles existed.
+        profileName: text(160).optional(),
         provider: text(80).optional(),
         model: text(160).optional(),
         thinkingOptionId: text(80).optional(),
@@ -86,6 +95,9 @@ export const taskSchema = z
     // Mirrors `worker.role === "review"` for callers that read the definition
     // directly. The role is the canonical marker; `define`/`loop` set both.
     review: z.boolean().optional(),
+    // The routing decision recorded when the task was created or last routed.
+    // Absent on records stored before routing existed.
+    routing: taskRoutingSchema.optional(),
     stopWhen: text(2000),
   })
   .strict();
@@ -328,10 +340,19 @@ export const attemptSchema = z
       .object({
         state: z.enum(["pending", "started", "uncertain", "failed"]),
         profile: text(160),
+        // The resolved profile's id and name at launch time, so the attempt
+        // renders after a rename or delete. Absent on old records.
+        profileId: profileIdSchema.optional(),
+        profileName: text(160).optional(),
         provider: text(80).optional(),
         model: text(160).optional(),
         thinkingOptionId: text(80).optional(),
         config: text(32000).optional(),
+        // The catalog revision this launch was validated against, so a changed
+        // catalog is revalidated before dispatch. Absent on old records.
+        catalogRevision: hash.optional(),
+        routing: attemptRoutingSchema.optional(),
+        warnings: z.array(routingWarningSchema).max(8).optional(),
         generation: z.number().int().nonnegative(),
         // Persisted progress of the bounded re-check for an uncertain launch.
         // The reconciler performs at most one identity lookup per due tick
@@ -394,6 +415,20 @@ export const loopReopenSchema = z
       .array(findingSchema)
       .max(SYMPHONY_LIMITS.findingsPerReport)
       .optional(),
+    // The replacement worker a re-opened loop task takes over with, if any.
+    // Absent on records stored before routing existed.
+    worker: z
+      .object({
+        profile: text(160).optional(),
+        profileName: text(160).optional(),
+        provider: text(80).optional(),
+        model: text(160).optional(),
+        thinkingOptionId: text(80).optional(),
+      })
+      .strict()
+      .optional(),
+    routing: attemptRoutingSchema.optional(),
+    warnings: z.array(routingWarningSchema).max(8).optional(),
   })
   .strict();
 // The blocking findings one task's latest report still carried when a loop
@@ -446,6 +481,9 @@ export const executionSchema = z
         conductor: z.enum(["self", "agent"]),
         conductorProfile: text(160).optional(),
         conductorConfig: text(32000).optional(),
+        // A digest of the accepted `define` command's tasks, so a replayed
+        // define is idempotent. Absent on records stored before it existed.
+        defineHash: hash.optional(),
         prompt: text(SYMPHONY_LIMITS.promptChars),
         notification: z.string().max(128).nullable(),
         // The loop budget chosen at `orchestrate`; absent means

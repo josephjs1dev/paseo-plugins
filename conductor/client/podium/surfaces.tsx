@@ -17,6 +17,7 @@ import { PodiumView } from "./view";
 import { PodiumSession } from "./session";
 import { agentsQueryKey, useAgents } from "../agents/query";
 import { useSymphonies } from "../symphonies/query";
+import { useProfiles } from "../symphonies/profiles-query";
 
 export class Sessions {
   private readonly entries = new Map<
@@ -88,11 +89,20 @@ export function PodiumSurface(
     }
   }, [initialSymphony, initialSection, session]);
   const state = useSyncExternalStore(session.subscribe, session.getSnapshot);
+  const section = state.section;
   const symphonies = useSymphonies(
     props.host.id,
     concertId,
     state.symphonySelection,
   );
+  const profiles = useProfiles(props.host.id);
+  let refreshing = query.isFetching;
+  if (section === "profiles") {
+    refreshing = profiles.fetching;
+  } else if (section === "symphonies") {
+    refreshing =
+      symphonies.summaries.isFetching || symphonies.detail.isFetching;
+  }
   const refresh = async () => {
     await cache.invalidateQueries({ queryKey: agentsQueryKey(props.host.id) });
   };
@@ -116,19 +126,21 @@ export function PodiumSurface(
         detail: symphonies.detail.data,
         detailStale: symphonies.detail.isError,
       }}
+      profiles={profiles}
       loading={query.isPending}
-      refreshing={
-        state.section === "symphonies"
-          ? symphonies.summaries.isFetching || symphonies.detail.isFetching
-          : query.isFetching
-      }
+      refreshing={refreshing}
       stale={query.isError}
       now={now}
       session={session}
       scroll={scroll}
       refresh={() => {
-        const work =
-          state.section === "symphonies" ? symphonies.refresh() : refresh();
+        const work = (async () => {
+          if (section === "profiles") {
+            await profiles.refresh();
+            return;
+          }
+          return section === "symphonies" ? symphonies.refresh() : refresh();
+        })();
         work.catch(() => undefined);
       }}
       actions={{

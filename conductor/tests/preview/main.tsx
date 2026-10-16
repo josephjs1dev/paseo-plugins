@@ -7,6 +7,8 @@ import type { AgentsSnapshot } from "../../shared/agents/models";
 import { requestForm } from "../../shared/agents/questions";
 import type { StoredSymphony } from "../../shared/symphonies/models";
 import { usePreviewSymphonies } from "./symphonies";
+import { usePreviewProfiles } from "./profiles";
+import { ProfilesRealPage } from "./profiles-real";
 
 const session = new PodiumSession();
 const scroll = { offset: 0 };
@@ -84,6 +86,17 @@ function Preview() {
     params.has("symphony-failed"),
     params.get("symphony-fixture") ?? undefined,
   );
+  const profiles = usePreviewProfiles({
+    empty: params.has("profiles-empty"),
+    stale: params.has("profiles-stale"),
+    noProviders: params.has("profiles-no-providers"),
+    invalid: params.has("profiles-invalid"),
+  });
+  if (params.has("profiles-real")) {
+    // The stale-draft regression runs through the production useProfiles
+    // hook (real react-query + fake plugin socket), not the preview stub.
+    return <ProfilesRealPage />;
+  }
   return (
     <div style={{ height: "100%", display: "flex", flexDirection: "column" }}>
       <div
@@ -100,6 +113,7 @@ function Preview() {
               ...(params.has("global") ? {} : { workspaceId: "ws-api" }),
             }
           : {})}
+        {...(params.has("profiles") ? { profiles } : {})}
         theme={params.has("dark") ? dark : light}
         hostLabel="Development host"
         compact={false}

@@ -37,14 +37,101 @@ void test("the skill lists profiles and models before splitting and teaches the 
   assert.match(ORCHESTRATE_SKILL, /Objective:/);
 });
 
+void test("the skill teaches smaller-first routing and explicit overrides", () => {
+  assert.match(ORCHESTRATE_SKILL, /smallest eligible profile for the role/);
+  assert.match(
+    ORCHESTRATE_SKILL,
+    /even when the deliverable is prose or Markdown/,
+  );
+  assert.match(ORCHESTRATE_SKILL, /\"reason\":\"\.\.\.\"/);
+  assert.match(
+    ORCHESTRATE_SKILL,
+    /user-choice\|capability-gap\|observed-limitation\|no-eligible-profile/,
+  );
+  assert.match(ORCHESTRATE_SKILL, /“Needs quality” is not evidence/);
+  assert.match(
+    ORCHESTRATE_SKILL,
+    /unclassified and shows a warning in its Profiles card/,
+  );
+  assert.match(ORCHESTRATE_SKILL, /Podium › Profiles/);
+  assert.match(ORCHESTRATE_SKILL, /plugin-data\/conductor\/profiles\.json/);
+  assert.match(ORCHESTRATE_SKILL, /skill names the task agent should use/);
+  assert.match(
+    ORCHESTRATE_SKILL,
+    /Instructions are delivered to the task agent in a clearly marked section/,
+  );
+  assert.doesNotMatch(ORCHESTRATE_SKILL, /routing\.json/);
+  assert.match(ORCHESTRATE_SKILL, /\`warn\` is the default/);
+  assert.match(ORCHESTRATE_SKILL, /\`strict\` requires a valid override/);
+  assert.doesNotMatch(ORCHESTRATE_SKILL, /strongest/i);
+  assert.doesNotMatch(ORCHESTRATE_SKILL, /No worker choice fields/);
+  assert.match(
+    ORCHESTRATE_SKILL,
+    /check\/review failure only through the reopen worker override/,
+  );
+  assert.match(ORCHESTRATE_SKILL, /override evidence is generic/);
+  assert.match(
+    ORCHESTRATE_SKILL,
+    /Add a planning task only to resolve a named open design decision/,
+  );
+  assert.doesNotMatch(ORCHESTRATE_SKILL, /3 or more writers share a contract/);
+  assert.match(ORCHESTRATE_SKILL, /`roles` and `size`/);
+  assert.match(ORCHESTRATE_SKILL, /small, then medium, then large/);
+  assert.match(ORCHESTRATE_SKILL, /“When to use” notes/);
+  assert.match(ORCHESTRATE_SKILL, /shows a warning in its Profiles card/);
+  assert.doesNotMatch(
+    ORCHESTRATE_SKILL,
+    /domains|traits|preferenceTier|fallbacks|excludeWhen/,
+  );
+  assert.match(ORCHESTRATE_SKILL, /`role: "planning"` requires it/);
+  assert.match(ORCHESTRATE_SKILL, /open design decision/);
+  assert.match(ORCHESTRATE_SKILL, /approved design is implementation/);
+  assert.match(ORCHESTRATE_SKILL, /`profile: "inherit"` with a reason/);
+  assert.match(
+    ORCHESTRATE_SKILL,
+    /Omit worker fields only when exactly one eligible profile has the smallest size for the role/,
+  );
+  assert.match(
+    ORCHESTRATE_SKILL,
+    /When two or more share the smallest size, name one with `profile`, chosen by its “When to use” notes/,
+  );
+  assert.match(
+    ORCHESTRATE_SKILL,
+    /never silently inherit the Conductor's model/,
+  );
+});
+
+void test("the skill documents Conductor-owned profiles and profile recovery", () => {
+  assert.match(ORCHESTRATE_SKILL, /Profiles are owned by Conductor/);
+  assert.match(ORCHESTRATE_SKILL, /`hasInstructions`, one catalog revision/);
+  assert.match(ORCHESTRATE_SKILL, /It does not return instruction text/);
+  assert.match(ORCHESTRATE_SKILL, /`profiles.providers` supplies/);
+  assert.match(
+    ORCHESTRATE_SKILL,
+    /explicit profile `modeId` overrides the inherited Conductor mode/,
+  );
+  assert.match(ORCHESTRATE_SKILL, /Conductor profiles are invalid/);
+  assert.match(
+    ORCHESTRATE_SKILL,
+    /Conductor could not load or save the worker profiles/,
+  );
+  assert.match(ORCHESTRATE_SKILL, /routing was revalidated/);
+});
+
 void test("the skill directs recovery from diagnosis and reviews granted writes", () => {
   assert.match(ORCHESTRATE_SKILL, /per-task notification summary first/);
   assert.match(ORCHESTRATE_SKILL, /diagnosis\.need/);
   assert.match(ORCHESTRATE_SKILL, /addWrites/);
   assert.match(ORCHESTRATE_SKILL, /Retry on the same worker choice first/);
-  assert.match(ORCHESTRATE_SKILL, /task's second/);
+  assert.match(
+    ORCHESTRATE_SKILL,
+    /harness failure does not justify switching models/,
+  );
+  assert.match(
+    ORCHESTRATE_SKILL,
+    /check\/review failure only through the reopen worker override/,
+  );
   assert.match(ORCHESTRATE_SKILL, /every[\s\S]*available choice has failed/);
-  assert.match(ORCHESTRATE_SKILL, /new worker choice succeeds/);
   assert.match(ORCHESTRATE_SKILL, /grantedWrites/);
   assert.match(ORCHESTRATE_SKILL, /Widen refused/);
 });

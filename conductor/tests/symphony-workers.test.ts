@@ -12,6 +12,7 @@ import {
   LAUNCH_CHECK_DELAYS_MS,
 } from "../server/symphonies/workers";
 import { agent } from "./fixtures";
+import type { ConductorProfile } from "../shared/symphonies/profiles";
 
 type CreateInput = Parameters<
   ReturnType<PaseoApi["workspaces"]["ref"]>["agents"]["create"]
@@ -72,6 +73,21 @@ function fakePaseo(
   const agents = new Map((options.agents ?? []).map((item) => [item.id, item]));
   const created: CreateInput[] = [];
   const sent: SendRecord[] = [];
+  const profileStore: ConductorProfile[] = (options.profiles ?? []).map(
+    (profile) => ({
+      id: profile.id,
+      name: profile.name,
+      notes: profile.notes ?? "",
+      provider: profile.provider,
+      ...(profile.model ? { model: profile.model } : {}),
+      ...(profile.modeId ? { modeId: profile.modeId } : {}),
+      ...(profile.thinkingOptionId
+        ? { thinkingOptionId: profile.thinkingOptionId }
+        : {}),
+      routing: null,
+      instructions: "",
+    }),
+  );
   const actualWorkers = new Set(agents.keys());
   const initialPromptsStarted = new Set<string>();
   const paseo = {
@@ -173,6 +189,7 @@ function fakePaseo(
     paseo: paseo as unknown as PaseoApi,
     created,
     sent,
+    profileStore,
     actualWorkers,
     initialPromptsStarted,
     setAgent(item: ReturnType<typeof agent>) {
@@ -196,7 +213,7 @@ void test("matching existing child replays the same keyed creation transaction",
     labels: { "paseo.parent-agent-id": launchInput.parentAgentId },
   });
   const fake = fakePaseo({ agents: [child] });
-  const workers = paseoWorkers(fake.paseo);
+  const workers = paseoWorkers(fake.paseo, () => fake.profileStore);
 
   await workers.launch(launchInput);
   await workers.launch(launchInput);
@@ -236,12 +253,11 @@ void test("prepared config is stable across parent and profile changes and retri
     agents: [parent({ currentModeId: "full-access" })],
     profiles,
   });
-  const workers = paseoWorkers(fake.paseo);
+  const workers = paseoWorkers(fake.paseo, () => fake.profileStore);
   const intent = { ...launchInput, profile: "pi-reviewer" };
   const prepared = await workers.prepare(intent);
   const serializedConfig = JSON.stringify({
     provider: "pi/pi-test",
-    featureValues: { extensions: false },
   });
   assert.equal(prepared, serializedConfig);
 
@@ -284,7 +300,10 @@ void test("malformed persisted launch config is definitively rejected before cre
   const fake = fakePaseo({ agents: [parent()] });
 
   await assert.rejects(
-    paseoWorkers(fake.paseo).launch({ ...launchInput, config: "not-json" }),
+    paseoWorkers(fake.paseo, () => fake.profileStore).launch({
+      ...launchInput,
+      config: "not-json",
+    }),
     (error: unknown) =>
       error instanceof LaunchRejectedError &&
       /configuration is invalid/.test(error.message),
@@ -294,7 +313,10 @@ void test("malformed persisted launch config is definitively rejected before cre
 
 void test("exact SDK not-found errors allow prepare and missing-parent rejection", async () => {
   const fake = fakePaseo({ agents: [parent()] });
-  const prepared = await paseoWorkers(fake.paseo).prepare(launchInput);
+  const prepared = await paseoWorkers(
+    fake.paseo,
+    () => fake.profileStore,
+  ).prepare(launchInput);
   assert.deepEqual(JSON.parse(prepared), {
     provider: "codex/gpt-test",
     modeId: "auto-review",
@@ -304,7 +326,9 @@ void test("exact SDK not-found errors allow prepare and missing-parent rejection
 
   const noParent = fakePaseo();
   await assert.rejects(
-    paseoWorkers(noParent.paseo).prepare(launchInput),
+    paseoWorkers(noParent.paseo, () => noParent.profileStore).prepare(
+      launchInput,
+    ),
     (error: unknown) =>
       error instanceof LaunchRejectedError &&
       /parent is unavailable/.test(error.message),
@@ -318,7 +342,7 @@ void test("refresh propagates errors other than the exact SDK not-found", async 
   });
 
   await assert.rejects(
-    paseoWorkers(fake.paseo).prepare(launchInput),
+    paseoWorkers(fake.paseo, () => fake.profileStore).prepare(launchInput),
     (error: unknown) => error === refreshError,
   );
 });
@@ -338,7 +362,7 @@ void test("an existing task agent ID with another parent or concert is LaunchRej
   ]) {
     const fake = fakePaseo({ agents: [child] });
     await assert.rejects(
-      paseoWorkers(fake.paseo).launch(launchInput),
+      paseoWorkers(fake.paseo, () => fake.profileStore).launch(launchInput),
       (error: unknown) =>
         error instanceof LaunchRejectedError &&
         /already belongs to another launch/.test(error.message),
@@ -360,7 +384,7 @@ void test("missing, archived, closed, and foreign-concert parents cannot launch"
   for (const item of cases) {
     const fake = fakePaseo({ agents: item.agents });
     await assert.rejects(
-      paseoWorkers(fake.paseo).launch(launchInput),
+      paseoWorkers(fake.paseo, () => fake.profileStore).launch(launchInput),
       (error: unknown) =>
         error instanceof LaunchRejectedError &&
         /parent (is unavailable|is not in the requested concert)/.test(
@@ -375,7 +399,7 @@ void test("missing, archived, closed, and foreign-concert parents cannot launch"
 void test("an idle, available parent can launch with inherited settings", async () => {
   const fake = fakePaseo({ agents: [parent({ status: "idle" })] });
 
-  await paseoWorkers(fake.paseo).launch(launchInput);
+  await paseoWorkers(fake.paseo, () => fake.profileStore).launch(launchInput);
 
   assert.deepEqual(fake.created, [
     {
@@ -409,7 +433,7 @@ void test("named profile settings apply without carrying a provider-specific mod
     ],
   });
 
-  await paseoWorkers(fake.paseo).launch({
+  await paseoWorkers(fake.paseo, () => fake.profileStore).launch({
     ...launchInput,
     profile: "pi-reviewer",
   });
@@ -423,7 +447,6 @@ void test("named profile settings apply without carrying a provider-specific mod
       prompt: launchInput.prompt,
       config: {
         provider: "pi/pi-test",
-        featureValues: { extensions: false },
       },
     },
   ]);
@@ -443,7 +466,7 @@ void test("a configured auto-review downgrade is allowed from full access", asyn
     ],
   });
 
-  await paseoWorkers(fake.paseo).launch({
+  await paseoWorkers(fake.paseo, () => fake.profileStore).launch({
     ...launchInput,
     profile: "Safe review",
   });
@@ -473,7 +496,10 @@ void test("known elevated profile modes are rejected when the parent lacks them"
       ],
     });
     await assert.rejects(
-      paseoWorkers(fake.paseo).launch({ ...launchInput, profile: "elevated" }),
+      paseoWorkers(fake.paseo, () => fake.profileStore).launch({
+        ...launchInput,
+        profile: "elevated",
+      }),
       (error: unknown) =>
         error instanceof LaunchRejectedError &&
         /requests elevated permission mode/.test(error.message),
@@ -495,7 +521,10 @@ void test("unknown profiles and unavailable providers produce SymphonyError", as
   };
   const unknownProfile = fakePaseo({ agents: base.agents });
   await assert.rejects(
-    paseoWorkers(unknownProfile.paseo).launch({
+    paseoWorkers(
+      unknownProfile.paseo,
+      () => unknownProfile.profileStore,
+    ).launch({
       ...launchInput,
       profile: "missing",
     }),
@@ -507,7 +536,10 @@ void test("unknown profiles and unavailable providers produce SymphonyError", as
 
   const unavailableProvider = fakePaseo(base);
   await assert.rejects(
-    paseoWorkers(unavailableProvider.paseo).launch({
+    paseoWorkers(
+      unavailableProvider.paseo,
+      () => unavailableProvider.profileStore,
+    ).launch({
       ...launchInput,
       profile: "offline",
     }),
@@ -523,7 +555,7 @@ void test("SDK create errors remain uncertain and are not launch rejections", as
   const fake = fakePaseo({ agents: [parent()], createError: sdkError });
 
   await assert.rejects(
-    paseoWorkers(fake.paseo).launch(launchInput),
+    paseoWorkers(fake.paseo, () => fake.profileStore).launch(launchInput),
     (error: unknown) =>
       error === sdkError && !(error instanceof LaunchRejectedError),
   );
@@ -533,7 +565,11 @@ void test("busy wake refuses to send or interrupt the current turn", async () =>
   const fake = fakePaseo({ agents: [parent({ status: "running" })] });
 
   await assert.rejects(
-    paseoWorkers(fake.paseo).wake(launchInput.parentAgentId, "Continue", "n1"),
+    paseoWorkers(fake.paseo, () => fake.profileStore).wake(
+      launchInput.parentAgentId,
+      "Continue",
+      "n1",
+    ),
     /no queue option/,
   );
   assert.deepEqual(fake.sent, []);
@@ -542,8 +578,8 @@ void test("busy wake refuses to send or interrupt the current turn", async () =>
 void test("wake uses a stable send messageId for a repeated notification key", async () => {
   const idleWorker = parent({ id: "wake-worker", status: "idle" });
   const fake = fakePaseo({ agents: [idleWorker] });
-  const firstRuntime = paseoWorkers(fake.paseo);
-  const restartedRuntime = paseoWorkers(fake.paseo);
+  const firstRuntime = paseoWorkers(fake.paseo, () => fake.profileStore);
+  const restartedRuntime = paseoWorkers(fake.paseo, () => fake.profileStore);
 
   await firstRuntime.wake(idleWorker.id, "Continue the task", "notification-7");
   await restartedRuntime.wake(
@@ -618,7 +654,7 @@ void test("inspect distinguishes active, permission-wait, settled, closed, and m
     },
   ];
   const fake = fakePaseo({ agents: cases.map((item) => item.agent) });
-  const workers = paseoWorkers(fake.paseo);
+  const workers = paseoWorkers(fake.paseo, () => fake.profileStore);
 
   for (const item of cases) {
     assert.deepEqual(await workers.inspect(item.id), {
@@ -634,7 +670,7 @@ void test("inspect distinguishes active, permission-wait, settled, closed, and m
   });
 });
 
-void test("profiles exposes routing fields only", async () => {
+void test("profiles returns the Conductor profile store fields", async () => {
   const fake = fakePaseo({
     profiles: [
       {
@@ -653,24 +689,49 @@ void test("profiles exposes routing fields only", async () => {
     ],
   });
 
-  assert.deepEqual(await paseoWorkers(fake.paseo).profiles(), [
-    {
-      id: "review",
-      name: "Reviewer",
-      notes: "Review only",
-      provider: "codex",
-      model: "gpt-review",
-      modeId: "review-mode",
-      thinkingOptionId: "high",
-    },
-    { id: "pi", name: "Pi", notes: "", provider: "pi" },
-  ]);
+  assert.deepEqual(
+    await paseoWorkers(fake.paseo, () => fake.profileStore).profiles(),
+    [
+      {
+        id: "review",
+        name: "Reviewer",
+        notes: "Review only",
+        provider: "codex",
+        model: "gpt-review",
+        modeId: "review-mode",
+        thinkingOptionId: "high",
+      },
+      { id: "pi", name: "Pi", notes: "", provider: "pi" },
+    ],
+  );
 });
 
+const preparedFake = fakePaseo({ agents: [parent()] });
 const prepared = async (input: WorkerLaunch) =>
   JSON.parse(
-    await paseoWorkers(fakePaseo({ agents: [parent()] }).paseo).prepare(input),
+    await paseoWorkers(
+      preparedFake.paseo,
+      () => preparedFake.profileStore,
+    ).prepare(input),
   ) as unknown;
+
+void test("a launch never resolves a profile from Paseo agentProfiles", async () => {
+  // The Paseo config advertises a profile, but the Conductor store is empty.
+  const fake = fakePaseo({
+    agents: [parent()],
+    profiles: [{ id: "pi-reviewer", name: "Pi reviewer", provider: "pi" }],
+  });
+  await assert.rejects(
+    paseoWorkers(fake.paseo, () => []).launch({
+      ...launchInput,
+      profile: "pi-reviewer",
+    }),
+    (error: unknown) =>
+      error instanceof LaunchRejectedError &&
+      error.message === "Unknown worker profile: pi-reviewer",
+  );
+  assert.deepEqual(fake.created, []);
+});
 
 void test("an inline provider and model start without the parent's mode, features, or thinking", async () => {
   assert.deepEqual(
@@ -706,7 +767,10 @@ void test("an inline thinking option overrides the parent's", async () => {
 void test("an unavailable inline model is rejected before create", async () => {
   const fake = fakePaseo({ agents: [parent({ status: "idle" })] });
   await assert.rejects(
-    paseoWorkers(fake.paseo).launch({ ...launchInput, model: "missing" }),
+    paseoWorkers(fake.paseo, () => fake.profileStore).launch({
+      ...launchInput,
+      model: "missing",
+    }),
     (error: unknown) =>
       error instanceof LaunchRejectedError &&
       error.message === "Task agent model is unavailable: codex/missing",
@@ -716,7 +780,7 @@ void test("an unavailable inline model is rejected before create", async () => {
 
 void test("models lists available providers with their model IDs for the agent's checkout", async () => {
   const fake = fakePaseo({ agents: [parent()] });
-  const workers = paseoWorkers(fake.paseo);
+  const workers = paseoWorkers(fake.paseo, () => fake.profileStore);
   assert.deepEqual(await workers.models(launchInput.parentAgentId), [
     { provider: "codex", models: ["gpt-test", "pi-test"] },
     { provider: "pi", models: ["gpt-test", "pi-test"] },
@@ -734,4 +798,47 @@ void test("the launch re-check schedule yields one more check than delay, then s
   assert.equal(nextLaunchCheckDelay(1), 5_000);
   assert.equal(nextLaunchCheckDelay(2), 20_000);
   assert.equal(nextLaunchCheckDelay(3), null);
+});
+
+void test("a launch resolves a profile by id after a rename and old-name reuse", async () => {
+  const originalId = "11111111-1111-4111-8111-111111111111";
+  const decoyId = "22222222-2222-4222-8222-222222222222";
+  const fixtureProfile = (
+    id: string,
+    name: string,
+    provider: string,
+    model: string,
+  ): ConductorProfile => ({
+    id,
+    name,
+    notes: "",
+    provider,
+    model,
+    routing: null,
+    instructions: "",
+  });
+  let profiles = [fixtureProfile(originalId, "Named", "pi", "pi-test")];
+  const fake = fakePaseo({ agents: [parent()] });
+  await paseoWorkers(fake.paseo, () => profiles).launch({
+    ...launchInput,
+    profile: originalId,
+  });
+  assert.equal(fake.created.at(-1)?.config.provider, "pi/pi-test");
+
+  profiles = [
+    fixtureProfile(originalId, "Renamed", "pi", "pi-test"),
+    fixtureProfile(decoyId, "Named", "codex", "gpt-test"),
+  ];
+  // The persisted id still names the original after the rename.
+  await paseoWorkers(fake.paseo, () => profiles).launch({
+    ...launchInput,
+    profile: originalId,
+  });
+  assert.equal(fake.created.at(-1)?.config.provider, "pi/pi-test");
+  // The old name now resolves to the decoy.
+  await paseoWorkers(fake.paseo, () => profiles).launch({
+    ...launchInput,
+    profile: "Named",
+  });
+  assert.equal(fake.created.at(-1)?.config.provider, "codex/gpt-test");
 });

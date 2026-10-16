@@ -13,6 +13,7 @@ import { paseoAgentsHost } from "../paseo/agents-host";
 import { pages } from "../agents/directory";
 import { paseoConnection } from "../paseo/connection";
 import { commandHooks } from "./symphonies-hooks";
+import { registerProfilesRpc } from "./profiles-rpc";
 
 async function guarded<T>(action: () => Promise<T>): Promise<T> {
   try {
@@ -38,7 +39,8 @@ export function registerSymphonies(
     connected: () => connection.available,
     hooksAvailable: typeof server.before === "function",
   });
-  const { store, access, ready } = service;
+  const { store, profiles, access, ready } = service;
+  registerProfilesRpc(server, profiles);
   const stopHooks = commandHooks(
     server,
     access,

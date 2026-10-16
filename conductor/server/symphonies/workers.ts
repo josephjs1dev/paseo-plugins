@@ -4,6 +4,10 @@ import type {
   AgentLaunchConfig,
   AgentSnapshot,
 } from "../../shared/agents/agent";
+import {
+  resolveProfileRef,
+  type ConductorProfile,
+} from "../../shared/symphonies/profiles";
 import type { SymphonyHost } from "./host";
 import { LaunchRejectedError, SymphonyError } from "./errors";
 
@@ -30,6 +34,11 @@ export interface WorkerProfile {
   thinkingOptionId?: string;
 }
 
+/** Loads the current Conductor profile store for profile resolution. */
+export type ProfileLoader = () =>
+  | Promise<readonly ConductorProfile[]>
+  | readonly ConductorProfile[];
+
 export interface WorkerRuntime {
   prepare(input: WorkerLaunch): Promise<string>;
   launch(input: WorkerLaunch): Promise<void>;
@@ -44,6 +53,10 @@ export interface WorkerRuntime {
   models(
     agentId: string,
   ): Promise<Array<{ provider: string; models: string[] }>>;
+  /** Available providers; absent means availability is unknown. */
+  providers?(): Promise<Array<{ provider: string; available: boolean }>>;
+  /** The agent's permission mode, null when unset, undefined when unknown. */
+  modeOf?(agentId: string): Promise<string | null | undefined>;
   /**
    * Optional schedule for re-checking an uncertain launch, as delays between
    * checks. Absent means `LAUNCH_CHECK_DELAYS_MS`; tests set [] for an
@@ -131,7 +144,7 @@ function normalizedMode(modeId: string): string {
   return modeId.replace(/([a-z])([A-Z])/g, "$1-$2").toLowerCase();
 }
 
-function isKnownElevatedMode(modeId: string): boolean {
+export function isKnownElevatedMode(modeId: string): boolean {
   const mode = normalizedMode(modeId).replaceAll("_", "-");
   return (
     mode === "full-access" ||
@@ -145,6 +158,29 @@ function isKnownSafeMode(modeId: string): boolean {
   return ["auto", "auto-review", "default"].includes(mode);
 }
 
+/** The permission-mode problem with a worker's mode, or null when allowed. */
+export function modeIssue(
+  modeId: string | undefined,
+  parentModeId: string | null | undefined,
+): string | null {
+  if (!modeId || modeId === parentModeId) {
+    return null;
+  }
+  const parentHasElevatedMode = parentModeId
+    ? isKnownElevatedMode(parentModeId)
+    : false;
+  if (isKnownElevatedMode(modeId) && !parentHasElevatedMode) {
+    return `Worker profile requests elevated permission mode: ${modeId}`;
+  }
+  if (
+    !isKnownSafeMode(modeId) &&
+    !(isKnownElevatedMode(modeId) && parentHasElevatedMode)
+  ) {
+    return `Worker profile changes to an unverified permission mode: ${modeId}`;
+  }
+  return null;
+}
+
 function profileSelection(provider: string, model: string | null | undefined) {
   return model ? `${provider}/${model}` : provider;
 }
@@ -156,22 +192,24 @@ function wakeMessageId(agentId: string, prompt: string, key?: string): string {
 }
 
 /** Task agent launch policy: resolves configs, guards permission modes, and creates agents through the host. */
-export function workerRuntime(host: SymphonyHost): WorkerRuntime {
+export function workerRuntime(
+  host: SymphonyHost,
+  loadProfiles: ProfileLoader = () => [],
+): WorkerRuntime {
   const refresh = (agentId: string) => host.agent(agentId);
 
-  async function configuredProfile(name: string) {
-    const matches = (await host.profiles()).filter(
-      (profile) => profile.id === name || profile.name === name,
-    );
-    const match = matches[0];
-    if (matches.length !== 1 || !match) {
-      throw new LaunchRejectedError(
-        matches.length === 0
-          ? `Unknown worker profile: ${name}`
-          : `Ambiguous worker profile: ${name}`,
-      );
+  async function configuredProfile(
+    reference: string,
+  ): Promise<ConductorProfile> {
+    const resolution = resolveProfileRef(await loadProfiles(), reference);
+    if ("profile" in resolution) {
+      return resolution.profile;
     }
-    return match;
+    throw new LaunchRejectedError(
+      resolution.error === "unknown"
+        ? `Unknown worker profile: ${reference}`
+        : `Ambiguous worker profile: ${reference}`,
+    );
   }
 
   function assertExistingMatches(input: WorkerLaunch, existing: Agent): void {
@@ -233,24 +271,9 @@ export function workerRuntime(host: SymphonyHost): WorkerRuntime {
     modeId: string | undefined,
     parent: Pick<Agent, "modeId">,
   ): void {
-    if (!modeId || modeId === parent.modeId) {
-      return;
-    }
-    const parentHasElevatedMode = parent.modeId
-      ? isKnownElevatedMode(parent.modeId)
-      : false;
-    if (isKnownElevatedMode(modeId) && !parentHasElevatedMode) {
-      throw new LaunchRejectedError(
-        `Worker profile requests elevated permission mode: ${modeId}`,
-      );
-    }
-    if (
-      !isKnownSafeMode(modeId) &&
-      !(isKnownElevatedMode(modeId) && parentHasElevatedMode)
-    ) {
-      throw new LaunchRejectedError(
-        `Worker profile changes to an unverified permission mode: ${modeId}`,
-      );
+    const issue = modeIssue(modeId, parent.modeId ?? null);
+    if (issue) {
+      throw new LaunchRejectedError(issue);
     }
   }
 
@@ -293,11 +316,10 @@ export function workerRuntime(host: SymphonyHost): WorkerRuntime {
     await assertProviderAvailable(provider, model, parent.cwd);
 
     // Features and thinking options are provider-specific; copy them only
-    // within the Conductor's own provider.
+    // within the Conductor's own provider. A Conductor profile carries its own
+    // provider/model/thinking option but no provider features.
     let featureValues: Record<string, unknown> = {};
-    if (profile) {
-      featureValues = { ...profile.featureValues };
-    } else if (sameProvider) {
+    if (!profile && sameProvider) {
       featureValues = Object.fromEntries(
         parent.features.map((feature) => [feature.id, feature.value]),
       );
@@ -432,12 +454,20 @@ export function workerRuntime(host: SymphonyHost): WorkerRuntime {
       );
     },
 
+    async providers() {
+      return host.providers();
+    },
+
+    async modeOf(agentId) {
+      const agent = await refresh(agentId);
+      return agent ? (agent.modeId ?? null) : undefined;
+    },
+
     async profiles() {
-      // Routing fields only: profiles are loose objects and may carry more.
-      return (await host.profiles()).map((profile) => ({
+      return (await loadProfiles()).map((profile) => ({
         id: profile.id,
         name: profile.name,
-        notes: profile.notes ?? "",
+        notes: profile.notes,
         provider: profile.provider,
         ...(profile.model ? { model: profile.model } : {}),
         ...(profile.modeId ? { modeId: profile.modeId } : {}),

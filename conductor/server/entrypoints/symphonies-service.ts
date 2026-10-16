@@ -1,10 +1,12 @@
 import type { SymphonyHost } from "../symphonies/host";
+import { join } from "node:path";
 import { SymphonyError } from "../symphonies/errors";
 import { fileSymphonyStore } from "../symphonies/store";
 import { executionRuntime } from "../symphonies/identity";
 import { changesRuntime } from "../symphonies/changes";
 import { workerRuntime } from "../symphonies/workers";
 import { symphonyExecution } from "../symphonies/execution";
+import { PROFILES_FILE, profileStoreSource } from "../symphonies/profiles";
 import { commandServer } from "./commands/server";
 import { symphonyAck } from "./commands/ack";
 
@@ -25,11 +27,15 @@ export function symphonyService({
   hooksAvailable,
 }: SymphonyServiceOptions) {
   const store = fileSymphonyStore(directory);
+  const profiles = profileStoreSource(join(directory, PROFILES_FILE), () =>
+    host().profiles(),
+  );
   const execution = symphonyExecution(
     store,
     () => ({ ...executionRuntime(host()), ...changesRuntime() }),
-    () => workerRuntime(host()),
+    () => workerRuntime(host(), async () => (await profiles.load()).profiles),
     () => access,
+    profiles,
   );
   let reconciling = false;
   const reconcile = async () => {
@@ -90,6 +96,7 @@ export function symphonyService({
   })();
   return {
     store,
+    profiles,
     access,
     ready,
     interrupt: execution.interrupt,

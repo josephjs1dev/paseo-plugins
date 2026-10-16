@@ -1,5 +1,9 @@
 import type { SymphonyHost } from "../symphonies/host";
-import { workerRuntime, type WorkerRuntime } from "../symphonies/workers";
+import {
+  workerRuntime,
+  type ProfileLoader,
+  type WorkerRuntime,
+} from "../symphonies/workers";
 import { toAgentProfile, toAgentSnapshot } from "./mapping";
 import type { PaseoApi } from "./types";
 
@@ -63,6 +67,9 @@ export function paseoSymphonyHost(paseo: PaseoApi): SymphonyHost {
 }
 
 /** Task agent launch policy bound to the Paseo SDK. */
-export function paseoWorkers(paseo: PaseoApi): WorkerRuntime {
-  return workerRuntime(paseoSymphonyHost(paseo));
+export function paseoWorkers(
+  paseo: PaseoApi,
+  loadProfiles?: ProfileLoader,
+): WorkerRuntime {
+  return workerRuntime(paseoSymphonyHost(paseo), loadProfiles);
 }
