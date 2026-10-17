@@ -10,11 +10,20 @@ import {
 } from "./client/podium/surfaces";
 import { registerSkillCommands } from "./client/skills";
 import { registerPodiumNavigation } from "./client/podium/registration";
+import { registerSymphonyPills } from "./client/symphonies/pills";
 
 export default function contribute(client: PluginClientContext) {
   const sessions = new Sessions();
   const removers = [
     ...registerSkillCommands(client),
+    registerSymphonyPills(client, {
+      selectSymphony: ({ hostId, workspaceId, symphonyId }) => {
+        sessions.get(hostId, workspaceId).session.update({
+          section: "symphonies",
+          symphonySelection: { kind: "symphony", id: symphonyId },
+        });
+      },
+    }),
     ...registerPodiumNavigation(
       client,
       (props: PluginSurfaceProps) => (
