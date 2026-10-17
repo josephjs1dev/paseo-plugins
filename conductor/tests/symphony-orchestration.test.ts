@@ -34,6 +34,7 @@ import {
   type SymphonyChangesRuntime,
 } from "../server/symphonies/changes";
 import {
+  attemptSchema,
   latestAttempt,
   SYMPHONY_LIMITS,
   type Attempt,
@@ -869,6 +870,84 @@ void test("inline worker choices persist on tasks and reach the worker launch", 
   assert.equal(launch?.thinkingOptionId, "high");
 });
 
+void test("a launch snapshots the worker it resolved to", async () => {
+  const profileId = "33333333-3333-4333-8333-333333333333";
+  const f = await fixture({
+    routing: {
+      profiles: {
+        [profileId]: { roles: ["implementation"], size: "small" },
+      },
+    },
+    profiles: [
+      {
+        id: profileId,
+        name: "Tuned",
+        notes: "",
+        provider: "claude",
+        model: "opus",
+        thinkingOptionId: "medium",
+      },
+    ],
+  });
+  const plan = await f.start("resolved-profile");
+  const symphony = await f.define(plan, [
+    { ...task("api", [], ["src/api"]), profile: profileId },
+  ]);
+  const api = latestAttempt(symphony, "api");
+  assert.ok(api);
+  // A profile launch keeps the inline fields empty and records the profile's
+  // provider/model/thinking option as the resolved worker.
+  assert.equal(api.launch?.provider, undefined);
+  assert.deepEqual(api.launch?.resolved, {
+    provider: "claude",
+    model: "opus",
+    thinkingOptionId: "medium",
+  });
+});
+
+void test("an inline launch snapshots the worker it resolved to", async () => {
+  const f = await fixture();
+  const plan = await f.start("resolved-inline");
+  const symphony = await f.define(plan, [inlineTask("a")]);
+  const a = latestAttempt(symphony, "a");
+  assert.ok(a);
+  assert.deepEqual(a.launch?.resolved, {
+    provider: "pi",
+    model: "pi-test",
+    thinkingOptionId: "high",
+  });
+});
+
+void test("the attempt schema accepts a launch with and without a resolved worker", () => {
+  const record = {
+    id: "11111111-1111-4111-8111-111111111111",
+    taskId: "api",
+    agentId: "agent",
+    state: "running",
+    startedAt: 0,
+    endedAt: null,
+    message: null,
+    report: null,
+    reportHash: null,
+    launch: {
+      state: "pending",
+      profile: "inherit",
+      provider: "pi",
+      generation: 0,
+      prompt: "Carry out the task",
+      settled: false,
+    },
+  };
+  assert.equal(attemptSchema.safeParse(record).success, true);
+  assert.equal(
+    attemptSchema.safeParse({
+      ...record,
+      launch: { ...record.launch, resolved: { provider: "pi" } },
+    }).success,
+    true,
+  );
+});
+
 void test("a failed retry can replace a profile with an inline worker choice", async () => {
   const f = await fixture();
   const plan = await f.start();
@@ -898,6 +977,11 @@ void test("a failed retry can replace a profile with an inline worker choice", a
   assert.ok(retry && retry.id !== failed?.id);
   assert.equal(retry.launch?.profile, "inherit");
   assert.equal(retry.launch?.provider, "pi");
+  assert.deepEqual(
+    retry.launch?.resolved,
+    { provider: "pi" },
+    "the replacement records the inline worker it resolved to",
+  );
   const launch = f.launches.get(retry.agentId);
   assert.equal(launch?.profile, undefined);
   assert.equal(launch?.provider, "pi");
@@ -1874,6 +1958,11 @@ void test("a blocked rebind with only a provider clears the old model and thinki
   assert.equal(rebound?.launch?.provider, "pi");
   assert.equal(rebound?.launch?.model, undefined);
   assert.equal(rebound?.launch?.thinkingOptionId, undefined);
+  assert.deepEqual(
+    rebound?.launch?.resolved,
+    { provider: "pi" },
+    "the rebind records the provider it resolved to",
+  );
   assert.ok(f.launches.has(rebound.agentId));
   assert.equal(f.launches.get(rebound.agentId)?.model, undefined);
   assert.equal(f.launches.get(rebound.agentId)?.thinkingOptionId, undefined);
@@ -4800,6 +4889,75 @@ void test("a same-agent continuation snapshots the profile name and id", async (
   assert.equal(continuation.agentId, first.agentId, "the same agent continues");
   assert.equal(continuation.launch?.profileName, "Original profile");
   assert.equal(continuation.launch?.profileId, profileId);
+});
+
+void test("a same-agent continuation keeps the resolved worker across a profile edit", async () => {
+  const profileId = "44444444-4444-4444-8444-444444444444";
+  const f = await fixture({
+    routing: {
+      profiles: {
+        [profileId]: { roles: ["implementation"], size: "small" },
+      },
+    },
+    profiles: [
+      {
+        id: profileId,
+        name: "Original profile",
+        notes: "",
+        provider: "claude",
+        model: "opus",
+        thinkingOptionId: "medium",
+      },
+    ],
+  });
+  const plan = await f.start("continuation-resolved");
+  assert.ok(plan.source.agentId);
+  const symphony = await f.define(plan, [
+    { ...routedTask("api"), profile: profileId },
+  ]);
+  const first = latestAttempt(symphony, "api");
+  assert.ok(first);
+  assert.deepEqual(first.launch?.resolved, {
+    provider: "claude",
+    model: "opus",
+    thinkingOptionId: "medium",
+  });
+
+  await f.report(plan.id, "api", "failed", {
+    diagnosis: {
+      tried: ["Ran the required check"],
+      suspectedCause: "A transient fixture failure",
+      need: "none",
+    },
+  });
+  f.active.set(first.agentId, false);
+  await f.reconcile();
+  // Edit the profile after the agent launched: the same agent keeps the
+  // provider/model/thinking it was launched with, so the continuation must
+  // keep the original snapshot rather than adopt the edited profile.
+  f.setProfiles([
+    {
+      id: profileId,
+      name: "Original profile",
+      notes: "",
+      provider: "pi",
+      model: "pi-other",
+      thinkingOptionId: "high",
+    },
+  ]);
+  await f.send(plan.source.agentId, {
+    kind: "dispatch",
+    symphonyId: plan.id,
+    retryTaskId: "api",
+  });
+  const continuation = latestAttempt(await f.read(plan.id), "api");
+  assert.ok(continuation);
+  assert.equal(continuation.agentId, first.agentId, "the same agent continues");
+  assert.deepEqual(continuation.launch?.resolved, {
+    provider: "claude",
+    model: "opus",
+    thinkingOptionId: "medium",
+  });
 });
 
 void test("a pending name-selected launch resumes by the persisted profile id across a rename", async () => {

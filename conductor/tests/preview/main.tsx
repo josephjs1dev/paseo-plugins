@@ -6,7 +6,7 @@ import { initial, light, dark } from "./fixtures";
 import type { AgentsSnapshot } from "../../shared/agents/models";
 import { requestForm } from "../../shared/agents/questions";
 import type { StoredSymphony } from "../../shared/symphonies/models";
-import { usePreviewSymphonies } from "./symphonies";
+import { usePreviewSymphonies, workerFixtureProfiles } from "./symphonies";
 import { usePreviewProfiles } from "./profiles";
 import { ProfilesRealPage } from "./profiles-real";
 
@@ -111,6 +111,11 @@ function Preview() {
           ? {
               symphonies: symphonies.data,
               ...(params.has("global") ? {} : { workspaceId: "ws-api" }),
+              // The worker fixture reads the profile catalog for graph node
+              // identities; all other fixtures keep profiles unloaded.
+              ...(params.get("symphony-fixture") === "workers"
+                ? { profiles: workerFixtureProfiles }
+                : {}),
             }
           : {})}
         {...(params.has("profiles") ? { profiles } : {})}

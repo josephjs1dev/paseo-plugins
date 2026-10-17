@@ -8,6 +8,7 @@ import {
   SymphonySelectionDetail,
   type SymphoniesData,
 } from "./list";
+import type { ProfilesData } from "./profiles";
 
 export function SymphonyBrowser({
   theme,
@@ -19,6 +20,7 @@ export function SymphonyBrowser({
   concertId,
   openAgent,
   deleteSymphony,
+  profiles,
 }: {
   theme: PluginTheme;
   data: SymphoniesData;
@@ -29,6 +31,8 @@ export function SymphonyBrowser({
   concertId?: string;
   openAgent?: (id: string) => void;
   deleteSymphony?: (symphony: StoredSymphony) => Promise<void>;
+  /** Worker profiles and provider catalog, passed to the graph tab. */
+  profiles?: ProfilesData;
 }) {
   const hasSelection = Boolean(state.symphonySelection);
   return (
@@ -70,6 +74,7 @@ export function SymphonyBrowser({
                 data={data}
                 state={state}
                 compact={compact}
+                {...(profiles ? { profiles } : {})}
                 {...(openAgent ? { openAgent } : {})}
                 {...(deleteSymphony ? { deleteSymphony } : {})}
               />

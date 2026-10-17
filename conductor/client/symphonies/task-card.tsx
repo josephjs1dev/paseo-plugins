@@ -23,7 +23,13 @@ import {
   warningLine,
 } from "./routing";
 import { Button, Disclosure, Notice } from "../ui/controls";
+import { HarnessMark } from "../ui/harness-mark";
+import { RoleChip } from "../ui/role-chip";
+import { cardSurface } from "../ui/card";
 import { statusColor, taskStatusPresentation } from "../ui/status";
+import { identityLabel, taskIdentity } from "./worker-identity";
+import type { ConductorProfile } from "../../shared/symphonies/profiles";
+import type { ProviderCatalog } from "../../shared/symphonies/profiles-rpc";
 import {
   FindingsPanel,
   InsetPanel,
@@ -99,15 +105,19 @@ function summaryMayClamp(summary: string): boolean {
 }
 
 /**
- * One trimmed task record: wrapping title with the agent action, a metadata
- * row led by the shared status icon and label, a three-line summary clamp,
- * and a quieter footer that keeps Evidence and Checks behind one inset panel.
- * Blocker messages and failed checks stay visible without expanding anything.
+ * One trimmed task record: wrapping title with the agent action, a worker row
+ * (harness mark plus model and thinking, beside the task's role chip), a
+ * metadata row led by the shared status icon and label, a three-line summary
+ * clamp, and a quieter footer that keeps Evidence and Checks behind one inset
+ * panel. Blocker messages and failed checks stay visible without expanding
+ * anything.
  */
 export function SymphonyTaskCard({
   theme,
   symphony,
   task,
+  profiles,
+  catalog,
   compact = false,
   disclosures,
   onToggle,
@@ -117,6 +127,10 @@ export function SymphonyTaskCard({
   theme: PluginTheme;
   symphony: StoredSymphony;
   task: TaskDefinition;
+  /** Worker profiles for identity resolution; empty while profiles load. */
+  profiles: readonly ConductorProfile[];
+  /** The provider catalog behind the worker line's display labels. */
+  catalog: ProviderCatalog | undefined;
   compact?: boolean;
   disclosures?: TaskDisclosures;
   onToggle?: (selection: TaskDisclosure) => void;
@@ -149,6 +163,18 @@ export function SymphonyTaskCard({
     : 0;
   const grantedWrites = attempt?.grantedWrites ?? [];
   const addedWrites = addedWritesFor(symphony, task.id);
+  // The worker line and the task card share the graph's resolution order: an
+  // unresolvable worker leaves the row out instead of naming a placeholder.
+  const identity = taskIdentity(symphony, task, profiles, catalog);
+  const worker = identity?.provider
+    ? {
+        provider: identity.provider,
+        line: [identity.modelLabel, identity.thinkingLabel]
+          .filter(Boolean)
+          .join(" · "),
+      }
+    : null;
+  const role = task.worker.role;
   const canOpenAgent = Boolean(
     openAgent &&
       attempt &&
@@ -159,12 +185,10 @@ export function SymphonyTaskCard({
     <View
       testID={`symphony-task-${task.id}`}
       style={{
+        ...cardSurface(theme),
         gap: 8,
         padding: compact ? 12 : 16,
-        borderWidth: 1,
         borderColor: theme.colors.border,
-        borderRadius: 10,
-        backgroundColor: theme.colors.surface1,
       }}
     >
       <View
@@ -203,6 +227,62 @@ export function SymphonyTaskCard({
           />
         )}
       </View>
+      {/* The worker row reads like the profile card's: the brand mark beside
+          the model · thinking line, then the task's routing role chip when
+          the task records one. No identity, no placeholder — the row then
+          carries only the chip. */}
+      {(worker || role) && (
+        <View
+          testID={`symphony-task-${task.id}-worker`}
+          style={{
+            flexDirection: "row",
+            flexWrap: "wrap",
+            alignItems: "center",
+            gap: 6,
+          }}
+        >
+          {worker && (
+            <>
+              <View style={{ flexShrink: 0 }}>
+                <HarnessMark
+                  provider={worker.provider}
+                  {...(identity?.providerLabel
+                    ? { label: identity.providerLabel }
+                    : {})}
+                  size={14}
+                  color={theme.colors.foreground}
+                  tone="brand"
+                  surface={theme.colors.surface2}
+                />
+              </View>
+              {/* The provider lives in the accessible label; sighted users
+                  read it from the mark, and raw ids stand in while the
+                  catalog has no entry for this provider or model. */}
+              <Text
+                numberOfLines={1}
+                accessibilityLabel={
+                  identity ? identityLabel(identity) : undefined
+                }
+                style={{
+                  color: theme.colors.foreground,
+                  fontSize: 12,
+                  lineHeight: 17,
+                  flexShrink: 1,
+                }}
+              >
+                {worker.line}
+              </Text>
+            </>
+          )}
+          {role && (
+            <RoleChip
+              theme={theme}
+              role={role}
+              testID={`symphony-task-${task.id}-chip-${role}`}
+            />
+          )}
+        </View>
+      )}
       <View
         style={{
           flexDirection: "row",

@@ -58,6 +58,38 @@ function scrollCanvas(page: Page, nodeTestId: string) {
   });
 }
 
+/** Bounding height of one graph node frame. */
+function nodeHeight(page: Page, taskId: string) {
+  return page
+    .getByTestId(`symphony-node-${taskId}`)
+    .evaluate((element: HTMLElement) => element.getBoundingClientRect().height);
+}
+
+/**
+ * Metrics of a worker group's model text: the last child of the group row
+ * after the harness mark. `scrollWidth > clientWidth` means the label is
+ * clamped by numberOfLines and truncated. `trailingGap` is the distance from
+ * the group's right edge to its node frame's right edge (12px node padding
+ * when the group sits fully trailing).
+ */
+function workerTextMetrics(page: Page, taskId: string) {
+  return page
+    .getByTestId(`symphony-worker-${taskId}`)
+    .evaluate((element: HTMLElement) => {
+      const text = element.children[element.children.length - 1];
+      const group = element.getBoundingClientRect();
+      const node = element.closest('[data-testid^="symphony-node-"]');
+      return {
+        scrollWidth: text instanceof HTMLElement ? text.scrollWidth : 0,
+        clientWidth: text instanceof HTMLElement ? text.clientWidth : 0,
+        groupWidth: group.width,
+        trailingGap: node
+          ? node.getBoundingClientRect().right - group.right
+          : -1,
+      };
+    });
+}
+
 function edgeOpacity(page: Page, testId: string) {
   return page
     .getByTestId(testId)
@@ -296,6 +328,91 @@ test("a short canvas hugs its content; a large score scrolls inside the graph", 
   ).toBeLessThanOrEqual(390);
 });
 
+test("nodes show the worker's harness mark and model on the ID row", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await openGraph(page, "workers");
+  // A resolved launch snapshot: the accessible name carries provider, model
+  // and thinking level; the row shows the model label only.
+  const claude = page.getByTestId("symphony-worker-claude");
+  await expect(claude).toHaveText("Opus 5.5");
+  // The Claude mark is a bundled image asset.
+  await expect(claude.locator("img")).toHaveCount(1);
+  // With a short ID the group sits opposite it at the row's trailing edge.
+  const claudeWide = await workerTextMetrics(page, "claude");
+  expect(claudeWide.trailingGap).toBeGreaterThanOrEqual(11);
+  expect(claudeWide.trailingGap).toBeLessThanOrEqual(13);
+  await expect(page.getByTestId("symphony-node-claude")).toHaveAttribute(
+    "aria-label",
+    /Runs on Claude, Opus 5\.5, Extended\.$/,
+  );
+  // An inline launch choice falls back to the launch fields.
+  const codex = page.getByTestId("symphony-worker-codex");
+  await expect(codex).toHaveText("Codex Max");
+  await expect(codex.locator("img")).toHaveCount(1);
+  await expect(page.getByTestId("symphony-node-codex")).toHaveAttribute(
+    "aria-label",
+    /Runs on Codex, Codex Max\.$/,
+  );
+  // A planned inline worker is drawn, not an image, and labelled as planned.
+  const pi = page.getByTestId("symphony-worker-pi-plan");
+  await expect(pi).toHaveText("Pi 5");
+  await expect(pi.locator("img")).toHaveCount(0);
+  await expect(page.getByTestId("symphony-node-pi-plan")).toHaveAttribute(
+    "aria-label",
+    /Planned: Pi, Pi 5, Standard\.$/,
+  );
+  // A profile-named planned worker resolves through the profiles list.
+  await expect(page.getByTestId("symphony-node-planner-plan")).toHaveAttribute(
+    "aria-label",
+    /Planned: Claude, Opus 5\.5, Extended\.$/,
+  );
+  // A task whose worker resolves to nothing keeps the ID row as it was.
+  await expect(page.getByTestId("symphony-worker-api")).toHaveCount(0);
+  // The worker group shares the ID row without changing the node height.
+  expect(await nodeHeight(page, "claude")).toBe(await nodeHeight(page, "api"));
+  // The selection panel has room for the full identity including thinking.
+  await page.getByTestId("symphony-node-claude").click();
+  await expect(page.getByTestId("symphony-selection-worker-claude")).toHaveText(
+    "Runs on Claude, Opus 5.5, Extended.",
+  );
+});
+
+test("the worker group truncates on compact panes and never resizes the node", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await openGraph(page, "workers");
+  const taskId = "migrate-cursor-pagination-export";
+  // Wide: a short model label fits unclamped; the long one is capped at its
+  // share of the ID row instead of resizing the node or the page.
+  const claudeWide = await workerTextMetrics(page, "claude");
+  expect(claudeWide.scrollWidth).toBeLessThanOrEqual(
+    claudeWide.clientWidth + 1,
+  );
+  const wide = await workerTextMetrics(page, taskId);
+  const wideNodeWidth = await page
+    .getByTestId(`symphony-node-${taskId}`)
+    .evaluate((element: HTMLElement) => element.getBoundingClientRect().width);
+  expect(wide.groupWidth).toBeLessThanOrEqual(wideNodeWidth * 0.55 + 1);
+  expect(wide.scrollWidth).toBeGreaterThanOrEqual(wide.clientWidth);
+  // Even with the long ID the group still ends at the trailing edge; the ID
+  // truncates first instead of pushing the group out of the node.
+  expect(wide.trailingGap).toBeGreaterThanOrEqual(11);
+  expect(wide.trailingGap).toBeLessThanOrEqual(13);
+  // Compact: the long label clamps harder and the node height stays unchanged.
+  await page.setViewportSize({ width: 390, height: 844 });
+  const compact = await workerTextMetrics(page, taskId);
+  expect(compact.scrollWidth).toBeGreaterThan(compact.clientWidth);
+  expect(compact.trailingGap).toBeGreaterThanOrEqual(11);
+  expect(compact.trailingGap).toBeLessThanOrEqual(13);
+  expect(await nodeHeight(page, taskId)).toBe(await nodeHeight(page, "api"));
+  expect(
+    await page.evaluate(() => document.documentElement.scrollWidth),
+  ).toBeLessThanOrEqual(390);
+});
+
 test("captures design evidence screenshots across themes and layouts", async ({
   page,
 }) => {
@@ -360,6 +477,14 @@ test("captures design evidence screenshots across themes and layouts", async ({
   await expect(page.getByTestId("symphony-graph-selection")).toBeVisible();
   await page.screenshot({
     path: resolve(EVIDENCE, "intermediate-light.png"),
+  });
+  // The worker fixture: harness marks and model labels on the node ID rows.
+  await page.setViewportSize({ width: 1440, height: 900 });
+  detail = await openGraph(page, "workers");
+  await page.getByTestId("symphony-node-claude").click();
+  await expect(page.getByTestId("symphony-graph-selection")).toBeVisible();
+  await page.screenshot({
+    path: resolve(EVIDENCE, "wide-light-workers.png"),
   });
   await page.setViewportSize({ width: 390, height: 844 });
   await page.screenshot({

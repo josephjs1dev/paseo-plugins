@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Pressable, Text, View } from "react-native";
+import { Pressable, Text, View, type PressableProps } from "react-native";
 import type { PluginTheme } from "@getpaseo/plugin";
 import {
   isClassifiedRouting,
@@ -9,14 +9,104 @@ import type { ConductorProfile } from "../../shared/symphonies/profiles";
 import type { ProviderCatalog } from "../../shared/symphonies/profiles-rpc";
 import { Icon } from "@getpaseo/plugin/client/react-native";
 import { Button, rowStyle } from "../ui/controls";
-import { Segmented, StatusNotice, TintedView } from "./profiles-controls";
+import { HarnessMark } from "../ui/harness-mark";
+import { cardSurface } from "../ui/card";
+import { RoleChip } from "../ui/role-chip";
+import { StatusNotice, TintedView } from "./profiles-controls";
+import { identityLabel, profileIdentity } from "./worker-identity";
 import type { ProfilesData } from "./profiles";
+
+/**
+ * React Native Web 0.21 forwards onKeyDown to the DOM at runtime, but the
+ * project's @types/react-native prop unions predate it. Keep the escape
+ * hatch scoped to this type, like profiles-picker.tsx.
+ */
+type KeyDownProps = {
+  onKeyDown?: (event: {
+    key: string;
+    repeat?: boolean | undefined;
+    preventDefault(this: void): void;
+  }) => void;
+};
 
 /**
  * The list header: profile creation, the one-time import from Paseo agent
  * profiles, and the global routing enforcement switch. Import results and
  * store problems surface here, where the action was taken.
  */
+/**
+ * What the routing toggle promises per state. Off (warn) trusts the Conductor
+ * and records deviations; on (strict) requires it to justify each one.
+ */
+const MODE_DESCRIPTION: Record<RoutingMode, string> = {
+  warn: "Picks outside routing are allowed and noted on the task.",
+  strict:
+    "Picks outside routing need a justification with evidence, or they are rejected.",
+};
+
+/** The collapsed comparison behind "Learn what's checked", per mode. */
+const CHECKED_LINES: Record<RoutingMode, string[]> = {
+  warn: [
+    "The smallest eligible profile is always accepted.",
+    "A larger profile, an unclassified profile, or the Conductor's own model " +
+      "is accepted and noted on the task.",
+    "A task with no eligible profile and no explicit choice is always " +
+      "rejected.",
+  ],
+  strict: [
+    "The smallest eligible profile is always accepted.",
+    "A larger profile, an unclassified profile, or the Conductor's own model " +
+      "needs an override with evidence.",
+    "A task with no eligible profile and no explicit choice is always " +
+      "rejected.",
+  ],
+};
+
+/** The checked line that applies to both modes, last in the disclosure. */
+const RECHECK_LINE =
+  "Turning this on also rechecks the next retry of tasks already running.";
+
+/** Track width plus the gap to the label, so text below aligns with it. */
+const SWITCH_INDENT = 32 + 10;
+
+/**
+ * The drawn switch track. Off keeps a visible outline and thumb in the
+ * foreground color, because a surface-on-surface track disappears; on fills
+ * with the accent. Display only: the parent pressable is the control.
+ */
+function SwitchTrack({ theme, on }: { theme: PluginTheme; on: boolean }) {
+  return (
+    <View
+      accessible={false}
+      accessibilityElementsHidden
+      importantForAccessibility="no-hide-descendants"
+      aria-hidden
+      style={{
+        width: 32,
+        height: 18,
+        borderRadius: 9,
+        borderWidth: 1.5,
+        borderColor: on ? theme.colors.accent : theme.colors.foregroundMuted,
+        backgroundColor: on ? theme.colors.accent : "transparent",
+        justifyContent: "center",
+        paddingHorizontal: 2,
+      }}
+    >
+      <View
+        style={{
+          width: 11,
+          height: 11,
+          borderRadius: 6,
+          alignSelf: on ? "flex-end" : "flex-start",
+          backgroundColor: on
+            ? theme.colors.accentForeground
+            : theme.colors.foregroundMuted,
+        }}
+      />
+    </View>
+  );
+}
+
 export function ProfilesPanel({
   theme,
   data,
@@ -39,6 +129,8 @@ export function ProfilesPanel({
     tone: "success" | "warning";
   } | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [showChecked, setShowChecked] = useState(false);
+  const strict = mode === "strict";
   const run = async (action: "mode" | "import"): Promise<void> => {
     const expectedRevision = data.state?.revision;
     if (!expectedRevision) {
@@ -59,12 +151,10 @@ export function ProfilesPanel({
             text: `Mode not applied. ${result.message}`,
             tone: "warning",
           });
-        } else {
-          setNotice({
-            text: `Routing enforcement is now ${result.state.mode}.`,
-            tone: "success",
-          });
         }
+        // A successful change needs no banner: the switch state and its
+        // description already say what changed, and screen readers announce
+        // the new checked state.
         return;
       }
       const result = await data.importPaseo(expectedRevision);
@@ -120,43 +210,126 @@ export function ProfilesPanel({
           }}
         />
       </View>
-      <View style={{ gap: 6, alignSelf: "stretch" }}>
-        <Segmented<RoutingMode>
-          theme={theme}
-          compact={compact}
-          options={[
-            {
-              value: "warn",
-              label: "Warn",
-              accessibilityLabel:
-                "Routing mode warn. Off-profile picks are warnings.",
-            },
-            {
-              value: "strict",
-              label: "Strict",
-              accessibilityLabel:
-                "Routing mode strict. Tasks that bypass routing are rejected.",
-            },
-          ]}
-          value={mode}
-          onChange={(next) => {
-            if (next && next !== mode) {
-              run("mode").catch(() => undefined);
-            }
+      {/* A settings row, not a card: no frame or fill, so it never reads as
+          one more profile in the list below. A hairline separates the
+          list-wide setting from the cards it governs. */}
+      <View
+        testID="profiles-mode"
+        style={{
+          alignSelf: "stretch",
+          gap: 4,
+          paddingBottom: 12,
+          borderBottomWidth: 1,
+          borderBottomColor: theme.colors.border,
+        }}
+      >
+        {/* One control for the whole row: the pressable carries the switch
+            role and state, and the track beside the label is drawn. Its key
+            handler covers Space, which RNW's press responder activates for
+            button-like roles only, exactly once per press. */}
+        <Pressable
+          testID="profiles-mode-toggle"
+          accessibilityRole="switch"
+          accessibilityLabel="Enforce routing"
+          accessibilityState={{ checked: strict, disabled: busy }}
+          aria-checked={strict}
+          disabled={busy}
+          onPress={() => {
+            run("mode").catch(() => undefined);
           }}
-        />
-        <Text
-          testID="profiles-mode-note"
-          style={{
-            color: theme.colors.foregroundMuted,
-            fontSize: 11,
-            lineHeight: 16,
-          }}
+          {...({
+            onKeyDown: (event) => {
+              if (event.key === " " && !event.repeat && !busy) {
+                event.preventDefault();
+                run("mode").catch(() => undefined);
+              }
+            },
+          } satisfies KeyDownProps as unknown as PressableProps)}
+          style={({ pressed }) => ({
+            flexDirection: "row",
+            alignItems: "center",
+            alignSelf: "flex-start",
+            gap: 10,
+            paddingVertical: 4,
+            opacity: pressed || busy ? 0.85 : 1,
+          })}
         >
-          {mode === "warn"
-            ? "Warn: a task picking its own worker is noted."
-            : "Strict: a task picking its own worker is rejected."}
-        </Text>
+          <SwitchTrack theme={theme} on={strict} />
+          <Text
+            style={{
+              color: theme.colors.foreground,
+              fontSize: 13,
+              lineHeight: 18,
+              fontWeight: "600",
+            }}
+          >
+            Enforce routing
+          </Text>
+        </Pressable>
+        {/* Indented under the label so the explanation reads as the
+            switch's own text; capped to a readable measure on wide panes. */}
+        <View style={{ paddingLeft: SWITCH_INDENT, maxWidth: 680, gap: 2 }}>
+          <Text
+            testID="profiles-mode-note"
+            style={{
+              color: theme.colors.foregroundMuted,
+              fontSize: 12,
+              lineHeight: 17,
+            }}
+          >
+            {MODE_DESCRIPTION[mode]}
+          </Text>
+          <Pressable
+            testID="profiles-mode-disclosure"
+            accessibilityRole="button"
+            accessibilityLabel="Learn what's checked"
+            accessibilityState={{ expanded: showChecked }}
+            aria-expanded={showChecked}
+            onPress={() => {
+              setShowChecked((value) => !value);
+            }}
+            style={({ pressed }) => ({
+              flexDirection: "row",
+              alignItems: "center",
+              gap: 2,
+              paddingVertical: 4,
+              alignSelf: "flex-start",
+              opacity: pressed ? 0.85 : 1,
+            })}
+          >
+            <Text
+              style={{
+                color: theme.colors.foreground,
+                fontSize: 12,
+                lineHeight: 16,
+                fontWeight: "500",
+              }}
+            >
+              Learn what's checked
+            </Text>
+            <Icon
+              name={showChecked ? "ChevronUp" : "ChevronDown"}
+              size={12}
+              color={theme.colors.foreground}
+            />
+          </Pressable>
+          {showChecked && (
+            <View testID="profiles-mode-checked" style={{ gap: 4 }}>
+              {[...CHECKED_LINES[mode], RECHECK_LINE].map((line) => (
+                <Text
+                  key={line}
+                  style={{
+                    color: theme.colors.foregroundMuted,
+                    fontSize: 12,
+                    lineHeight: 17,
+                  }}
+                >
+                  {`\u2022 ${line}`}
+                </Text>
+              ))}
+            </View>
+          )}
+        </View>
       </View>
       {notice && (
         <StatusNotice
@@ -249,66 +422,14 @@ const SIZE_BADGE_LABEL: Record<string, string> = {
   large: "Large",
 };
 
-const ROLE_CHIP_LABEL: Record<string, string> = {
-  exploration: "Exploration",
-  implementation: "Implementation",
-  planning: "Planning",
-  review: "Review",
-};
-
-/** The worker line: provider · model · thinking labels when the catalog has them. */
-function workerLine(
-  profile: ConductorProfile,
-  catalog: ProviderCatalog | undefined,
-): string {
-  const entry = catalog?.providers.find(
-    (provider) => provider.id === profile.provider,
-  );
-  const modelEntry = entry?.models.find((model) => model.id === profile.model);
-  const thinkingEntry = modelEntry?.thinkingOptions.find(
-    (option) => option.id === profile.thinkingOptionId,
-  );
-  return [
-    entry?.label ?? profile.provider,
-    modelEntry?.label ?? profile.model,
-    thinkingEntry?.label ?? profile.thinkingOptionId,
-  ]
-    .filter(Boolean)
-    .join(" · ");
-}
-
-function Chip({ theme, label }: { theme: PluginTheme; label: string }) {
-  return (
-    <View
-      style={{
-        minHeight: 22,
-        paddingHorizontal: 8,
-        paddingVertical: 2,
-        borderRadius: 999,
-        borderWidth: 1,
-        borderColor: theme.colors.border,
-        backgroundColor: theme.colors.surface2,
-        alignItems: "center",
-        justifyContent: "center",
-      }}
-    >
-      <Text
-        numberOfLines={1}
-        style={{ color: theme.colors.foreground, fontSize: 11, lineHeight: 15 }}
-      >
-        {label}
-      </Text>
-    </View>
-  );
-}
-
 /**
  * One profile card: a noninteractive container with two sibling buttons. Its
- * name, when-to-use notes, worker line, role chips, size badge and — only
- * when present — an instructions indicator are display content; the Edit
- * button opens the editor and the Fix button on the yellow warning row opens
- * it at Routing. Selection fills the card with a subtle accent tint beneath
- * the buttons, and routing never picks the profile warns in place.
+ * name, when-to-use notes, worker row (harness mark plus model and thinking),
+ * role chips, size badge and — only when present — an instructions indicator
+ * are display content; the Edit button opens the editor and the Fix button on
+ * the yellow warning row opens it at Routing. Selection fills the card with a
+ * subtle accent tint beneath the buttons, and routing never picks the profile
+ * warns in place.
  */
 export function ProfileRow({
   theme,
@@ -330,19 +451,19 @@ export function ProfileRow({
   const [warningFocused, setWarningFocused] = useState(false);
   const emphasize = selected || editFocused || warningFocused;
   const warning = profileCardWarning(profile, providers);
+  const identity = profileIdentity(profile, providers);
   const roles = profile.routing?.roles ?? [];
   const size = profile.routing?.size;
   return (
     /* A noninteractive container: the Edit and Fix actions stay as two
-       sibling buttons so no button nests inside another. */
+       sibling buttons so no button nests inside another. The card lifts off
+       the surface0 pane with the surface1 fill, the border and — in light
+       only, so dark keeps the border alone — a soft shadow. */
     <View
       testID={`profile-row-${profile.name}`}
       style={{
-        borderRadius: 12,
-        borderWidth: 1,
+        ...cardSurface(theme),
         borderColor: emphasize ? theme.colors.accent : theme.colors.border,
-        backgroundColor: theme.colors.surface1,
-        overflow: "hidden",
       }}
     >
       {/* The tint layer fills the whole card so selection reads as a wash. */}
@@ -418,24 +539,48 @@ export function ProfileRow({
               {profile.notes}
             </Text>
           )}
-          <Text
-            numberOfLines={1}
+          <View
             testID="profile-row-worker"
-            style={{
-              color: theme.colors.foregroundMuted,
-              fontSize: 12,
-              lineHeight: 17,
-            }}
+            style={{ flexDirection: "row", alignItems: "center", gap: 6 }}
           >
-            {workerLine(profile, providers)}
-          </Text>
+            <View style={{ flexShrink: 0 }}>
+              <HarnessMark
+                provider={identity.provider ?? profile.provider}
+                {...(identity.providerLabel
+                  ? { label: identity.providerLabel }
+                  : {})}
+                size={14}
+                color={theme.colors.foreground}
+                tone="brand"
+                surface={theme.colors.surface2}
+              />
+            </View>
+            {/* The provider lives in the accessible label; sighted users read
+                it from the mark, and raw ids stand in while the catalog has
+                no entry for this provider or model. */}
+            <Text
+              numberOfLines={1}
+              accessibilityLabel={identityLabel(identity)}
+              style={{
+                color: theme.colors.foreground,
+                fontSize: 12,
+                lineHeight: 17,
+                flexShrink: 1,
+              }}
+            >
+              {[identity.modelLabel, identity.thinkingLabel]
+                .filter(Boolean)
+                .join(" · ")}
+            </Text>
+          </View>
           {(roles.length > 0 || size !== undefined) && (
             <View style={[rowStyle, { gap: 6 }]}>
               {roles.map((role) => (
-                <Chip
+                <RoleChip
                   key={role}
-                  label={ROLE_CHIP_LABEL[role] ?? role}
                   theme={theme}
+                  role={role}
+                  testID={`profile-row-chip-${role}`}
                 />
               ))}
               {size !== undefined && (

@@ -20,8 +20,10 @@ import {
 } from "./history";
 import { LoopSelector } from "./loop-selector";
 import { Button, Label, Notice } from "../ui/controls";
+import { cardSurface } from "../ui/card";
 import { SymphonyDeleteAction } from "./delete-action";
 import { SymphonyInspection } from "./inspection";
+import type { ProfilesData } from "./profiles";
 import {
   SymphonyTaskCard,
   type TaskDisclosures,
@@ -43,6 +45,7 @@ export function SymphonyDetail({
   compact = false,
   openAgent,
   deleteSymphony,
+  profiles,
 }: {
   theme: PluginTheme;
   symphony: StoredSymphony;
@@ -51,6 +54,8 @@ export function SymphonyDetail({
   compact?: boolean;
   openAgent?: (id: string) => void;
   deleteSymphony?: (symphony: StoredSymphony) => Promise<void>;
+  /** Worker profiles and provider catalog, passed to the graph tab. */
+  profiles?: ProfilesData;
 }) {
   const [view, setView] = useState<"tasks" | "graph" | "context" | "history">(
     "tasks",
@@ -273,6 +278,7 @@ export function SymphonyDetail({
         context={context}
         score={view === "history" ? score : loopScore}
         compact={compact}
+        {...(profiles ? { profiles } : {})}
         {...(multiLoop ? { loop: shownLoop } : {})}
         {...(openAgent ? { openAgent } : {})}
       />
@@ -287,6 +293,8 @@ export function SymphonyDetail({
               theme={theme}
               symphony={loopSymphony}
               task={task}
+              profiles={profiles?.state?.profiles ?? []}
+              catalog={profiles?.providers}
               compact={compact}
               {...(multiLoop ? { loop: shownLoop } : {})}
               disclosures={taskDisclosures(task.id)}
@@ -311,8 +319,8 @@ function previewLines(value: string): string[] {
 }
 
 /**
- * The reported result in its own quiet surface: attribution heading, then a
- * clamped preview. Every clamp is a React Native truncation, so whether a
+ * The reported result in its own quiet surface: a surface1 card holding the
+ * attribution heading and a clamped preview. Every clamp is a React Native truncation, so whether a
  * line overflows depends on pane width, which no character count can know —
  * therefore every nonempty result offers Show more unconditionally instead of
  * guessing. Prose that already fits reveals the same selectable text; prose
@@ -334,12 +342,11 @@ function ResultSummary({
   const lines = previewLines(children);
   return (
     <View
+      testID="symphony-result"
       style={{
+        ...cardSurface(theme),
         gap: 8,
-        backgroundColor: theme.colors.surface1,
-        borderWidth: 1,
         borderColor: theme.colors.border,
-        borderRadius: 10,
         padding: 14,
       }}
     >

@@ -5,13 +5,16 @@ import { ageLabel } from "../../shared/agents/attention";
 import { type SymphonyListEntry } from "../../shared/symphonies/models";
 import { StatusMarker, symphonyStatusPresentation } from "../ui/status";
 import { SymphonyProgress } from "../ui/progress";
+import { cardSurface } from "../ui/card";
 
 /**
  * One symphony card in the list: status row with age, title, concert context
  * with the reported-task count, a compact progress track, then the result or
  * blocker preview. The count and track describe reported completions only —
  * they never claim the symphony itself is done, and planning symphonies omit
- * the track instead of showing a percentage.
+ * the track instead of showing a percentage. The card lifts off the surface0
+ * pane with the shared surface1 card, and selection keeps the accent frame
+ * and surface2 fill.
  */
 export function SymphonyRow({
   symphony,
@@ -39,11 +42,10 @@ export function SymphonyRow({
       onBlur={() => setFocused(false)}
       onPress={onSelect}
       style={({ pressed }) => ({
+        ...cardSurface(theme),
         paddingHorizontal: 12,
         paddingVertical: 8,
         gap: 4,
-        borderRadius: 10,
-        borderWidth: 1,
         borderColor: emphasized ? theme.colors.accent : theme.colors.border,
         backgroundColor:
           emphasized || pressed ? theme.colors.surface2 : theme.colors.surface1,

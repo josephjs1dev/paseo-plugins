@@ -216,7 +216,7 @@ export function ProfileBrowser({
         testID="profiles-intro"
         title="Choose a profile to edit, or create a new one"
         body="Profiles choose the worker, its thinking option and permission mode, and carry the instructions each task agent receives."
-        detail={`Routing picks the smallest profile that fits the task's role, using the when-to-use notes and the roles and size each profile declares. Enforcement is ${mode}.`}
+        detail={`Routing picks the smallest profile that fits the task's role, using the when-to-use notes and the roles and size each profile declares. Enforce routing is ${mode === "strict" ? "on" : "off"}.`}
       />
     );
   })();

@@ -8,6 +8,7 @@ import type {
   AgentItem,
 } from "../../shared/agents/models";
 import { questionAnswers } from "../../shared/agents/questions";
+import type { ProviderCatalog } from "../../shared/symphonies/profiles-rpc";
 import {
   ageLabel,
   isSnoozed,
@@ -15,7 +16,9 @@ import {
 } from "../../shared/agents/attention";
 import { ArchiveAction } from "./archive-action";
 import { Button, Label, Notice, rowStyle } from "../ui/controls";
+import { HarnessMark } from "../ui/harness-mark";
 import { QuestionForm } from "./question-form";
+import { agentWorker } from "./queue";
 
 export interface DetailActions {
   openAgent(agentId: string): void;
@@ -31,6 +34,8 @@ interface Props {
   now: number;
   stale: boolean;
   directoryIncomplete: boolean;
+  /** The provider catalog, for catalog labels in the worker line. */
+  catalog?: ProviderCatalog | undefined;
   draft: Decision | undefined;
   notice: AnswerResult["status"] | "sending" | undefined;
   onDraft(this: void, value: Decision): void;
@@ -53,6 +58,7 @@ export function RequestDetail({
   now,
   stale,
   directoryIncomplete,
+  catalog,
   draft,
   notice,
   onDraft,
@@ -61,6 +67,7 @@ export function RequestDetail({
   const [detailsOpen, setDetailsOpen] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const worker = agentWorker(item, catalog);
   const delivery = notice ?? item.delivery;
   const locked =
     stale ||
@@ -114,16 +121,51 @@ export function RequestDetail({
         >
           {item.requestId ? item.title : item.agentTitle}
         </Text>
-        <Text
-          style={{
-            fontSize: 13,
-            lineHeight: 20,
-            color: theme.colors.foregroundMuted,
-          }}
+        {/* The queue card's worker line, inline with the bucket and age
+            metadata: the mark in brand colors instead of the raw provider
+            text, the catalog's model label — a raw id while the catalog has
+            no entry — and the provider in the accessible label. */}
+        <View
+          testID="detail-worker"
+          style={{ flexDirection: "row", alignItems: "center", gap: 6 }}
         >
-          {item.requestId ? `${item.agentTitle} · ` : ""}
-          {item.provider} · {item.bucket} · {ageLabel(item.since, now)}
-        </Text>
+          <View style={{ flexShrink: 0 }}>
+            <HarnessMark
+              provider={item.provider}
+              label={worker.providerLabel}
+              size={14}
+              color={theme.colors.foreground}
+              tone="brand"
+              surface={theme.colors.surface2}
+            />
+          </View>
+          <Text
+            accessibilityLabel={[
+              item.requestId ? item.agentTitle : null,
+              worker.providerLabel,
+              worker.modelLabel,
+              item.bucket,
+              ageLabel(item.since, now),
+            ]
+              .filter(Boolean)
+              .join(" · ")}
+            style={{
+              fontSize: 13,
+              lineHeight: 20,
+              color: theme.colors.foregroundMuted,
+            }}
+          >
+            {item.requestId ? `${item.agentTitle} · ` : ""}
+            {/* The model — or the provider while no model is recorded — reads
+                in the foreground like every worker line; the agent title,
+                bucket and age keep their muted metadata tone. */}
+            <Text style={{ color: theme.colors.foreground }}>
+              {worker.modelLabel ?? worker.providerLabel}
+            </Text>
+            {" · "}
+            {item.bucket} · {ageLabel(item.since, now)}
+          </Text>
+        </View>
         <Text style={{ fontSize: 12, color: theme.colors.foregroundMuted }}>
           {item.projectName} / {item.concertName}
         </Text>

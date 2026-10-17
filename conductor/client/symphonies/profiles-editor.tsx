@@ -799,7 +799,7 @@ export function ProfileEditor({
             >
               {form.roles.length > 0
                 ? `Routing considers this profile for ${form.roles.length === 1 ? "one role" : `${form.roles.length} roles`}${form.size ? " and its size" : " once a size is set"}.`
-                : `Routing never picks this profile. Enforcement is ${mode}.`}
+                : `Routing never picks this profile. Enforce routing is ${mode === "strict" ? "on" : "off"}.`}
             </Text>
           </View>
         </Field>

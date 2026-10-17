@@ -13,6 +13,7 @@ import type { PodiumSession, ViewState } from "../podium/session";
 import { Label, Notice } from "../ui/controls";
 import { SymphonyRow } from "./row";
 import { SymphonyDetail } from "./detail";
+import type { ProfilesData } from "./profiles";
 
 export interface SymphoniesData {
   access: RpcOutput<typeof getSymphonyAccess> | undefined;
@@ -160,6 +161,7 @@ export function SymphonySelectionDetail({
   compact = false,
   openAgent,
   deleteSymphony,
+  profiles,
 }: {
   theme: PluginTheme;
   data: SymphoniesData;
@@ -168,6 +170,8 @@ export function SymphonySelectionDetail({
   compact?: boolean;
   openAgent?: (id: string) => void;
   deleteSymphony?: (symphony: StoredSymphony) => Promise<void>;
+  /** Worker profiles and provider catalog, passed to the graph tab. */
+  profiles?: ProfilesData;
 }) {
   const selection = state.symphonySelection;
   if (!selection) {
@@ -192,6 +196,7 @@ export function SymphonySelectionDetail({
       context={data.detail.context}
       stale={data.detailStale}
       compact={compact}
+      {...(profiles ? { profiles } : {})}
       {...(openAgent ? { openAgent } : {})}
       {...(deleteSymphony ? { deleteSymphony } : {})}
     />

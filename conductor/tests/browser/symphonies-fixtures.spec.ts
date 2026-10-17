@@ -41,6 +41,38 @@ async function noPageOverflow(page: Page): Promise<boolean> {
   );
 }
 
+/** WCAG channels from a computed rgb color. */
+function channels(value: string): number[] {
+  const match = value.match(/rgba?\(([\d.]+),\s*([\d.]+),\s*([\d.]+)/);
+  if (!match) {
+    throw new Error(`Unreadable color: ${value}`);
+  }
+  return [
+    Number.parseFloat(match[1] ?? "0"),
+    Number.parseFloat(match[2] ?? "0"),
+    Number.parseFloat(match[3] ?? "0"),
+  ];
+}
+
+function luminance(color: number[]): number {
+  const linear = (value: number) => {
+    const v = value / 255;
+    return v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4;
+  };
+  return (
+    0.2126 * linear(color[0] ?? 0) +
+    0.7152 * linear(color[1] ?? 0) +
+    0.0722 * linear(color[2] ?? 0)
+  );
+}
+
+/** WCAG AA contrast ratio between two computed colors' channels. */
+function contrast(background: number[], foreground: number[]): number {
+  const lighter = Math.max(luminance(background), luminance(foreground));
+  const darker = Math.min(luminance(background), luminance(foreground));
+  return (lighter + 0.05) / (darker + 0.05);
+}
+
 test("fixture scenarios render their documented task and graph states", async ({
   page,
 }) => {
@@ -530,8 +562,13 @@ test("Tasks, Graph and Context show the latest loop and can show an earlier one"
   await detailButton(detail, "Tasks").click();
   await page.setViewportSize({ width: 390, height: 844 });
   expect(await noPageOverflow(page)).toBe(true);
-  const compactTrigger = await trigger.boundingBox();
-  expect(compactTrigger?.height ?? 0).toBeGreaterThanOrEqual(44);
+  // The 390px resize recomputes the compact layout; the trigger only grows
+  // to its touch target once that reflow lands, so wait on it before using
+  // it as the geometry baseline.
+  await expect(async () => {
+    const compactTrigger = await trigger.boundingBox();
+    expect(compactTrigger?.height ?? 0).toBeGreaterThanOrEqual(44);
+  }).toPass({ intervals: [100, 250, 500, 1000], timeout: 10_000 });
   const compactCardBefore = await boxOf(page, "symphony-task-api");
   await trigger.click();
   await expect(listbox).toBeVisible();
@@ -1399,6 +1436,167 @@ test("768px viewport keeps every tab reachable and the graph internally scrollab
     path: resolve(SHOTS, "mid-768-graph-multi-light.png"),
     fullPage: false,
   });
+});
+
+test("task cards carry the worker's brand mark, model line and role chip", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await openSymphony(page, "workers");
+
+  // A resolved profile launch: the Claude mark renders in its brand orange
+  // through the SVG filter flood, and the worker line carries the catalog
+  // labels with the full provider identity in the accessible label..
+  const claudeWorker = page
+    .getByTestId("symphony-task-claude")
+    .getByTestId("symphony-task-claude-worker");
+  await expect(claudeWorker).toContainText("Opus 5.5 · Extended");
+  await expect(claudeWorker.locator("svg feFlood")).toHaveAttribute(
+    "flood-color",
+    "#D97757",
+  );
+  const line = claudeWorker.getByText("Opus 5.5 · Extended").first();
+  await expect(line).toHaveAttribute(
+    "aria-label",
+    "Claude, Opus 5.5, Extended",
+  );
+  // The model line reads in the foreground, not a muted tone.
+  expect(
+    await line.evaluate((element) => getComputedStyle(element).color),
+  ).toBe("rgb(23, 33, 43)");
+
+  // Codex's brand is monochrome, so its mark keeps the theme foreground.
+  const codexWorker = page
+    .getByTestId("symphony-task-codex")
+    .getByTestId("symphony-task-codex-worker");
+  await expect(codexWorker).toContainText("Codex Max");
+  await expect(codexWorker.locator("svg feFlood")).toHaveAttribute(
+    "flood-color",
+    "#17212b",
+  );
+
+  // The Pi mark is drawn from views in its three official colors; no asset.
+  const piWorker = page
+    .getByTestId("symphony-task-pi-plan")
+    .getByTestId("symphony-task-pi-plan-worker");
+  await expect(piWorker).toContainText("Pi 5 · Standard");
+  expect(await piWorker.locator("img").count()).toBe(0);
+  const piCells = await piWorker.evaluate((worker) => {
+    const root = worker.firstElementChild?.firstElementChild;
+    return root instanceof HTMLElement
+      ? Array.from(root.children).map((cell) =>
+          cell instanceof HTMLElement
+            ? getComputedStyle(cell).backgroundColor
+            : "",
+        )
+      : [];
+  });
+  expect(piCells).toHaveLength(10);
+  expect(piCells[0]).toBe("rgb(240, 144, 130)");
+
+  // A provider with no mark falls back to a monogram tile with raw ids, like
+  // the deepseek profile card; the profile-named planned worker resolves
+  // through the store to the same catalog labels as a launch.
+  const deepWorker = page
+    .getByTestId("symphony-task-migrate-cursor-pagination-export")
+    .getByTestId("symphony-task-migrate-cursor-pagination-export-worker");
+  await expect(deepWorker).toContainText("DeepSeek V4 Flash");
+  expect(
+    await deepWorker.evaluate(
+      (worker) => worker.firstElementChild?.textContent ?? "",
+    ),
+  ).toBe("D");
+  // The catalog label stands in for the provider id, like the profile card.
+  await expect(
+    deepWorker.getByText("DeepSeek V4 Flash").first(),
+  ).toHaveAttribute("aria-label", "DeepSeek, DeepSeek V4 Flash");
+  const plannerChip = page.getByTestId(
+    "symphony-task-planner-plan-chip-implementation",
+  );
+  expect(
+    await plannerChip.evaluate(
+      (element) => getComputedStyle(element).backgroundColor,
+    ),
+  ).toBe("rgb(227, 238, 251)");
+
+  // A task whose worker resolves to nothing renders only the routing role's
+  // chip: no mark, no model, no placeholder text.
+  const apiWorker = page
+    .getByTestId("symphony-task-api")
+    .getByTestId("symphony-task-api-worker");
+  await expect(apiWorker).toHaveText("Exploration");
+  expect(await apiWorker.locator("img").count()).toBe(0);
+});
+
+test("the role chip tints per appearance and the worker line flips with the theme", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await openSymphony(page, "workers", "&dark");
+  const claudeWorker = page
+    .getByTestId("symphony-task-claude")
+    .getByTestId("symphony-task-claude-worker");
+  await expect(claudeWorker).toContainText("Extended");
+  // The brand orange survives the dark theme; the line reads in the dark
+  // foreground on the surface1 card that keeps its border, no shadow.
+  expect(
+    await claudeWorker
+      .getByText("Opus 5.5 · Extended")
+      .first()
+      .evaluate((element) => getComputedStyle(element).color),
+  ).toBe("rgb(237, 241, 245)");
+  expect(
+    await page
+      .getByTestId("symphony-task-claude")
+      .evaluate((element) => getComputedStyle(element).boxShadow),
+  ).toBe("none");
+  const chip = page.getByTestId(
+    "symphony-task-planner-plan-chip-implementation",
+  );
+  const chipBackground = await chip.evaluate(
+    (element) => getComputedStyle(element).backgroundColor,
+  );
+  const chipForeground = await chip
+    .getByText("Implementation")
+    .evaluate((element) => getComputedStyle(element).color);
+  expect(channels(chipBackground)).toEqual([29, 48, 71]);
+  // The dark tint pair still holds WCAG AA on the chip.
+  expect(
+    contrast(channels(chipBackground), channels(chipForeground)),
+  ).toBeGreaterThanOrEqual(4.5);
+});
+
+test("reviewed card surfaces across widths and appearances", async ({
+  page,
+}) => {
+  for (const [width, height] of [
+    [1400, 900],
+    [420, 900],
+  ] as const) {
+    for (const theme of ["light", "dark"] as const) {
+      const dark = theme === "dark" ? "&dark" : "";
+      await page.setViewportSize({ width, height });
+      await page.goto(`/?symphonies${dark}`);
+      await page.getByRole("tab", { name: "Symphonies", exact: true }).click();
+      await expect(
+        page.getByTestId("symphonies-queue").getByRole("button", {
+          name: /^Open symphony:/,
+        }),
+      ).toBeVisible();
+      await page.screenshot({
+        path: resolve(SHOTS, `optionc-symphonies-list-${width}-${theme}.png`),
+        fullPage: false,
+      });
+      await openSymphony(page, "workers", dark);
+      await expect(
+        page.getByTestId("symphony-task-claude-worker"),
+      ).toBeVisible();
+      await page.screenshot({
+        path: resolve(SHOTS, `optionc-symphonies-detail-${width}-${theme}.png`),
+        fullPage: false,
+      });
+    }
+  }
 });
 
 test("fixture symphonies serialize under the production symphony schema", async () => {

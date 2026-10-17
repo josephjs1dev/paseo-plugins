@@ -717,6 +717,33 @@ export function orchestration(
       : {}),
   });
   /**
+   * The worker a launch actually resolved to, snapshotted so a task keeps
+   * showing the model it ran on after its profile changes. A profile launch
+   * records the profile's values; an inline choice records its own. Absent when
+   * neither source names a provider, as with an `inherit` launch whose
+   * Conductor worker is not known here.
+   */
+  const resolvedWorkerSnapshot = (
+    choice: WorkerChoice,
+    profile: ConductorProfile | undefined,
+  ): NonNullable<NonNullable<Attempt["launch"]>["resolved"]> | undefined => {
+    const provider = profile?.provider ?? choice.provider;
+    if (!provider) {
+      return undefined;
+    }
+    // A chosen profile is authoritative; an inline model beside it is ignored
+    // at launch anyway.
+    const model = profile ? profile.model : choice.model;
+    const thinkingOptionId = profile
+      ? profile.thinkingOptionId
+      : choice.thinkingOptionId;
+    return {
+      provider,
+      ...(model !== undefined ? { model } : {}),
+      ...(thinkingOptionId !== undefined ? { thinkingOptionId } : {}),
+    };
+  };
+  /**
    * One validation path for a concrete launch choice. It loads the catalog,
    * keeps the recorded routing warnings, and revalidates against the current
    * catalog when the choice was last validated at a different revision. Warn
@@ -921,6 +948,7 @@ export function orchestration(
     }
     const baseRouting = resolved.routing;
     const launchWarnings = resolved.warnings;
+    const resolvedWorker = resolvedWorkerSnapshot(choice, resolved.profile);
     let reserved = false;
     await store.update(symphonyId, symphony.version, async (current) => {
       const execution = current.execution;
@@ -1011,6 +1039,7 @@ export function orchestration(
           settled: false,
           ...choice,
           ...(resolved.profile ? profileSnapshot(resolved.profile) : {}),
+          ...(resolvedWorker ? { resolved: resolvedWorker } : {}),
           ...(baseRouting ? { routing: baseRouting } : {}),
           ...(launchWarnings.length
             ? { warnings: launchWarnings.slice(0, 8) }
@@ -1343,6 +1372,10 @@ export function orchestration(
       });
       return false;
     }
+    // The same agent keeps the provider/model/thinking it was launched with,
+    // even if its profile changed since, so carry the previous snapshot instead
+    // of recomputing it from the current catalog.
+    const resolvedWorker = launch.resolved;
     const writes = nextAttemptWrites(initial, task, additions ?? []);
     // The continued agent starts from the checkout as it is now, so its own
     // changed paths are measured against this baseline. Persist it before the
@@ -1425,6 +1458,7 @@ export function orchestration(
           profile: launch.profile,
           ...(launch.profileId ? { profileId: launch.profileId } : {}),
           ...(launch.profileName ? { profileName: launch.profileName } : {}),
+          ...(resolvedWorker ? { resolved: resolvedWorker } : {}),
           ...(resolved.routing ? { routing: resolved.routing } : {}),
           ...(resolved.warnings.length
             ? { warnings: resolved.warnings.slice(0, 8) }
@@ -1754,6 +1788,7 @@ export function orchestration(
             : launchChoice(attempt.launch);
           const catalog = await routing.load();
           const profile = chosenProfile(catalog.profiles, choice);
+          const resolvedWorker = resolvedWorkerSnapshot(choice, profile);
           const { context } = await store.read(symphonyId);
           const handoff = handoffInstructions({
             attempt: position,
@@ -1812,6 +1847,7 @@ export function orchestration(
               generation: 0,
               profile: choice.profile ?? "inherit",
               ...(profile ? profileSnapshot(profile) : {}),
+              ...(resolvedWorker ? { resolved: resolvedWorker } : {}),
               ...(choice.provider !== undefined
                 ? { provider: choice.provider }
                 : {}),

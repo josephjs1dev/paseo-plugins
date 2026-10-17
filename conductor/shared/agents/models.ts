@@ -78,6 +78,7 @@ export const itemSchema = z.object({
   requestId: identifier.nullable(),
   agentTitle: z.string().max(1000),
   provider: z.string().max(100),
+  model: z.string().max(200).nullable().default(null),
   concertId: identifier.nullable(),
   concertName: z.string().max(1000),
   projectName: z.string().max(1000),

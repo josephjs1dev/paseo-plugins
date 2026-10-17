@@ -347,6 +347,20 @@ export const attemptSchema = z
         provider: text(80).optional(),
         model: text(160).optional(),
         thinkingOptionId: text(80).optional(),
+        // The provider/model/thinking option this launch actually resolved to.
+        // A profile launch records the profile's values here instead of the
+        // inline fields above, which mean "the Conductor chose an inline
+        // model" and drive `launchChoice` and revalidation. Absent on old
+        // records and for an `inherit` launch whose conductor worker is
+        // unknown at launch time.
+        resolved: z
+          .object({
+            provider: text(80),
+            model: text(160).optional(),
+            thinkingOptionId: text(80).optional(),
+          })
+          .strict()
+          .optional(),
         config: text(32000).optional(),
         // The catalog revision this launch was validated against, so a changed
         // catalog is revalidated before dispatch. Absent on old records.

@@ -473,3 +473,155 @@ test("a changed agent cannot be archived from an old view", async ({
     page.getByRole("button", { name: "Open Closed session", exact: true }),
   ).toBeVisible();
 });
+
+test("Agent cards lift off the pane with a brand-mark worker line per theme", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1400, height: 900 });
+  await page.goto("/?profiles");
+  await page.getByRole("button", { name: "All", exact: true }).click();
+  const card = page.getByRole("button", {
+    name: /Open Choose a pagination strategy/,
+  });
+  // The card keeps its surface1 fill over the surface0 pane; the soft
+  // shadow separates it in light only, dark keeps the border alone.
+  expect(
+    await card.evaluate((element) => getComputedStyle(element).backgroundColor),
+  ).toBe("rgb(255, 255, 255)");
+  expect(
+    await card.evaluate((element) => getComputedStyle(element).boxShadow),
+  ).toBe("rgba(0, 0, 0, 0.1) 0px 2px 6px 0px");
+  // The worker line reads in the foreground, not the muted tone, and uses
+  // raw ids while the catalog has no entry for the provider's model.
+  const workerText = card
+    .getByTestId("worker-agent-api")
+    .getByText("gpt-6.1-sol")
+    .first();
+  expect(
+    await workerText.evaluate((element) => getComputedStyle(element).color),
+  ).toBe("rgb(23, 33, 43)");
+  await expect(workerText).toHaveAttribute("aria-label", "Codex · gpt-6.1-sol");
+  // Catalog labels stand in for raw ids where the catalog knows the model.
+  await expect(
+    page
+      .getByRole("button", { name: /Open Run the focused test suite/ })
+      .getByTestId("worker-agent-ui"),
+  ).toContainText("Opus 5.5");
+  await expect(
+    page
+      .getByRole("button", { name: /Open Run the focused test suite/ })
+      .getByTestId("worker-agent-ui")
+      .getByText("Opus 5.5")
+      .first(),
+  ).toHaveAttribute("aria-label", "Claude · Opus 5.5");
+  await expect(
+    page
+      .getByRole("button", { name: /Open Which storage constraints matter/ })
+      .getByTestId("worker-agent-research"),
+  ).toContainText("Pi 5");
+  await expect(
+    page
+      .getByRole("button", { name: "Open Existing concert agent", exact: true })
+      .getByTestId("worker-agent-idle"),
+  ).toContainText("deepseek-v4-flash");
+  // A provider the catalog does not know keeps its raw ids and falls back
+  // to a monogram mark.
+  const unknownWorker = page
+    .getByRole("button", { name: "Open Existing concert agent", exact: true })
+    .getByTestId("worker-agent-idle");
+  expect(
+    await unknownWorker.evaluate(
+      (worker) => worker.firstElementChild?.textContent ?? "",
+    ),
+  ).toBe("O");
+  await expect(
+    unknownWorker.getByText("deepseek-v4-flash").first(),
+  ).toHaveAttribute("aria-label", "opencode-go · deepseek-v4-flash");
+  await page.screenshot({
+    path: "test-results/conductor-agents-cards-light.png",
+    fullPage: true,
+  });
+
+  // Selecting a card keeps its fill over the shared surface and the accent
+  // frame, and the request detail shows the mark plus model inline.
+  await card.click();
+  expect(
+    await card.evaluate((element) => getComputedStyle(element).backgroundColor),
+  ).toBe("rgb(237, 241, 245)");
+  expect(
+    await card.evaluate((element) => getComputedStyle(element).borderTopColor),
+  ).toBe("rgb(36, 94, 152)");
+  const detailWorker = page.getByTestId("detail-worker");
+  await expect(detailWorker).toContainText("gpt-6.1-sol · waiting");
+  await expect(
+    detailWorker.getByText(/gpt-6.1-sol · waiting/).first(),
+  ).toHaveAttribute("aria-label", /Codex · gpt-6.1-sol/);
+  // The model reads in the foreground; title, bucket and age stay muted.
+  expect(
+    await detailWorker
+      .getByText("gpt-6.1-sol", { exact: true })
+      .evaluate((element) => getComputedStyle(element).color),
+  ).toBe("rgb(23, 33, 43)");
+  await page.screenshot({
+    path: "test-results/conductor-agents-detail-light.png",
+    fullPage: true,
+  });
+
+  // Dark keeps the border alone: no shadow, dark surface1.
+  await page.goto("/?profiles&dark");
+  await page.getByRole("button", { name: "All", exact: true }).click();
+  const darkCard = page.getByRole("button", {
+    name: /Open Choose a pagination strategy/,
+  });
+  expect(
+    await darkCard.evaluate(
+      (element) => getComputedStyle(element).backgroundColor,
+    ),
+  ).toBe("rgb(28, 34, 42)");
+  expect(
+    await darkCard.evaluate((element) => getComputedStyle(element).boxShadow),
+  ).toBe("none");
+  // The detail's model keeps the foreground tone in dark too.
+  await darkCard.click();
+  expect(
+    await page
+      .getByTestId("detail-worker")
+      .getByText("gpt-6.1-sol", { exact: true })
+      .evaluate((element) => getComputedStyle(element).color),
+  ).toBe("rgb(237, 241, 245)");
+  await page.screenshot({
+    path: "test-results/conductor-agents-cards-dark.png",
+    fullPage: true,
+  });
+
+  // Narrow keeps the same surface and worker line in the compact layout.
+  await page.setViewportSize({ width: 420, height: 900 });
+  await page.goto("/?profiles");
+  await page.getByRole("button", { name: "All", exact: true }).click();
+  const compactCard = page.getByRole("button", {
+    name: /Open Choose a pagination strategy/,
+  });
+  await expect(compactCard.getByTestId("worker-agent-api")).toContainText(
+    "gpt-6.1-sol",
+  );
+  await page.screenshot({
+    path: "test-results/conductor-agents-cards-mobile-light.png",
+    fullPage: true,
+  });
+  await page.goto("/?profiles&dark");
+  await page.getByRole("button", { name: "All", exact: true }).click();
+  await expect(
+    page
+      .getByRole("button", { name: /Open Choose a pagination strategy/ })
+      .getByTestId("worker-agent-api"),
+  ).toContainText("gpt-6.1-sol");
+  expect(
+    await page.evaluate(
+      () => document.documentElement.scrollWidth <= window.innerWidth,
+    ),
+  ).toBe(true);
+  await page.screenshot({
+    path: "test-results/conductor-agents-cards-mobile-dark.png",
+    fullPage: true,
+  });
+});

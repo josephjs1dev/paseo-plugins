@@ -4,7 +4,7 @@ import { fileStore } from "../server/agents/store";
 import { snapshot } from "../server/agents/snapshot";
 import { agentKey } from "../server/agents/identity";
 import { visibleItems, ageLabel } from "../shared/agents/attention";
-import { snapshotSchema } from "../shared/agents/models";
+import { snapshotSchema, itemSchema } from "../shared/agents/models";
 import { domainAgent, question, runtime, testDirectory } from "./fixtures";
 import { PodiumSession } from "../client/podium/session";
 
@@ -70,6 +70,25 @@ await test("the default attention queue combines questions, approvals, failures,
     visibleItems(snoozed.items, "all", "", undefined, 1500).length,
     8,
   );
+});
+await test("snapshot carries each agent's model and treats an older item without one as null", async () => {
+  const result = await snapshot(
+    runtime(() => domainAgent({ model: "claude-opus-5-5" })),
+    await store(),
+    [],
+  );
+  const item = result.items[0];
+  assert.equal(item?.model, "claude-opus-5-5");
+  const without = await snapshot(
+    runtime(() => domainAgent({ model: null })),
+    await store(),
+    [],
+  );
+  assert.equal(without.items[0]?.model, null);
+  assert.ok(item);
+  const older: Record<string, unknown> = { ...item };
+  delete older.model;
+  assert.equal(itemSchema.parse(older).model, null);
 });
 await test("one agent with multiple requests exposes each exact request; errors retain precedence", async () => {
   const current = domainAgent({

@@ -2,10 +2,13 @@ import { useRef, useState, type ElementRef } from "react";
 import { Pressable, ScrollView, Text, View } from "react-native";
 import type { PluginTheme } from "@getpaseo/plugin";
 import type { AgentItem } from "../../shared/agents/models";
+import type { ProviderCatalog } from "../../shared/symphonies/profiles-rpc";
 import { ageLabel, isSnoozed } from "../../shared/agents/attention";
 import { queueGroups } from "../../shared/agents/hierarchy";
 import { agentStatusPresentation, StatusMarker } from "../ui/status";
 import { Button, Label } from "../ui/controls";
+import { HarnessMark } from "../ui/harness-mark";
+import { cardSurface } from "../ui/card";
 
 interface Props {
   items: AgentItem[];
@@ -13,6 +16,8 @@ interface Props {
   now: number;
   selectedKey: string | null;
   groupBy: "project" | "concert";
+  /** The provider catalog, for catalog labels in the worker lines. */
+  catalog?: ProviderCatalog | undefined;
   onSelect(this: void, item: AgentItem): void;
   scroll: { offset: number };
   emptyTitle: string;
@@ -35,6 +40,7 @@ export function Queue({
   now,
   selectedKey,
   groupBy,
+  catalog,
   onSelect,
   scroll,
   emptyTitle,
@@ -106,6 +112,7 @@ export function Queue({
               now={now}
               selected={item.key === selectedKey}
               depth={depth}
+              catalog={catalog}
               onSelect={onSelect}
             />
           ))}
@@ -116,9 +123,34 @@ export function Queue({
 }
 
 /**
+ * The agent's worker labels through the provider catalog: the catalog's
+ * provider and model labels, falling back to the raw ids the item carries.
+ * An agent item recorded before snapshots carried models has no model label.
+ * Shared with the request detail, which shows the same mark plus model —
+ * the provider stays in the accessible label there too.
+ */
+export function agentWorker(
+  item: AgentItem,
+  catalog: ProviderCatalog | undefined,
+): { providerLabel: string; modelLabel: string | null } {
+  const entry = catalog?.providers.find(
+    (provider) => provider.id === item.provider,
+  );
+  const modelEntry = item.model
+    ? entry?.models.find((model) => model.id === item.model)
+    : undefined;
+  return {
+    providerLabel: entry?.label ?? item.provider,
+    modelLabel: modelEntry?.label ?? item.model ?? null,
+  };
+}
+
+/**
  * One queue card. Hover and pressed feedback only swap the surface fill, so
  * press never moves or resizes the card; the accent border marks selection
- * and keyboard focus without relying on the fill alone.
+ * and keyboard focus without relying on the fill alone. The card shares the
+ * Profiles tab's option C surface: surface1 fill, 1px frame and — in light
+ * only, so dark keeps the border alone — a soft shadow.
  */
 function AgentCard({
   item,
@@ -126,6 +158,7 @@ function AgentCard({
   now,
   selected,
   depth,
+  catalog,
   onSelect,
 }: {
   item: AgentItem;
@@ -133,10 +166,12 @@ function AgentCard({
   now: number;
   selected: boolean;
   depth: number;
+  catalog: ProviderCatalog | undefined;
   onSelect(this: void, item: AgentItem): void;
 }) {
   const [focused, setFocused] = useState(false);
   const emphasized = selected || focused;
+  const worker = agentWorker(item, catalog);
   return (
     <Pressable
       testID={`item-${item.key}`}
@@ -155,8 +190,7 @@ function AgentCard({
         paddingVertical: 8,
         marginLeft: Math.min(depth, 3) * 32,
         gap: 4,
-        borderRadius: 10,
-        borderWidth: 1,
+        ...cardSurface(theme),
         borderColor: emphasized ? theme.colors.accent : theme.colors.border,
         backgroundColor:
           emphasized || pressed ? theme.colors.surface2 : theme.colors.surface1,
@@ -197,6 +231,39 @@ function AgentCard({
       >
         {item.requestId ? item.title : item.agentTitle}
       </Text>
+      {/* The worker line mirrors the profile card's: the mark in brand
+          colors and the catalog's model label, a raw id while the catalog
+          has no entry. The provider lives in the accessible label; a model
+          recorded as null leaves the mark and the provider label. */}
+      <View
+        testID={`worker-${item.agentId}`}
+        style={{ flexDirection: "row", alignItems: "center", gap: 6 }}
+      >
+        <View style={{ flexShrink: 0 }}>
+          <HarnessMark
+            provider={item.provider}
+            label={worker.providerLabel}
+            size={14}
+            color={theme.colors.foreground}
+            tone="brand"
+            surface={theme.colors.surface2}
+          />
+        </View>
+        <Text
+          numberOfLines={1}
+          accessibilityLabel={[worker.providerLabel, worker.modelLabel]
+            .filter(Boolean)
+            .join(" · ")}
+          style={{
+            color: theme.colors.foreground,
+            fontSize: 12,
+            lineHeight: 16,
+            flexShrink: 1,
+          }}
+        >
+          {worker.modelLabel ?? worker.providerLabel}
+        </Text>
+      </View>
       <Text
         numberOfLines={1}
         style={{

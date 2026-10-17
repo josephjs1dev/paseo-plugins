@@ -144,6 +144,7 @@ export function PodiumView(props: PodiumViewProps) {
             state={state}
             session={session}
             compact={compact}
+            {...(props.profiles ? { profiles: props.profiles } : {})}
             {...(props.concertId ? { concertId: props.concertId } : {})}
             {...(actions.canNavigate
               ? { openAgent: (id: string) => actions.openAgent(id) }
@@ -213,6 +214,9 @@ export function PodiumView(props: PodiumViewProps) {
                   selectedKey={state.selectedKey}
                   groupBy={state.groupBy}
                   scroll={props.scroll}
+                  {...(props.profiles
+                    ? { catalog: props.profiles.providers }
+                    : {})}
                   onSelect={select}
                 />
               </View>
@@ -227,6 +231,9 @@ export function PodiumView(props: PodiumViewProps) {
                     now={now}
                     stale={props.stale}
                     directoryIncomplete={data?.incomplete ?? true}
+                    {...(props.profiles
+                      ? { catalog: props.profiles.providers }
+                      : {})}
                     draft={state.drafts[selected.key]}
                     notice={state.notices[selected.key]}
                     onDraft={(value) => session.draft(selected.key, value)}

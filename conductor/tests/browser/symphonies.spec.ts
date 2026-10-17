@@ -447,3 +447,52 @@ test("Symphonies groups rows by project and prints the goal once in Context", as
   await expect(detail.getByText(goal, { exact: true })).toHaveCount(1);
   await expect(detail.getByText(/Expected outcome/)).toHaveCount(0);
 });
+
+test("Symphony cards lift off the pane, with the soft shadow in light only", async ({
+  page,
+}) => {
+  for (const url of ["/?symphonies", "/?symphonies&dark"] as const) {
+    const dark = url.includes("dark");
+    await page.goto(url);
+    await page.getByRole("tab", { name: "Symphonies", exact: true }).click();
+    const row = page.getByRole("button", { name: symphonyName, exact: true });
+    // The row keeps its surface1 fill over the surface0 pane; the soft
+    // shadow separates it in light only, dark keeps the border alone.
+    expect(
+      await row.evaluate(
+        (element) => getComputedStyle(element).backgroundColor,
+      ),
+    ).toBe(dark ? "rgb(28, 34, 42)" : "rgb(255, 255, 255)");
+    expect(
+      await row.evaluate((element) => getComputedStyle(element).boxShadow),
+    ).toBe(dark ? "none" : "rgba(0, 0, 0, 0.1) 0px 2px 6px 0px");
+    await row.click();
+    // Selection keeps the accent frame on the shared card surface.
+    expect(
+      await row.evaluate((element) => getComputedStyle(element).borderColor),
+    ).toBe(dark ? "rgb(154, 199, 255)" : "rgb(36, 94, 152)");
+    const detail = page.getByTestId("symphony-detail");
+    await expect(detail).toBeVisible();
+    // Task cards and the result card share the same elevated surface; one
+    // selected treatment never tints a whole card.
+    const taskCard = detail.getByTestId("symphony-task-api");
+    expect(
+      await taskCard.evaluate((element) => getComputedStyle(element).boxShadow),
+    ).toBe(dark ? "none" : "rgba(0, 0, 0, 0.1) 0px 2px 6px 0px");
+    await page
+      .getByRole("button", { name: "Source completes symphony", exact: true })
+      .click();
+    await expect(detail).toContainText("Compared both implementations");
+    const resultCard = page.getByTestId("symphony-result");
+    expect(
+      await resultCard.evaluate(
+        (element) => getComputedStyle(element).boxShadow,
+      ),
+    ).toBe(dark ? "none" : "rgba(0, 0, 0, 0.1) 0px 2px 6px 0px");
+    expect(
+      await resultCard.evaluate(
+        (element) => getComputedStyle(element).backgroundColor,
+      ),
+    ).toBe(dark ? "rgb(28, 34, 42)" : "rgb(255, 255, 255)");
+  }
+});

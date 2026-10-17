@@ -202,8 +202,9 @@ evidence-backed override in `strict` mode. A profile's instructions are
 delivered to its task agents in a clearly delimited section. They cannot
 override user instructions, repository rules, write scope, or the permission
 ceiling. Put skill names the agent should use in the instructions; Conductor
-does not discover skills. The global routing mode is `warn` by default; a
-missing store means no profiles are configured. Unknown and stale IDs appear in
+does not discover skills. Set routing in Podium › Profiles with the **Enforce
+routing** switch: off is `warn` (the default), and on is `strict`. A missing
+store means no profiles are configured. Unknown and stale IDs appear in
 diagnostics.
 
 When a profile is eligible, omitted worker fields resolve to the first eligible

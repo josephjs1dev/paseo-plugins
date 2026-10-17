@@ -67,6 +67,7 @@ async function row(
     requestId: request?.id ?? null,
     agentTitle,
     provider: agent.provider.slice(0, 100),
+    model: agent.model?.slice(0, 200) ?? null,
     concertId: agent.concertId,
     concertName: (concert?.name ?? "Concert unavailable").slice(0, 1000),
     projectName: (concert?.projectName ?? "Other agents").slice(0, 1000),

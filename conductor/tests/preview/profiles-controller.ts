@@ -31,6 +31,10 @@ const FAST_ID = "f1000000-0000-4000-8000-000000000001";
 const REVIEW_ID = "f1000000-0000-4000-8000-000000000002";
 const HELPER_ID = "f1000000-0000-4000-8000-000000000003";
 const LEGACY_ID = "f1000000-0000-4000-8000-000000000004";
+const CLAUDE_ID = "f1000000-0000-4000-8000-000000000005";
+const CODEX_ID = "f1000000-0000-4000-8000-000000000006";
+const PI_ID = "f1000000-0000-4000-8000-000000000007";
+const MISTRAL_ID = "f1000000-0000-4000-8000-000000000008";
 
 const fixtureProfile = (
   id: string,
@@ -83,10 +87,63 @@ const LEGACY_PROFILE = fixtureProfile(LEGACY_ID, {
   instructions: "",
 });
 
+/** One profile per harness mark: bundled assets, drawn, and the monogram. */
+const CLAUDE_PROFILE = fixtureProfile(CLAUDE_ID, {
+  name: "Claude planner",
+  notes: "Plans and coordinates work across tasks.",
+  provider: "claude",
+  model: "claude-opus-5-5",
+  thinkingOptionId: "medium",
+  modeId: "read-only",
+  routing: { roles: ["planning"], size: "medium" },
+  instructions: "",
+});
+
+const CODEX_PROFILE = fixtureProfile(CODEX_ID, {
+  name: "Codex runner",
+  notes: "Runs the long implementation passes.",
+  provider: "codex",
+  model: "codex-max",
+  modeId: "full-access",
+  routing: { roles: ["implementation"], size: "large" },
+  instructions: "",
+});
+
+const PI_PROFILE = fixtureProfile(PI_ID, {
+  name: "Pi explorer",
+  notes: "Explores the codebase and reports findings.",
+  provider: "pi",
+  model: "pi-5",
+  thinkingOptionId: "standard",
+  modeId: "read-only",
+  routing: { roles: ["exploration"], size: "small" },
+  instructions: "",
+});
+
+/** A provider the catalog does not know: raw ids and a monogram mark. */
+const MISTRAL_PROFILE = fixtureProfile(MISTRAL_ID, {
+  name: "Mistral oddball",
+  notes: "Launched only by explicit worker choice.",
+  provider: "mistral",
+  model: "mistral-large-3",
+  modeId: "full-access",
+  routing: { roles: ["review"], size: "medium" },
+  instructions: "",
+});
+
 const INITIAL_STORE = profileStoreSchema.parse({
   version: 1,
   mode: "warn",
-  profiles: [FAST_PROFILE, REVIEW_PROFILE, HELPER_PROFILE, LEGACY_PROFILE],
+  profiles: [
+    FAST_PROFILE,
+    REVIEW_PROFILE,
+    HELPER_PROFILE,
+    LEGACY_PROFILE,
+    CLAUDE_PROFILE,
+    CODEX_PROFILE,
+    PI_PROFILE,
+    MISTRAL_PROFILE,
+  ],
 });
 
 /** The provider/model/mode catalog the editor pickers read, parsed like the RPC. */
@@ -178,6 +235,74 @@ export const FIXTURE_PROVIDERS: ProviderCatalog = providerCatalogSchema.parse({
         },
       ],
       modes: [],
+    },
+    {
+      id: "claude",
+      label: "Claude",
+      available: true,
+      status: "ready",
+      defaultModeId: "read-only",
+      models: [
+        {
+          id: "claude-opus-5-5",
+          label: "Opus 5.5",
+          isDefault: true,
+          thinkingOptions: [{ id: "medium", label: "Medium", isDefault: true }],
+        },
+      ],
+      modes: [
+        {
+          id: "read-only",
+          label: "Read only",
+          elevated: false,
+        },
+      ],
+    },
+    {
+      id: "codex",
+      label: "Codex",
+      available: true,
+      status: "ready",
+      defaultModeId: "full-access",
+      models: [
+        {
+          id: "codex-max",
+          label: "Codex Max",
+          isDefault: true,
+          thinkingOptions: [],
+        },
+      ],
+      modes: [
+        {
+          id: "full-access",
+          label: "Full access",
+          elevated: true,
+        },
+      ],
+    },
+    {
+      id: "pi",
+      label: "Pi",
+      available: true,
+      status: "ready",
+      defaultModeId: "read-only",
+      models: [
+        {
+          id: "pi-5",
+          label: "Pi 5",
+          isDefault: true,
+          thinkingOptions: [
+            { id: "standard", label: "Standard", isDefault: true },
+          ],
+        },
+      ],
+      modes: [
+        {
+          id: "read-only",
+          label: "Read only",
+          elevated: false,
+        },
+      ],
     },
   ],
 });
@@ -407,6 +532,9 @@ export class PreviewProfilesController {
       };
     } else {
       candidate = { ...base, mode: operation.mode };
+      // The preview keeps the mode write briefly pending, mirroring the
+      // daemon's round trip, so tests can observe the busy-disabled toggle.
+      await new Promise((resolve) => setTimeout(resolve, 200));
     }
     this.store = candidate;
     this.seq += 1;

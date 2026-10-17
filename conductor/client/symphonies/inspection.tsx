@@ -28,6 +28,7 @@ import {
 } from "./history";
 import { Button, Disclosure, Label, Notice, rowStyle } from "../ui/controls";
 import { ScoreView } from "./graph";
+import type { ProfilesData } from "./profiles";
 import {
   launchWorker,
   overrideLine,
@@ -48,6 +49,7 @@ export function SymphonyInspection({
   compact = false,
   loop,
   openAgent,
+  profiles,
 }: {
   view: string;
   theme: PluginTheme;
@@ -59,6 +61,8 @@ export function SymphonyInspection({
   /** The loop the Tasks, Graph and Context tabs show, when there are several. */
   loop?: number;
   openAgent?: (id: string) => void;
+  /** Worker profiles and provider catalog; the graph node identity reads them. */
+  profiles?: ProfilesData;
 }) {
   const record = loop ? loopRecord(symphony, loop) : undefined;
   return (
@@ -119,6 +123,8 @@ export function SymphonyInspection({
             symphony={symphony}
             score={score}
             compact={compact}
+            profiles={profiles?.state?.profiles}
+            catalog={profiles?.providers}
             {...(openAgent ? { openAgent } : {})}
           />
         </>

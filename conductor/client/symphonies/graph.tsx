@@ -21,12 +21,20 @@ import {
   type TaskStateKey,
 } from "../../shared/symphonies/task-state";
 import { conflictReason } from "../../shared/symphonies/score";
+import type { ConductorProfile } from "../../shared/symphonies/profiles";
+import type { ProviderCatalog } from "../../shared/symphonies/profiles-rpc";
 import { Button } from "../ui/controls";
 import {
   StatusMarker,
   statusColor,
   taskStatusPresentation,
 } from "../ui/status";
+import { HarnessMark } from "../ui/harness-mark";
+import {
+  identityLabel,
+  taskIdentity,
+  type WorkerIdentity,
+} from "./worker-identity";
 
 /**
  * Unrelated edges fade to this opacity while a node is selected: still
@@ -197,12 +205,23 @@ function Edge({
 }
 
 /**
- * One task node: muted tabular ID, a 14px two-line title, then the status
- * icon and label from the shared presentation map. Activating a node selects
- * it for inspection; opening the agent is a separate explicit action in the
- * selection panel, so the accessible name promises selection, never
- * navigation. Failed-launch attempts are reported like any other state; they
- * never claim an available task agent.
+ * The worker sentence for a node's accessible label and the selection panel:
+ * what actually runs versus what the plan alone names.
+ */
+function workerClause(identity: WorkerIdentity): string {
+  return identity.source === "launched"
+    ? `Runs on ${identityLabel(identity)}`
+    : `Planned: ${identityLabel(identity)}`;
+}
+
+/**
+ * One task node: a muted ID row that shares its line with the worker's
+ * harness mark and model when the task names a worker, then a 14px two-line
+ * title and the status icon and label from the shared presentation map.
+ * Activating a node selects it for inspection; opening the agent is a
+ * separate explicit action in the selection panel, so the accessible name
+ * promises selection, never navigation. Failed-launch attempts are reported
+ * like any other state; they never claim an available task agent.
  */
 function GraphNode({
   theme,
@@ -212,6 +231,8 @@ function GraphNode({
   padding,
   selected,
   connected,
+  profiles,
+  catalog,
   onPick,
 }: {
   theme: PluginTheme;
@@ -221,16 +242,21 @@ function GraphNode({
   padding: number;
   selected: boolean;
   connected: boolean;
+  /** Worker profiles for identity resolution; empty while profiles load. */
+  profiles: readonly ConductorProfile[];
+  catalog: ProviderCatalog | undefined;
   onPick(this: void): void;
 }) {
   const [focused, setFocused] = useState(false);
   const state = taskState(symphony, task);
   const presentation = taskStatusPresentation(state);
   const color = statusColor(theme, presentation.color);
+  const identity = taskIdentity(symphony, task, profiles, catalog);
   const waitsFor = task.prerequisites.length
     ? ` Waits for ${task.prerequisites.join(", ")}.`
     : "";
-  const label = `${selected ? "Task" : "Select task"} ${task.id} — ${task.title}. ${presentation.label}.${waitsFor}${selected ? " Selected." : ""}`;
+  const worker = identity?.provider ? ` ${workerClause(identity)}.` : "";
+  const label = `${selected ? "Task" : "Select task"} ${task.id} — ${task.title}. ${presentation.label}.${waitsFor}${worker}${selected ? " Selected." : ""}`;
   const active = selected || focused;
   // The 2px accent frame marks either the active node or keyboard focus; a
   // selected node's direct neighbors carry the accent at 1px so the selected
@@ -265,17 +291,61 @@ function GraphNode({
       })}
     >
       <View style={{ gap: 4 }}>
-        <Text
-          numberOfLines={1}
-          style={{
-            color: theme.colors.foregroundMuted,
-            fontSize: 12,
-            lineHeight: 16,
-            fontVariant: ["tabular-nums"],
-          }}
-        >
-          {task.id}
-        </Text>
+        <View style={{ flexDirection: "row", alignItems: "center", gap: 5 }}>
+          <Text
+            numberOfLines={1}
+            style={{
+              color: theme.colors.foregroundMuted,
+              fontSize: 12,
+              lineHeight: 16,
+              fontVariant: ["tabular-nums"],
+              flexShrink: 1,
+              minWidth: 0,
+            }}
+          >
+            {task.id}
+          </Text>
+          {/* The worker sits at the trailing edge of the ID row, capped at
+              roughly half its width so a long model name truncates instead
+              of pushing the ID out; the model label only, since the row is
+              as muted as the ID. */}
+          {identity?.provider && (
+            <View
+              testID={`symphony-worker-${task.id}`}
+              style={{
+                flexDirection: "row",
+                alignItems: "center",
+                gap: 4,
+                flexShrink: 1,
+                marginLeft: "auto",
+                maxWidth: "55%",
+              }}
+            >
+              <View style={{ flexShrink: 0 }}>
+                <HarnessMark
+                  provider={identity.provider}
+                  {...(identity.providerLabel
+                    ? { label: identity.providerLabel }
+                    : {})}
+                  size={12}
+                  color={theme.colors.foregroundMuted}
+                  surface={theme.colors.surface2}
+                />
+              </View>
+              <Text
+                numberOfLines={1}
+                style={{
+                  color: theme.colors.foregroundMuted,
+                  fontSize: 12,
+                  lineHeight: 16,
+                  flexShrink: 1,
+                }}
+              >
+                {identity.modelLabel ?? identity.providerLabel}
+              </Text>
+            </View>
+          )}
+        </View>
         <Text
           numberOfLines={2}
           style={{
@@ -414,6 +484,8 @@ function SelectionPanel({
   task,
   dependents,
   conflicts,
+  profiles,
+  catalog,
   compact = false,
   openAgent,
 }: {
@@ -422,11 +494,14 @@ function SelectionPanel({
   task: TaskDefinition;
   dependents: readonly string[];
   conflicts: readonly { other: TaskDefinition; reason: string }[];
+  profiles: readonly ConductorProfile[];
+  catalog: ProviderCatalog | undefined;
   compact?: boolean;
   openAgent?: (id: string) => void;
 }) {
   const attempt = latestAttempt(symphony, task.id);
   const state = taskState(symphony, task);
+  const identity = taskIdentity(symphony, task, profiles, catalog);
   const muted = {
     color: theme.colors.foregroundMuted,
     fontSize: 12,
@@ -463,6 +538,15 @@ function SelectionPanel({
         presentation={taskStatusPresentation(state)}
         size={15}
       />
+      {identity?.provider && (
+        <Text
+          selectable
+          testID={`symphony-selection-worker-${task.id}`}
+          style={muted}
+        >
+          {`${workerClause(identity)}.`}
+        </Text>
+      )}
       <Text selectable style={muted}>
         {task.prerequisites.length
           ? `Waits for ${task.prerequisites.join(", ")}`
@@ -514,12 +598,17 @@ export function ScoreView({
   score,
   openAgent,
   compact = false,
+  profiles,
+  catalog,
 }: {
   theme: PluginTheme;
   symphony: StoredSymphony;
   score: { tasks: TaskDefinition[] };
   openAgent?: (id: string) => void;
   compact?: boolean;
+  /** Worker profiles for node identity resolution; empty while unloaded. */
+  profiles?: readonly ConductorProfile[] | undefined;
+  catalog?: ProviderCatalog | undefined;
 }) {
   const tasks = useMemo(
     () => new Map(score.tasks.map((task) => [task.id, task])),
@@ -655,6 +744,8 @@ export function ScoreView({
                 padding={geometry.nodePadding}
                 selected={selected === task.id}
                 connected={connectedNodes.has(task.id)}
+                profiles={profiles ?? []}
+                catalog={catalog}
                 onPick={() => {
                   setPicked({ symphonyId: symphony.id, taskId: task.id });
                 }}
@@ -671,6 +762,8 @@ export function ScoreView({
           task={selectedTask}
           dependents={selectedDependents}
           conflicts={selectedConflicts}
+          profiles={profiles ?? []}
+          catalog={catalog}
           compact={compact}
           {...(openAgent ? { openAgent } : {})}
         />

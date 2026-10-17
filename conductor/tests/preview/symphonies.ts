@@ -1,6 +1,7 @@
 import { useState, useSyncExternalStore } from "react";
 import type { PodiumSession } from "../../client/podium/session";
 import type { SymphoniesData } from "../../client/symphonies/list";
+import type { ProfilesData } from "../../client/symphonies/profiles";
 import {
   summarizeSymphony,
   type Attempt,
@@ -8,7 +9,13 @@ import {
   type SymphonyContext,
   type TaskFinding,
 } from "../../shared/symphonies/models";
+import type {
+  ConductorProfile,
+  ProfilesState,
+} from "../../shared/symphonies/profiles";
+import { providerCatalogSchema } from "../../shared/symphonies/profiles-rpc";
 import {
+  fixtureAttempt,
   fixtureLaunch,
   fixtureSymphonies,
   planContext,
@@ -974,6 +981,243 @@ const loopScoresSymphony = (): StoredSymphony => {
 
 Object.assign(extendedFixtureSymphonies, {
   "loop-scores": loopScoresSymphony,
+});
+
+// === Worker identity fixtures ===
+// One task per worker-identity resolution path the graph nodes render: a
+// resolved launch snapshot (claude), an inline launch choice (codex), an
+// inline planned worker (pi-plan), a profile-named planned worker
+// (planner-plan), an unresolvable worker (api), and an unmarked provider with
+// a long model name on a long task id (migrate-cursor-pagination-export).
+
+const WORKER_T0 = 1791201600000;
+/** Profile ids are UUIDs; fixed so assertions and screenshots stay stable. */
+const WORKER_PLANNER_ID = "3f2504e0-4f89-41d3-9a0c-0305e82c3301";
+
+/** The provider catalog behind the worker fixture's labels. */
+export const WORKER_FIXTURE_PROVIDERS = providerCatalogSchema.parse({
+  providers: [
+    {
+      id: "claude",
+      label: "Claude",
+      available: true,
+      status: "ready",
+      defaultModeId: null,
+      models: [
+        {
+          id: "claude-opus-4-6",
+          label: "Opus 5.5",
+          isDefault: true,
+          thinkingOptions: [
+            { id: "standard", label: "Standard", isDefault: true },
+            { id: "extended", label: "Extended", isDefault: false },
+          ],
+        },
+      ],
+      modes: [],
+    },
+    {
+      id: "codex",
+      label: "Codex",
+      available: true,
+      status: "ready",
+      defaultModeId: null,
+      models: [
+        {
+          id: "codex-max",
+          label: "Codex Max",
+          isDefault: true,
+          thinkingOptions: [],
+        },
+      ],
+      modes: [],
+    },
+    {
+      id: "pi",
+      label: "Pi",
+      available: true,
+      status: "ready",
+      defaultModeId: null,
+      models: [
+        {
+          id: "pi-5",
+          label: "Pi 5",
+          isDefault: true,
+          thinkingOptions: [
+            { id: "standard", label: "Standard", isDefault: true },
+          ],
+        },
+      ],
+      modes: [],
+    },
+    {
+      id: "deepseek",
+      label: "DeepSeek",
+      available: true,
+      status: "ready",
+      defaultModeId: null,
+      models: [
+        {
+          id: "deepseek-v4-flash-turbo",
+          label: "DeepSeek V4 Flash",
+          isDefault: true,
+          thinkingOptions: [],
+        },
+      ],
+      modes: [],
+    },
+  ],
+});
+
+const WORKER_PLANNER_PROFILE: ConductorProfile = {
+  id: WORKER_PLANNER_ID,
+  name: "Planner",
+  notes: "",
+  provider: "claude",
+  model: "claude-opus-4-6",
+  thinkingOptionId: "extended",
+  routing: null,
+  instructions: "",
+};
+
+const WORKER_FIXTURE_STATE: ProfilesState = {
+  revision: "b".repeat(64),
+  catalogRevision: "c".repeat(64),
+  mode: "warn",
+  state: "valid",
+  profiles: [WORKER_PLANNER_PROFILE],
+  diagnostics: [],
+};
+
+/**
+ * Static profiles data for the worker fixture: the graph only reads the
+ * store state and the provider catalog, so every mutation rejects.
+ */
+export const workerFixtureProfiles: ProfilesData = {
+  state: WORKER_FIXTURE_STATE,
+  loading: false,
+  stale: false,
+  providers: WORKER_FIXTURE_PROVIDERS,
+  save: async () => {
+    throw new Error("This fixture's profiles are read-only.");
+  },
+  remove: async () => {
+    throw new Error("This fixture's profiles are read-only.");
+  },
+  setMode: async () => {
+    throw new Error("This fixture's profiles are read-only.");
+  },
+  importPaseo: async () => {
+    throw new Error("This fixture's profiles are read-only.");
+  },
+  refresh: async () => WORKER_FIXTURE_STATE,
+};
+
+const workersSymphony = (): StoredSymphony => {
+  const base = storedSymphony();
+  const attempt = (
+    taskId: string,
+    id: string,
+    state: Attempt["state"],
+    launch: NonNullable<Attempt["launch"]>,
+  ): Attempt => ({
+    ...fixtureAttempt(taskId, state, id),
+    launch,
+  });
+  return {
+    ...base,
+    id: "f1151538-5302-4fbf-b50b-f6a55f2a5d01",
+    title: "Worker identity tour",
+    status: "running",
+    revisions: [
+      {
+        number: 1,
+        parent: null,
+        reason: "Conductor task breakdown",
+        acceptedAt: WORKER_T0,
+        score: {
+          tasks: [
+            task("api"),
+            task("claude", {
+              worker: {
+                role: "implementation",
+                profile: WORKER_PLANNER_ID,
+                profileName: "Planner",
+              },
+            }),
+            task("codex"),
+            task("pi-plan", {
+              worker: {
+                role: "exploration",
+                profile: "inherit",
+                provider: "pi",
+                model: "pi-5",
+                thinkingOptionId: "standard",
+              },
+            }),
+            task("planner-plan", {
+              worker: {
+                role: "implementation",
+                profile: WORKER_PLANNER_ID,
+                profileName: "Planner",
+              },
+            }),
+            task("migrate-cursor-pagination-export", {
+              title: "Migrate the export to cursor pagination",
+              worker: {
+                role: "implementation",
+                profile: "deepseek",
+              },
+            }),
+          ],
+        },
+      },
+    ],
+    execution: {
+      origin: "tracked",
+      attempts: [
+        attempt("claude", "b410f767-1197-469b-8b89-af35338a4ed1", "running", {
+          ...fixtureLaunch(false),
+          profile: WORKER_PLANNER_ID,
+          profileId: WORKER_PLANNER_ID,
+          profileName: "Planner",
+          // The snapshot of what the profile actually resolved to at launch.
+          resolved: {
+            provider: "claude",
+            model: "claude-opus-4-6",
+            thinkingOptionId: "extended",
+          },
+        }),
+        attempt("codex", "b410f767-1197-469b-8b89-af35338a4ed2", "completed", {
+          ...fixtureLaunch(false),
+          // An inline choice: only the launch fields carry the worker.
+          profile: "codex",
+          provider: "codex",
+          model: "codex-max",
+        }),
+        attempt(
+          "migrate-cursor-pagination-export",
+          "b410f767-1197-469b-8b89-af35338a4ed3",
+          "completed",
+          {
+            ...fixtureLaunch(false),
+            profile: "deepseek",
+            resolved: {
+              provider: "deepseek",
+              model: "deepseek-v4-flash-turbo",
+            },
+          },
+        ),
+      ],
+      summary: null,
+      finishedAt: null,
+      interruption: null,
+    },
+  };
+};
+
+Object.assign(extendedFixtureSymphonies, {
+  workers: workersSymphony,
 });
 
 /**

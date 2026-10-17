@@ -122,7 +122,7 @@ async function selectionTintOpacity(
     .evaluate((element) => getComputedStyle(element).opacity);
 }
 
-test("The list keeps population controls in the header with Warn and Strict as a segmented control", async ({
+test("The list keeps population controls in the header with Enforce routing as a switch", async ({
   page,
 }) => {
   await openProfiles(page);
@@ -133,21 +133,61 @@ test("The list keeps population controls in the header with Warn and Strict as a
   expect(await computedBackground(page, "profile-import")).not.toBe(
     "rgb(36, 94, 152)",
   );
-  await expect(page.getByTestId("profile-segment-warn")).toContainText("Warn");
-  await expect(page.getByTestId("profile-segment-strict")).toContainText(
-    "Strict",
+  // The setting is a plain row, not a card: no fill and no frame except
+  // the hairline that separates it from the profile cards below.
+  const frame = await page.getByTestId("profiles-mode").evaluate((element) => {
+    const style = getComputedStyle(element);
+    return {
+      background: style.backgroundColor,
+      top: style.borderTopWidth,
+      bottom: style.borderBottomWidth,
+    };
+  });
+  expect(frame).toEqual({
+    background: "rgba(0, 0, 0, 0)",
+    top: "0px",
+    bottom: "1px",
+  });
+  // The toggle describes the stricter behavior the user opts into.
+  const toggle = page.getByTestId("profiles-mode-toggle");
+  await expect(toggle).toHaveAttribute("aria-checked", "false");
+  await expect(page.getByTestId("profiles-mode-note")).toHaveText(
+    "Picks outside routing are allowed and noted on the task.",
   );
-  await expect(page.getByTestId("profiles-mode-note")).toContainText(
-    "Warn: a task picking its own worker is noted.",
+  // The comparison stays collapsed until asked for, then closes again.
+  await expect(page.getByTestId("profiles-mode-checked")).toHaveCount(0);
+  await page.getByTestId("profiles-mode-disclosure").click();
+  const checked = page.getByTestId("profiles-mode-checked");
+  await expect(checked).toContainText(
+    "The smallest eligible profile is always accepted.",
+  );
+  await expect(page.getByTestId("profiles-mode-disclosure")).toHaveAttribute(
+    "aria-expanded",
+    "true",
+  );
+  await expect(checked).toContainText("accepted and noted on the task");
+  await expect(checked).toContainText(
+    "A task with no eligible profile and no explicit choice is always rejected.",
+  );
+  await expect(checked).toContainText(
+    "Turning this on also rechecks the next retry of tasks already running.",
+  );
+  await page.getByTestId("profiles-mode-disclosure").click();
+  await expect(page.getByTestId("profiles-mode-checked")).toHaveCount(0);
+  await expect(page.getByTestId("profiles-mode-disclosure")).toHaveAttribute(
+    "aria-expanded",
+    "false",
   );
 });
 
-test("Cards carry notes, worker line, role chips, size badge, and an instructions indicator", async ({
+test("Cards carry notes, worker row, role chips, size badge, and an instructions indicator", async ({
   page,
 }) => {
   await openProfiles(page);
   const fast = page.getByTestId("profile-row-Fast responder");
-  await expect(fast).toContainText("Anthropic · Claude Sonnet 4.5 · Standard");
+  // The worker row names model and thinking; the provider lives in the
+  // accessible label beside the harness mark.
+  await expect(fast).toContainText("Claude Sonnet 4.5 · Standard");
   await expect(fast).toContainText("Implementation");
   await expect(fast).toContainText("Small");
   // The instructions indicator only renders when instructions exist.
@@ -329,7 +369,7 @@ test("Creating a profile validates inline and saves after fixing", async ({
   await page.getByRole("button", { name: "Save", exact: true }).click();
   const row = page.getByTestId("profile-row-Docs writer");
   await expect(row).toBeVisible();
-  await expect(row).toContainText("OpenAI · GPT-5");
+  await expect(row).toContainText("GPT-5");
   await expect(row.getByTestId("profile-row-size-small")).toBeVisible();
 });
 
@@ -388,22 +428,163 @@ test("Deleting a profile asks for confirmation and removes its card", async ({
   await expect(page.getByTestId("profile-row-Unrouted helper")).toHaveCount(0);
 });
 
-test("The routing mode switches through the segmented control with a success notice", async ({
+test("The Enforce routing switch is the only switch and toggles with Space", async ({
   page,
 }) => {
   await openProfiles(page);
-  await page.getByTestId("profile-segment-strict").click();
-  await expect(page.getByTestId("profiles-panel-notice")).toContainText(
-    "Routing enforcement is now strict.",
-  );
-  await expect(page.getByTestId("profiles-mode-note")).toContainText(
-    "Strict: a task picking its own worker is rejected.",
-  );
-  await page.getByTestId("profiles-notice-dismiss").first().click();
+  // The display-only Switch inside the row is hidden from web accessibility,
+  // leaving exactly one switch, named by its label.
+  const toggle = page.getByRole("switch", { name: "Enforce routing" });
+  await expect(toggle).toHaveCount(1);
+  await expect(page.getByRole("switch")).toHaveCount(1);
+  // Tabbing from the header buttons reaches the switch; Space toggles it
+  // exactly once per press, like a native switch, and Enter already works.
+  await page.getByTestId("profile-import").focus();
+  await page.keyboard.press("Tab");
+  await expect(toggle).toBeFocused();
+  await page.keyboard.press("Space");
+  await expect(toggle).toBeFocused();
+  await expect(toggle).toHaveAttribute("aria-checked", "true");
+  // A second Space returns to warn while focus stays on the switch.
+  await page.keyboard.press("Space");
+  await expect(toggle).toHaveAttribute("aria-checked", "false");
+});
+
+test("Worker rows show a harness mark plus model for each mark kind", async ({
+  page,
+}) => {
+  await openProfiles(page);
+  // Bundled assets: the Claude mark renders as a tinted image, in its brand
+  // orange on profile cards. The tint is applied through an SVG filter, so
+  // the flood color of that filter is the rendered brand color.
+  const claude = page.getByTestId("profile-row-Claude planner");
+  await expect(claude).toContainText("Opus 5.5 · Medium");
+  await expect(claude.locator("img")).toHaveCount(1);
+  await expect(
+    claude.getByTestId("profile-row-worker").locator("svg feFlood"),
+  ).toHaveAttribute("flood-color", "#D97757");
+  await expect(
+    claude
+      .getByTestId("profile-row-worker")
+      .getByText("Opus 5.5 · Medium")
+      .first(),
+  ).toHaveAttribute("aria-label", "Claude, Opus 5.5, Medium");
+  // Codex's brand is monochrome, so its mark keeps the theme foreground.
+  const codex = page.getByTestId("profile-row-Codex runner");
+  await expect(codex).toContainText("Codex Max");
+  await expect(codex.locator("img")).toHaveCount(1);
+  await expect(
+    codex.getByTestId("profile-row-worker").locator("svg feFlood"),
+  ).toHaveAttribute("flood-color", "#17212b");
+  // The Pi mark is drawn from views, not an image; the brand tone paints its
+  // cells with the logo's three official colors on profile cards.
+  const pi = page.getByTestId("profile-row-Pi explorer");
+  await expect(pi).toContainText("Pi 5 · Standard");
+  const piCells = await pi
+    .getByTestId("profile-row-worker")
+    .evaluate((worker) => {
+      // The wrapper view, then the drawn mark's root with its cell views.
+      const root = worker.firstElementChild?.firstElementChild;
+      return root instanceof HTMLElement
+        ? Array.from(root.children).map((cell) =>
+            cell instanceof HTMLElement
+              ? getComputedStyle(cell).backgroundColor
+              : "",
+          )
+        : [];
+    });
+  expect(await pi.locator("img").count()).toBe(0);
+  expect(piCells).toHaveLength(10);
+  expect(piCells[0]).toBe("rgb(240, 144, 130)");
+  expect(piCells[3]).toBe("rgb(77, 154, 191)");
+  expect(piCells[7]).toBe("rgb(241, 190, 88)");
+  // An unknown provider keeps its raw ids and falls back to a monogram.
+  const mistral = page.getByTestId("profile-row-Mistral oddball");
+  await expect(mistral).toContainText("mistral-large-3");
+  const monogram = await mistral
+    .getByTestId("profile-row-worker")
+    .evaluate((worker) => worker.firstElementChild?.textContent ?? "");
+  expect(monogram).toBe("M");
+  await expect(
+    mistral
+      .getByTestId("profile-row-worker")
+      .getByText("mistral-large-3")
+      .first(),
+  ).toHaveAttribute("aria-label", "mistral, mistral-large-3");
+});
+
+test("Cards lift off the pane and tint their chips per theme", async ({
+  page,
+}) => {
+  for (const url of ["/?profiles", "/?profiles&dark"] as const) {
+    const dark = url.includes("dark");
+    await openProfiles(page, url);
+    const fast = page.getByTestId("profile-row-Fast responder");
+    // The card keeps its surface1 fill over the surface0 pane; the soft
+    // shadow separates it in light only, dark keeps the border alone.
+    expect(await computedBackground(page, "profile-row-Fast responder")).toBe(
+      dark ? "rgb(28, 34, 42)" : "rgb(255, 255, 255)",
+    );
+    expect(
+      await fast.evaluate((element) => getComputedStyle(element).boxShadow),
+    ).toBe(dark ? "none" : "rgba(0, 0, 0, 0.1) 0px 2px 6px 0px");
+    // The worker line reads in the foreground, not the muted tone.
+    const workerText = fast
+      .getByTestId("profile-row-worker")
+      .getByText("Claude Sonnet 4.5 · Standard")
+      .first();
+    expect(
+      await workerText.evaluate((element) => getComputedStyle(element).color),
+    ).toBe(dark ? "rgb(237, 241, 245)" : "rgb(23, 33, 43)");
+    // The role chip carries its tint pair, which passes AA in both themes.
+    const chip = fast.getByTestId("profile-row-chip-implementation");
+    const chipBackground = channels(
+      await chip.evaluate(
+        (element) => getComputedStyle(element).backgroundColor,
+      ),
+    );
+    const chipForeground = channels(
+      await chip
+        .getByText("Implementation")
+        .evaluate((element) => getComputedStyle(element).color),
+    );
+    expect(contrast(chipBackground, chipForeground)).toBeGreaterThanOrEqual(
+      4.5,
+    );
+    expect(chipBackground).toEqual(dark ? [29, 48, 71] : [227, 238, 251]);
+    // The size badge stays neutral on the surface2 fill.
+    expect(
+      await fast
+        .getByTestId("profile-row-size")
+        .evaluate((element) => getComputedStyle(element).backgroundColor),
+    ).toBe(dark ? "rgb(41, 51, 66)" : "rgb(237, 241, 245)");
+  }
+});
+
+test("The routing mode toggles, keeps its state, and disables while saving", async ({
+  page,
+}) => {
+  await openProfiles(page);
+  const toggle = page.getByTestId("profiles-mode-toggle");
+  await toggle.click();
+  // The preview mode write stays pending briefly; the switch reports busy
+  // and no second toggle can start while it does.
+  await expect(toggle).toHaveAttribute("aria-disabled", "true");
+  await expect(toggle).toHaveAttribute("aria-checked", "true");
+  // RNW drops the attribute once the write finishes; the toggle re-enables.
+  await expect(toggle).not.toHaveAttribute("aria-disabled");
+  // The switch and its description are the feedback; no banner repeats
+  // the raw mode value.
   await expect(page.getByTestId("profiles-panel-notice")).toHaveCount(0);
-  await page.getByTestId("profile-segment-warn").click();
-  await expect(page.getByTestId("profiles-mode-note")).toContainText(
-    "Warn: a task picking its own worker is noted.",
+  await expect(page.getByTestId("profiles-mode-note")).toHaveText(
+    "Picks outside routing need a justification with evidence, or they are rejected.",
+  );
+  // Toggling again returns to warn and its description.
+  await toggle.click();
+  await expect(toggle).toHaveAttribute("aria-checked", "false");
+  await expect(page.getByTestId("profiles-panel-notice")).toHaveCount(0);
+  await expect(page.getByTestId("profiles-mode-note")).toHaveText(
+    "Picks outside routing are allowed and noted on the task.",
   );
 });
 
@@ -512,6 +693,8 @@ test("A stale save keeps the edits and offers a reload", async ({ page }) => {
 test("The list stacks above the editor on narrow widths", async ({ page }) => {
   await page.setViewportSize({ width: 620, height: 900 });
   await openProfiles(page);
+  // The compact layout keeps the routing toggle row in the list header.
+  await expect(page.getByTestId("profiles-mode-toggle")).toBeVisible();
   await page
     .getByRole("button", { name: "Edit profile: Deep reviewer" })
     .click();
@@ -529,8 +712,9 @@ test("The list stacks above the editor on narrow widths", async ({ page }) => {
 
 test("The redesigned tab renders in the dark theme", async ({ page }) => {
   await openProfiles(page, "/?profiles&dark");
-  // Cards, the inline warning and the editor all compose from theme tokens
-  // only, so the same markup stays readable on the dark surface.
+  // Cards, the inline warning, the toggle and the editor all compose from
+  // theme tokens only, so the same markup stays readable on the dark surface.
+  await expect(page.getByTestId("profiles-mode-toggle")).toBeVisible();
   await expect(
     page
       .getByTestId("profile-row-Unrouted helper")
