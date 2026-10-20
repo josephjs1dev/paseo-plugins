@@ -470,9 +470,7 @@ does not establish task completion; review the output and required checks.
 ## Requirements
 
 - Compatible Paseo app and daemon versions. The range in
-  [paseo-plugin.json](paseo-plugin.json) is
-  `>=0.10.3 <0.11.0 || >=0.11.0-beta.3 <0.12.0` (0.10.3+ in the 0.10 line,
-  or the 0.11 line starting at beta.3).
+  [paseo-plugin.json](paseo-plugin.json) is `>=0.10.3`.
 - Git available on the daemon host for installation from this repository.
 
 Paseo supplies runtime libraries; Git installation needs no manual `npm install`.

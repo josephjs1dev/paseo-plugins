@@ -2,6 +2,6 @@
   "id": "conductor",
   "description": "Coordinate agents and concerts, answer blockers, and follow work through to completion.",
   "requirements": {
-    "paseo": ">=0.10.3 <0.11.0 || >=0.11.0-beta.3 <0.12.0"
+    "paseo": ">=0.10.3"
   }
 }
