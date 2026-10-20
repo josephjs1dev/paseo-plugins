@@ -15,6 +15,8 @@ or both; plugins are installed per daemon and available to its connected clients
 - Compare workspace usage with usage across the daemon host.
 - Manage Codex, Claude Code, OpenCode, and Pi updates and model catalogs in Harnesses.
 - View and use banked Codex resets when supported by the connected account and CLI.
+- Get Context Reminder pills and timeline cards as an agent's context window
+  fills, with a one-click **Compact now** and a per-agent snooze.
 
 The [Essentials README](essentials/README.md) covers requirements, GUI/CLI
 installation, and development.

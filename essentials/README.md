@@ -1,7 +1,7 @@
 # Paseo Essentials
 
-Essentials adds subscription limits, token history, workspace usage, and coding
-CLI maintenance to Paseo.
+Essentials adds subscription limits, token history, workspace usage, coding
+CLI maintenance, and context-window reminders to Paseo.
 
 ## Features
 
@@ -85,9 +85,51 @@ installation and update details.
 Maintenance runs on the selected host. Unrecognized installations show guidance.
 Finish active work before updating; existing sessions may need reopening.
 
+### Context Reminder
+
+Context Reminder watches each top-level agent's context window and reminds you to
+compact before it fills. Subagents are skipped.
+
+- **Composer pill.** An agent at or above **Warn at** shows a pill with its fill
+  percent. The popover shows the reminder card with the live reading.
+- **Timeline cards.** After a turn ends above **Warn at**, the daemon appends a
+  card to the agent's timeline. Cards repeat every **Card every** turns while the
+  agent stays above the threshold. A rise from warn to ask shows a card at once.
+  When usage drops below **Warn at**, the count restarts.
+- **Card actions.** **Compact now** sends `/compact` to the agent. It is enabled
+  only while the agent is idle. **Snooze** pauses that agent's cards. When the snooze ends, a card shows on the
+  next turn if one came due.
+- **Assistant.** A chibi girl or boy sprite shows a calm, worried, or alarmed face.
+  The current frames are placeholders.
+
+Open **Context Reminder** from the sidebar to change the settings. They apply to
+every agent, repository, and provider on the host.
+
+| Setting               | Default | Meaning                                                                     |
+| --------------------- | ------- | --------------------------------------------------------------------------- |
+| Show Context Reminder | On      | Shows the pill and the timeline cards.                                      |
+| Warn at               | 25%     | Fill that shows the pill and cards.                                         |
+| Ask to compact at     | 50%     | Fill that asks you to compact. At or below **Warn at**, every warning asks. |
+| Card every            | 10      | Turns between cards while above **Warn at**.                                |
+| Snooze for            | 60 min  | How long **Snooze** pauses an agent's cards.                                |
+| Assistant             | Girl    | The sprite in the cards and on the settings screen.                         |
+
+When a provider does not report a window size, the reminder assumes a 1M-token
+window. Turn counts and snoozes live in daemon memory, so a daemon restart clears
+them. Settings persist on the host.
+
+To preview a card, run this in an agent's composer:
+
+```text
+/context-reminder demo <0-100>
+```
+
+The demo appends a card at that percent of a 1M window. It does not change turn
+counts or snoozes.
+
 ## Requirements
 
-- Paseo **0.9.2+** on both the app and daemon, as declared in
+- Paseo **0.12.0+** on both the app and daemon, as declared in
   [paseo-plugin.json](paseo-plugin.json).
 - Node **22.13+** on the daemon host for OpenCode history (`node:sqlite`).
 - The matching Codex, Claude, or OpenCode Go login for quota; local records for history.
@@ -172,7 +214,7 @@ and tests using temporary files and fake I/O, without real provider credentials.
 | `index.client.tsx`, `client/` | Paseo app contributions, React Native UI, and query state.                   |
 | `index.server.ts`, `server/`  | Daemon RPC handlers, provider calls, local history scans, and CLI processes. |
 | `shared/`                     | Runtime-neutral Zod RPC contracts, parsing, and usage calculations.          |
-| `tests/`                      | Collector, history, quota, maintenance, and navigation tests.                |
+| `tests/`                      | Collector, history, quota, maintenance, navigation, and reminder tests.      |
 
 - Read the repository's [AGENTS.md](../AGENTS.md),
   [security rules](../.agents/rules/security.md), and
