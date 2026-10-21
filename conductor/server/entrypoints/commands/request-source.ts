@@ -1,6 +1,6 @@
 import { COMMAND_LIMITS } from "./limits";
 
-/** Shared by the emitted CLI and the host-launched stdio MCP bridge. */
+/** Sends one command from the host-launched stdio MCP server to the daemon socket. */
 export const COMMAND_REQUEST_SOURCE =
   `const commandLimits = ${JSON.stringify(COMMAND_LIMITS)};\n` +
   String.raw`
@@ -29,7 +29,7 @@ async function requestCommand(agentId, socketPath, command) {
     });
     const timer = setTimeout(() => request.destroy(new Error("Command acknowledgement is uncertain. Inspect the symphony before retrying; reuse its start key/attempt identity.")), commandLimits.clientTimeoutMs);
     request.on("close", () => clearTimeout(timer));
-    request.on("error", (error) => reject(new Error(error.code ? "Conductor command connection failed (" + error.code + "). Check the plugin or refresh the agent session." : error.message)));
+    request.on("error", (error) => reject(new Error(error.code ? "Conductor command connection failed (" + error.code + "). Check that the Conductor plugin is running, then start a new agent session." : error.message)));
     request.end(body);
   });
 }

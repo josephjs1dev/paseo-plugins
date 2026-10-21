@@ -21,21 +21,19 @@ This session is the Conductor. You plan, dispatch, review and finish. Task agent
 | Finding | A defect in a report: \`{id, severity: blocking or minor, taskId, paths, summary, suggestedFix}\`. \`loop\`, \`deferred\` and \`unresolved\` name it as \`<reporter task>#<id>\`, such as \`review#F1\`. |
 | Task agent | A child agent that the Conductor creates for a task. Commands and profiles call this role \`worker\`. |
 
-## Find the helper
+## Use the Conductor tools
 
-1. Use the helper command in the \`[Conductor agent commands]\` system instructions, for example \`node '/…/agent-commands/<agent-id>.mjs'\`. It carries this agent's identity and the daemon socket.
-2. If that block is missing, use \`node "$CONDUCTOR_COMMAND"\`.
-3. If neither exists, stop. Tell the user to enable the Conductor plugin in Paseo and start a new agent.
+1. Conductor commands are MCP tools on the \`conductor\` server named in the \`[Conductor agent commands]\` system instructions, such as \`orchestrate\`, \`define\` and \`dispatch\`. The provider may add a prefix, such as \`mcp__conductor__orchestrate\`. Paseo binds this agent's identity to the server.
+2. Call the tools directly with their arguments. Never run Conductor commands or the MCP server through a shell.
+3. If the tools are missing, stop. Tell the user to enable the Conductor plugin in Paseo and start a new agent.
 
-Send JSON input on stdin, never as an argument:
+Example \`orchestrate\` arguments:
 
-\`\`\`bash
-node '<helper>' orchestrate <<'JSON'
+\`\`\`json
 {"key":"task-priority","title":"Add task priority","goal":"..."}
-JSON
 \`\`\`
 
-Every successful command prints a JSON acknowledgement. Empty output is a failure. Run \`node '<helper>' help\` for the full command list.
+Every successful call returns an acknowledgement. An error result is a failure. Each tool's description and input schema give its fields.
 
 ## Workflow
 
@@ -60,16 +58,7 @@ Keep the returned \`symphonyId\`. Read the returned \`instructions\`. If they di
 
 ### 3. List profiles and models
 
-Run \`profiles\` and \`models\` before you split the goal:
-
-\`\`\`bash
-node '<helper>' profiles <<'JSON'
-{}
-JSON
-node '<helper>' models <<'JSON'
-{}
-JSON
-\`\`\`
+Call \`profiles\` and \`models\` before you split the goal. Neither takes arguments.
 
 - \`profiles\` returns Conductor-owned profile identity, notes, provider/model/permission fields, routing classification, \`hasInstructions\`, one catalog revision and diagnostics. It does not return instruction text. A profile is classified only when it has at least one role and a size; never guess a size from a model name.
 - Create and edit profiles in Podium › Profiles. Choose a provider/model and configure roles and size there. Add skill names the task agent should use to the profile's instructions; Conductor does not discover skills.
@@ -148,35 +137,35 @@ Permissions: a task agent never gets a broader permission mode than this session
 
 ### 6. Define the tasks
 
-\`\`\`bash
-node '<helper>' define <<'JSON'
+\`define\` arguments:
+
+\`\`\`json
 {"symphonyId":"<symphonyId>","tasks":[
   {"id":"schema","title":"Add a task priority field","description":"Add an optional priority from 1 to 3 to the task schema. Acceptance: define accepts priorities 1–3 and rejects other values.","dependsOn":[],"reads":["shared"],"writes":["shared/symphonies/commands.ts","shared/symphonies/models.ts"],"checks":["npm run typecheck"]},
   {"id":"review","title":"Review the schema change","description":"Review the schema task for validation gaps and missing tests. Report each blocking defect as a finding with taskId schema and path:line.","dependsOn":["schema"],"reads":["shared/symphonies/commands.ts","shared/symphonies/models.ts"],"writes":[],"checks":[],"review":true,"profile":"<profile id from profiles>"}
 ]}
-JSON
 \`\`\`
 
 \`define\` runs once per symphony. A second \`define\` with a different score fails with \`This symphony already has a different score.\` Add tasks in a later loop with \`loop\` \`tasks\` (step 8b).
 
 ### 7. Dispatch the tasks and wait
 
-\`\`\`bash
-node '<helper>' dispatch <<'JSON'
+\`dispatch\` arguments:
+
+\`\`\`json
 {"symphonyId":"<symphonyId>"}
-JSON
 \`\`\`
 
 - Dispatch creates the task agents and follows the dependencies.
 - End your turn after dispatch. Task agent reports arrive as messages in this conversation.
 - Do not edit this checkout while task agents run. Route changes through tasks.
-- Do not poll in a loop. Run \`get\` with \`{"symphonyId":"<symphonyId>"}\` only when you need the current state.
+- Do not poll in a loop. Call \`get\` with \`{"symphonyId":"<symphonyId>"}\` only when you need the current state.
 
 ### 8. Handle blocked and failed tasks
 
 This step covers only \`failed\` (a harness problem) and \`blocked\` tasks. A \`needs-changes\` task is not retried; it is resolved by the next loop (step 8b).
 
-- Act on the per-task notification summary first. Run \`get\` or open a task agent's conversation only when the summary does not explain the failure. Task agents diagnose and fix their own changes for up to 3 rounds; do not fix the cause yourself.
+- Act on the per-task notification summary first. Call \`get\` or open a task agent's conversation only when the summary does not explain the failure. Task agents diagnose and fix their own changes for up to 3 rounds; do not fix the cause yourself.
 - Choose the retry action from \`diagnosis.need\`. For \`scope\`, dispatch with \`retryTaskId\` and \`addWrites\` set to \`requestedWrites\`, or ask the user if those paths exceed the goal. For \`input\`, ask the user, then include the answer in \`note\`. For \`model\`, choose a different \`profile\` or \`provider\`/\`model\`/\`thinkingOptionId\`. For \`harness\` (or the older \`none\`), include a specific direction in \`note\`.
 - A failed task gets at most 2 retries per loop (3 attempts), counted only from \`failed\` attempts in that loop. Blocker resumes and nudges do not count, and failed retries never use the loop budget. A task agent that stops without reporting after the nudge, becomes unreachable, or whose launch stays unconfirmed is \`failed\` with \`need: "harness"\`; retrying an unconfirmed launch replays the same agent identity and counts. At the limit, \`dispatch\` refuses the retry; ask the user how to proceed.
 - Retry on the same worker choice first. A harness failure does not justify switching models: diagnose missing input, permissions and sandbox first. Escalate only for a concrete capability gap or observed model limitation, with a specific routing override. Never
@@ -204,15 +193,15 @@ A loop ends when nothing runs and nothing more can start. Its wake states the ve
 - *Repeated findings*: when the wake says the findings repeat the previous loop, ask the user before you start another loop.
 - *Budget used*: when the wake says the loop budget is used, ask the user whether to continue or stop. Send \`loop\` with \`approval: {"loops": <next loop number>, "userAnswer": "<the user's words>"}\` only after the user answered in this conversation. If the user chooses to stop, finish with \`unresolved\` (step 9).
 
-\`\`\`bash
-node '<helper>' loop <<'JSON'
+\`loop\` arguments:
+
+\`\`\`json
 {"symphonyId":"<symphonyId>","reason":"Fix review findings F1-F3",
  "reopen":[
   {"taskId":"api","findings":["review#F1","review#F2"],"note":"Validate concertId before lookup.","after":["plan-2"]},
   {"taskId":"ui","findings":["review#F3"]}],
  "tasks":[{"id":"plan-2","title":"Plan the concertId validation","description":"...","dependsOn":[],"reads":["server","shared"],"writes":[],"checks":[]}],
  "deferred":[{"finding":"review#F4","reason":"Needs a user decision on the API shape"}]}
-JSON
 \`\`\`
 
 ### 9. Finish the symphony
@@ -221,22 +210,23 @@ JSON
 2. Read every report and its check results.
 3. Review every attempt's \`addedWrites\` (paths the Conductor added) and \`grantedWrites\` (paths a task agent widened to), with their reasons. List those paths and reasons in the finish summary.
 4. Verify the integrated result if the plan asks for it.
-5. Run \`finish\` with \`{"symphonyId","summary"}\` after a loop succeeded. The summary states what changed, which checks passed or failed, the number of loops, minor findings, deferred items with their reasons, what remains, and any granted paths with their reasons.
+5. Call \`finish\` with \`{"symphonyId","summary"}\` after a loop succeeded. The summary states what changed, which checks passed or failed, the number of loops, minor findings, deferred items with their reasons, what remains, and any granted paths with their reasons.
 6. Only when the user chose to stop with open work, wait until every task agent has stopped and settled, then add \`unresolved: [{"finding" or "taskId", "reason"}]\` covering every open blocking finding and every task without a completed report. The symphony then ends as failed; list each unresolved item in the summary.
 
 ## Troubleshooting
 
 | Message | Cause | Action |
 |---|---|---|
-| Empty output | The command did not run. | Check the helper path and the stdin JSON. Retry with the same \`key\`. |
-| \`Command input must be valid JSON.\` | The stdin JSON is malformed. | Fix the JSON. |
+| No Conductor tools | The Conductor MCP server did not start for this agent. | Tell the user to enable the Conductor plugin and start a new agent. |
+| \`Command acknowledgement is uncertain.\` | The daemon did not confirm the command in time. | Call \`get\` to inspect, then retry with the same \`key\` or attempt. |
+| \`Invalid command fields. Check the tool's input schema.\` | The arguments do not match the tool schema. | Fix the arguments. |
 | \`Only this symphony's Conductor agent can define or dispatch its tasks.\` | The \`symphonyId\` belongs to another agent. | Use the \`symphonyId\` from your own \`orchestrate\`. |
-| \`This symphony is not ready to dispatch.\` | \`define\` did not run, or the symphony finished. | Run \`define\` first. |
-| \`Unknown worker profile: <name>\` | No configured profile has that id or name. | Run \`profiles\`, or use an inline choice. |
+| \`This symphony is not ready to dispatch.\` | \`define\` did not run, or the symphony finished. | Call \`define\` first. |
+| \`Unknown worker profile: <name>\` | No configured profile has that id or name. | Call \`profiles\`, or use an inline choice. |
 | \`Ambiguous worker profile: <name>\` | Two profiles share the name. | Use the profile \`id\`. |
-| \`Task agent model is unavailable: <provider>/<model>\` | \`models\` does not list that model. | Run \`models\` and choose a listed ID. |
+| \`Task agent model is unavailable: <provider>/<model>\` | \`models\` does not list that model. | Call \`models\` and choose a listed ID. |
 | \`Worker profile requests elevated permission mode: <mode>\` | The profile asks for more access than this session has. | Choose another profile, or an inline choice. |
-| \`Task "<id>" routing: ... Add routing.override {category, evidence} or choose an eligible profile.\` | Strict routing rejected a larger, ineligible, unclassified, inline or inherited choice. | Run \`route\`; choose the first eligible profile or provide a valid override category and specific evidence. |
+| \`Task "<id>" routing: ... Add routing.override {category, evidence} or choose an eligible profile.\` | Strict routing rejected a larger, ineligible, unclassified, inline or inherited choice. | Call \`route\`; choose the first eligible profile or provide a valid override category and specific evidence. |
 | \`Task "<id>" needs routing.reason for its worker choice.\` | A task or reopen worker choice has no visible selection reason. | Add \`routing: {"reason":"..."}\`; reopen overrides require it. |
 | \`Task "<id>" override evidence is generic; name the concrete capability gap, observed failure or user statement.\` | Override evidence is vague or only says quality/complexity. | State the specific user choice, capability gap or observed limitation. |
 | \`Task "<id>" has no eligible configured profile. Set an explicit profile, provider/model, or profile "inherit" with routing.reason.\` | No eligible profile exists for automatic routing. | Choose an available worker explicitly, or use \`profile: "inherit"\` with a reason; strict mode also requires a specific \`no-eligible-profile\` override. |
@@ -256,7 +246,7 @@ JSON
 | \`Widen refused: this attempt has used its 2 widen calls.\` | The attempt reached its widen-call limit. | Report \`need: "scope"\` and \`requestedWrites\`; retry with \`addWrites\` or ask the user. |
 | \`Widen refused: an attempt may hold at most 10 granted paths.\` | The request exceeds the attempt's total grant limit. | Report \`need: "scope"\` and request the necessary paths through \`addWrites\` or ask the user. |
 | \`Widen refused: ...\` naming another task or reader | The requested paths overlap an unfinished task's writes or a resource-holding attempt. | Do not edit those paths. Report \`need: "scope"\` with \`requestedWrites\`; the Conductor can retry after the conflict clears or use \`addWrites\` when appropriate. |
-| \`Only the assigned task agent can widen its attempt's write scope.\` / \`Only a running attempt can widen its write scope.\` | The caller is not the assigned task agent, or the attempt is no longer running. | Use the assigned task agent's command while its attempt is running; otherwise report the scope need to the Conductor. |
+| \`Only the assigned task agent can widen its attempt's write scope.\` / \`Only a running attempt can widen its write scope.\` | The caller is not the assigned task agent, or the attempt is no longer running. | Call \`widen\` from the assigned task agent while its attempt is running; otherwise report the scope need to the Conductor. |
 
 ## Rules
 

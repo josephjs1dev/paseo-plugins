@@ -1,4 +1,4 @@
-/** Shared transport budgets for the daemon and emitted CLI/MCP clients. */
+/** Shared transport budgets for the daemon and the emitted MCP server. */
 export const COMMAND_LIMITS = {
   inputBytes: 256 * 1024,
   responseBytes: 2_200_000,

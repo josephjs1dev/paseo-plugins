@@ -145,7 +145,8 @@ void test("the skill runs review loops inside one symphony", () => {
   const loops = ORCHESTRATE_SKILL.indexOf("### 8b. Loops");
   const finish = ORCHESTRATE_SKILL.indexOf("### 9. Finish");
   assert.ok(recovery >= 0 && recovery < loops && loops < finish);
-  assert.match(ORCHESTRATE_SKILL, /node '<helper>' loop <</);
+  assert.match(ORCHESTRATE_SKILL, /`loop` arguments/);
+  assert.equal(ORCHESTRATE_SKILL.includes("<helper>"), false);
   assert.match(ORCHESTRATE_SKILL, /"approval"|approval: \{"loops"/);
   assert.match(ORCHESTRATE_SKILL, /unresolved/);
   assert.match(

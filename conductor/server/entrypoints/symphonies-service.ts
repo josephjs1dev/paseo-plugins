@@ -34,7 +34,6 @@ export function symphonyService({
     store,
     () => ({ ...executionRuntime(host()), ...changesRuntime() }),
     () => workerRuntime(host(), async () => (await profiles.load()).profiles),
-    () => access,
     profiles,
   );
   let reconciling = false;

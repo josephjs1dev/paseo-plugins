@@ -1,8 +1,12 @@
 import type { PluginServerContext } from "@getpaseo/plugin/server";
 import type { PaseoApi } from "../paseo/types";
 import type { SymphonyCommandAccess } from "../symphonies/command-access";
-import { bindAgentCommand, newAgentCommand } from "./commands/launcher";
-import { launcherCommand } from "../symphonies/prompts";
+import {
+  bindAgent,
+  mcpArgs,
+  newAgentBinding,
+  unbindAgent,
+} from "./commands/launcher";
 
 function availableMcpName(servers: Record<string, unknown> = {}): string {
   let name = "conductor";
@@ -12,13 +16,10 @@ function availableMcpName(servers: Record<string, unknown> = {}): string {
   return name;
 }
 
-const guidance = (
-  command: string,
-  serverName: string,
-) => `[Conductor agent commands]
-When the user asks to orchestrate work, use ${launcherCommand(command, "orchestrate")} with a stable key, title and goal as JSON on stdin. You become the symphony's Conductor agent: the acknowledgement includes instructions to split the work and dispatch separate task agents from this conversation. Add "conductor":"agent" (optionally with conductorProfile) only when the user wants a dedicated Conductor agent instead. Follow the conductor-orchestrate skill when it is installed. Do not substitute a source-only tracking symphony for orchestration. Do not ask the user to fill plan/task forms. Small edits need no symphony unless requested.
-Use the injected ${serverName} MCP server's report, block, get and widen tools directly when available. This is the Paseo Conductor reporting server; do not use another server with similarly named tools. Paseo binds their agent identity; do not launch the MCP server through a shell tool. They submit through the host MCP connection without needing shell sandbox escalation. Tool names may have a provider prefix; search for Conductor reporting tools if needed.
-Run ${launcherCommand(command, "help")} for JSON commands. This explicit helper already supplies your agent identity and daemon socket; it works without CONDUCTOR environment variables in shell tools. Inspect the returned JSON acknowledgement; empty output is not success. An assigned task agent must report/block its existing symphony and attempt; never start another symphony or Conductor agent for that assignment. Only its Conductor agent defines/dispatches/finishes the symphony. Report actual evidence and required checks, then stop tool work and end the turn. Never infer completion from idle. Existing start/claim commands track the current agent only and do not delegate. Preserve the user's permissions and authorized scope.`;
+const guidance = (serverName: string) => `[Conductor agent commands]
+Conductor commands are tools on the injected ${serverName} MCP server. This is the Paseo Conductor server; do not use another server with similarly named tools. Tool names may have a provider prefix, such as mcp__${serverName}__report; search for Conductor tools if they are not listed. Paseo binds your agent identity to the server. Never run Conductor commands or the MCP server through a shell.
+When the user asks to orchestrate work, call orchestrate with a stable key, title and goal. You become the symphony's Conductor agent: the result includes instructions to split the work and dispatch separate task agents from this conversation. Add conductor "agent" (optionally with conductorProfile) only when the user wants a dedicated Conductor agent instead. Follow the conductor-orchestrate skill when it is installed. Do not substitute a source-only start symphony for orchestration. Do not ask the user to fill plan/task forms. Small edits need no symphony unless requested.
+Inspect each tool result; an error result is not an acknowledgement. An assigned task agent uses report, block, get and widen for its existing symphony and attempt; never start another symphony or Conductor agent for that assignment. Only its Conductor agent defines, dispatches, loops and finishes the symphony. Report actual evidence and required checks, then stop tool work and end the turn. Never infer completion from idle. If the Conductor tools are missing, say so and end the turn. Preserve the user's permissions and authorized scope.`;
 
 export function commandHooks(
   server: Pick<PluginServerContext, "before" | "on">,
@@ -44,30 +45,26 @@ export function commandHooks(
         return;
       }
       const serverName = availableMcpName(request.config.mcpServers);
-      const command = newAgentCommand(access.commandPath);
+      const binding = newAgentBinding(access.commandPath);
       return {
         ...request,
-        env: {
-          ...request.env,
-          CONDUCTOR_COMMAND: command,
-          CONDUCTOR_SOCKET: access.socketPath,
-        },
+        // Session opening reads this path to write the agent ID into it.
+        env: { ...request.env, CONDUCTOR_BINDING: binding },
         config: {
           ...request.config,
-          // Provider adapters own MCP support, including runtime detection.
+          // Provider adapters translate MCP configuration for each harness.
           mcpServers: {
             ...request.config.mcpServers,
             [serverName]: {
               type: "stdio",
               command: process.execPath,
-              args: [command, "mcp"],
+              args: mcpArgs(access.commandPath, binding),
+              // Paseo's Electron executable needs Node mode in the MCP child.
+              env: { ELECTRON_RUN_AS_NODE: "1" },
               alwaysLoad: true,
             },
           },
-          systemPrompt: [
-            request.config.systemPrompt,
-            guidance(command, serverName),
-          ]
+          systemPrompt: [request.config.systemPrompt, guidance(serverName)]
             .filter(Boolean)
             .join("\n\n"),
         },
@@ -84,24 +81,11 @@ export function commandHooks(
       ) {
         return;
       }
-      const command = await bindAgentCommand(
-        {
-          ...access,
-          commandPath: access.commandPath,
-          socketPath: access.socketPath,
-        },
-        request.env.CONDUCTOR_COMMAND,
+      await bindAgent(
+        { commandPath: access.commandPath, socketPath: access.socketPath },
+        request.env.CONDUCTOR_BINDING,
         request.agentId,
       );
-      return {
-        ...request,
-        env: {
-          ...request.env,
-          CONDUCTOR_COMMAND: command,
-          CONDUCTOR_SOCKET: access.socketPath,
-          CONDUCTOR_AGENT_ID: request.agentId,
-        },
-      };
     }),
     server.on("agent.turn_started", (_event, { paseo }) => {
       remember(paseo);
@@ -123,10 +107,17 @@ export function commandHooks(
       if (!access.available) {
         return;
       }
-      await interrupt(
-        event.agent.id,
-        "The source agent was archived with unreported work. Its claims remain unresolved.",
-      );
+      try {
+        await interrupt(
+          event.agent.id,
+          "The source agent was archived with unreported work. Its claims remain unresolved.",
+        );
+      } finally {
+        // A reopened session writes the binding again before the MCP server starts.
+        if (access.commandPath) {
+          await unbindAgent(access.commandPath, event.agent.id);
+        }
+      }
     }),
   ];
   return () => {

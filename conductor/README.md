@@ -91,30 +91,34 @@ pause. The Conductor agent
 acts on bounded per-task failure summaries, reviews all results, and finishes
 the symphony with a summary.
 
-New agents receive a local `conductor` MCP configuration with `report`,
-`block`, `get`, and `widen` tools. Task agents prefer these tools for reporting,
-checking an acknowledgement, recording a blocker, and requesting extra write
-scope. The provider launches the stdio bridge outside shell command execution,
-so Codex workers do not need shell sandbox escalation to report. It uses the
-existing local command service; no TCP listener or extra npm runtime dependency
-is added. Paseo's provider adapters handle MCP support, including detection at
-runtime. Providers that do not expose the tools retain the command-line workflow.
-The MCP tools cover task reporting and recovery. Orchestration commands such as
-`orchestrate`, `define`, `dispatch`, and `finish`, and the source-only `start` and
-`claim` workflow, still use the command-line helper and its shell permissions.
+New agents receive a local `conductor` MCP server. Every Conductor command is
+one of its tools: `orchestrate`, `define`, `dispatch`, `loop`, `finish`, `route`,
+`profiles`, `models`, `get` and `list` for Conductor agents; `report`, `block`
+and `widen` for task agents; and `start` and `claim` for the source-only
+workflow. There is no shell command interface. The provider launches the stdio
+server outside shell command execution, so sandboxed agents, such as Codex in
+`workspace-write` mode without network access, reach Conductor without sandbox
+escalation. The server uses the existing local command service; no TCP listener
+or extra npm runtime dependency is added. Paseo's provider adapters translate
+the MCP configuration for each harness. A provider without MCP support cannot
+use Conductor.
 
-Each bridge uses an agent-bound launcher created before its interactive session
-opens. Tool arguments cannot choose another agent identity or socket. The daemon
-still checks task ownership, report contents and required checks, and accepts an
+Every agent's server runs the same emitted `command.mjs` with a per-agent JSON
+binding, `agent-commands/<uuid>.json`. Agent creation chooses the binding path,
+because the agent ID is not known yet; session opening writes
+`{agentId, socketPath}` into it before the first turn. Tool arguments cannot choose another agent identity or socket. The daemon
+still checks symphony ownership, report contents and required checks, and accepts an
 identical repeated report without replacing its evidence. MCP tool approval
 policies still apply. Existing MCP servers and tool policies are preserved. If
 `conductor` is already configured, the injected server uses the first available
-name such as `conductor_2`, named in that agent's system instructions.
+name such as `conductor_2`, named in that agent's system instructions. Paseo runs
+plugins with its Electron executable, so the injected server sets
+`ELECTRON_RUN_AS_NODE=1`.
 
 Reload the plugin to enable injection for newly created agents. Agents created
-before this change keep their existing MCP configuration, including on refresh
-or resume, and can continue using the command-line helper. An MCP error or an
-ended turn alone never counts as an accepted task report.
+before a reload keep their existing MCP configuration, including on refresh or
+resume; start a new agent to get the current tools. An MCP error or an ended
+turn alone never counts as an accepted task report.
 
 Task agents diagnose and fix their own changes before reporting, with up to
 3 fix rounds and an early stop for repeated errors, refused scope requests, or
@@ -131,12 +135,16 @@ held by another attempt. Each grant records its reason on the attempt.
 
 ### Orchestration command flow
 
-Agents start orchestration with:
+Agents start orchestration by calling `orchestrate`:
 
-```bash
-node "$CONDUCTOR_COMMAND" orchestrate <<'JSON'
-{"key":"feature-request-1","title":"Implement the feature","goal":"Inspect the repository, split the requested feature into tasks, implement and verify it","concurrency":3,"maxLoops":3}
-JSON
+```json
+{
+  "key": "feature-request-1",
+  "title": "Implement the feature",
+  "goal": "Inspect the repository, split the requested feature into tasks, implement and verify it",
+  "concurrency": 3,
+  "maxLoops": 3
+}
 ```
 
 By default the requesting agent becomes the symphony's Conductor agent. The
@@ -157,15 +165,45 @@ and edit profiles in Podium › Profiles. The provider/model pickers use the
 `profiles.providers` catalog, which includes thinking options and modes. The
 Profiles tab also offers a one-time import from Paseo profiles; imported entries
 become independent Conductor profiles. Only the Conductor agent can define or
-dispatch its symphony:
+dispatch its symphony. `define` arguments:
 
-```bash
-node "$CONDUCTOR_COMMAND" define <<'JSON'
-{"symphonyId":"<symphony UUID>","tasks":[{"id":"api","title":"Inspect API","description":"Report API constraints with evidence","reads":["src/api"],"writes":[],"checks":[]},{"id":"ui","title":"Inspect UI","description":"Report UI constraints with evidence","reads":["src/ui"],"writes":[],"checks":[]},{"id":"combine","title":"Combine findings","description":"Compare API and UI reports","dependsOn":["api","ui"],"reads":[],"writes":[],"checks":[]}]}
-JSON
-node "$CONDUCTOR_COMMAND" dispatch <<'JSON'
-{"symphonyId":"<symphony UUID>"}
-JSON
+```json
+{
+  "symphonyId": "<symphony UUID>",
+  "tasks": [
+    {
+      "id": "api",
+      "title": "Inspect API",
+      "description": "Report API constraints with evidence",
+      "reads": ["src/api"],
+      "writes": [],
+      "checks": []
+    },
+    {
+      "id": "ui",
+      "title": "Inspect UI",
+      "description": "Report UI constraints with evidence",
+      "reads": ["src/ui"],
+      "writes": [],
+      "checks": []
+    },
+    {
+      "id": "combine",
+      "title": "Combine findings",
+      "description": "Compare API and UI reports",
+      "dependsOn": ["api", "ui"],
+      "reads": [],
+      "writes": [],
+      "checks": []
+    }
+  ]
+}
+```
+
+`dispatch` arguments:
+
+```json
+{ "symphonyId": "<symphony UUID>" }
 ```
 
 Route each task with `route`, a read-only preview taking `role` (`exploration`,
@@ -288,12 +326,40 @@ Each loop wakes the Conductor once (`loop-end:<N>`) with its verdict: it
 succeeded, it needs changes with the blocking findings and failed checks, the
 loop budget is used, or the blocking findings repeat the previous loop. Failed
 and blocked tasks keep their per-task wake and are handled first. After a loop
-needs changes, the Conductor reopens the owning tasks in the same symphony:
+needs changes, the Conductor reopens the owning tasks in the same symphony with
+`loop`:
 
-```bash
-node "$CONDUCTOR_COMMAND" loop <<'JSON'
-{"symphonyId":"<symphony UUID>","reason":"Fix review findings F1-F3","reopen":[{"taskId":"api","findings":["review#F1","review#F2"],"note":"Validate concertId before lookup.","after":["plan-2"]},{"taskId":"ui","findings":["review#F3"]}],"tasks":[{"id":"plan-2","title":"Plan the concertId validation","description":"...","dependsOn":[],"reads":["server","shared"],"writes":[],"checks":[]}],"deferred":[{"finding":"review#F4","reason":"Needs a user decision on the API shape"}]}
-JSON
+```json
+{
+  "symphonyId": "<symphony UUID>",
+  "reason": "Fix review findings F1-F3",
+  "reopen": [
+    {
+      "taskId": "api",
+      "findings": ["review#F1", "review#F2"],
+      "note": "Validate concertId before lookup.",
+      "after": ["plan-2"]
+    },
+    { "taskId": "ui", "findings": ["review#F3"] }
+  ],
+  "tasks": [
+    {
+      "id": "plan-2",
+      "title": "Plan the concertId validation",
+      "description": "...",
+      "dependsOn": [],
+      "reads": ["server", "shared"],
+      "writes": [],
+      "checks": []
+    }
+  ],
+  "deferred": [
+    {
+      "finding": "review#F4",
+      "reason": "Needs a user decision on the API shape"
+    }
+  ]
+}
 ```
 
 Findings are named `<reporter task>#<finding id>`; a bare id is accepted only
@@ -335,12 +401,15 @@ the user chooses to stop with open work, `finish` accepts
 and non-completed task once every task agent has stopped and settled; the
 symphony then ends as failed, lists them, and releases the stopped tasks' scope.
 
-Task agents request scope while their attempt is running:
+Task agents request scope with `widen` while their attempt is running:
 
-```bash
-node "$CONDUCTOR_COMMAND" widen --agent "$CONDUCTOR_AGENT_ID" --socket "$CONDUCTOR_SOCKET" <<'JSON'
-{"symphonyId":"<symphony UUID>","attemptId":"<attempt UUID>","paths":["shared/schema.ts"],"reason":"My change broke the exported schema used by typecheck"}
-JSON
+```json
+{
+  "symphonyId": "<symphony UUID>",
+  "attemptId": "<attempt UUID>",
+  "paths": ["shared/schema.ts"],
+  "reason": "My change broke the exported schema used by typecheck"
+}
 ```
 
 A refusal leaves the scope unchanged. The task agent reports `need: "scope"` and
@@ -348,48 +417,45 @@ A refusal leaves the scope unchanged. The task agent reports `need: "scope"` and
 
 ### Agent commands and compatibility
 
-New agents receive an explicit command in their system guidance. Its helper is
-bound to the agent and daemon before the first interactive turn, so shell tools
-can use it even when they do not inherit session environment variables. No manual
-agent registration is needed. Paseo's SDK handles agent creation and lifecycle;
-this helper sends Conductor-specific symphony and report operations.
+New agents receive the `conductor` MCP server and a `[Conductor agent commands]`
+block appended to their existing custom system prompt. The server's binding names
+the agent and daemon before the first interactive turn, so no manual agent
+registration or environment variable is needed. Paseo's SDK handles agent
+creation and lifecycle; the MCP tools send Conductor-specific symphony and report
+operations.
 
-Task-agent prompts explain the assignment and which Conductor action to use, but
+Task-agent prompts explain the assignment and which Conductor tool to use, but
 do not repeat tool-call JSON samples or shell commands. Agents use the MCP tool
-schemas and descriptions for report, widen, and block rules. When MCP tools are
-unavailable, the `[Conductor agent commands]` block in the agent's system
-instructions gives the shell helper and its `help` command. The public
-session-opening hook also supplies these convenience variables on supported Unix
-hosts:
+schemas and descriptions for report, widen, and block rules. When the tools are
+missing, the agent says so and ends its turn.
 
-- `CONDUCTOR_COMMAND`: generated Node helper path (bound to new agents).
-- `CONDUCTOR_SOCKET`: this daemon's owner-only Unix socket.
-- `CONDUCTOR_AGENT_ID`: source agent identity.
-
-Newly created agents receive command guidance appended to their existing custom
-system prompt. The per-agent helpers persist under `agent-commands/` in Conductor's
-data directory across plugin reloads. Provider/model, mode, permissions, and other
-environment values are preserved. Existing running sessions keep their environment; they can supply
-`--agent <id> --socket <path>` explicitly or receive variables on their next session
-opening. The plugin does not restart agents or the daemon.
-
-```bash
-node "$CONDUCTOR_COMMAND" help
-node "$CONDUCTOR_COMMAND" start <<'JSON'
-{"key":"fix-toolbar-20261005","title":"Fix the toolbar","goal":"Apply and verify the requested toolbar fix"}
-JSON
-```
+Bindings persist under `agent-commands/` in Conductor's data directory across
+plugin reloads. Archiving an agent deletes its binding, and reopening it writes
+the binding again. Plugin startup deletes the executable `.mjs` launchers that
+earlier versions wrote per agent; agents that used them need a new session. Provider/model, mode, permissions, and other
+environment values are preserved. The plugin does not restart agents or the
+daemon.
 
 The older `start`/`claim` workflow tracks only the calling agent; it is not
-orchestration. Start returns the symphony. Omitting tasks creates one assignment named `work` with
+orchestration. `start` arguments:
+
+```json
+{
+  "key": "fix-toolbar-20261005",
+  "title": "Fix the toolbar",
+  "goal": "Apply and verify the requested toolbar fix"
+}
+```
+
+Start returns the symphony. Omitting tasks creates one assignment named `work` with
 conservative checkout-wide read/write scope. A key is stable per source agent:
 repeat identical input after lost acknowledgement; changed input under that key
 is rejected. Distinct work needs a distinct key.
 
-```bash
-node "$CONDUCTOR_COMMAND" claim <<'JSON'
-{"symphonyId":"<returned UUID>","taskId":"work"}
-JSON
+`claim` arguments:
+
+```json
+{ "symphonyId": "<returned UUID>", "taskId": "work" }
 ```
 
 Save the returned `attempt.id`, then work through normal agent tools. Claims are
@@ -398,13 +464,11 @@ Conflicts across recorded symphonies in the same checkout block new claims; bloc
 interrupted work retains ownership. Scopes coordinate these assignments, not
 external processes or file sandbox permissions.
 
-```bash
-node "$CONDUCTOR_COMMAND" report <<'JSON'
+`report` and `finish` arguments:
+
+```json
 {"symphonyId":"<symphony UUID>","attemptId":"<attempt UUID>","report":{"outcome":"completed","summary":"Applied the fix","evidence":["Describe actual changed behavior and verification"],"checks":[]}}
-JSON
-node "$CONDUCTOR_COMMAND" finish <<'JSON'
 {"symphonyId":"<symphony UUID>","summary":"Describe the result and remaining limitations"}
-JSON
 ```
 
 Multi-task starts supply `tasks` with `id`, `title`, `description`, and optional
@@ -426,7 +490,7 @@ mode-0600 Unix socket; it does not isolate agents sharing that account. Declared
 source identity and concert are checked against Paseo on mutation; a source may
 update only its own recorded symphonies. No HTTP port is exposed. Request/response limits
 are 256 KiB / 2.2 MB, with 16 pending commands, a 12-second response deadline, and
-15-second CLI timeout. Uncertain acknowledgement is not proof of failure: inspect
+15-second MCP server timeout. Uncertain acknowledgement is not proof of failure: inspect
 the symphony and reuse its identities.
 
 A callback or an `agents.*` RPC supplies the subprocess-lifetime SDK connection. A cold

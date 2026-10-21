@@ -1,24 +1,25 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { spawn } from "node:child_process";
-import { once } from "node:events";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
-import { createInterface } from "node:readline";
 import { z } from "zod";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 import { COMMAND_LIMITS } from "../server/entrypoints/commands/limits";
-import { agentCommandRequestSchema } from "../shared/symphonies/commands";
-import { commandServer } from "../server/entrypoints/commands/server";
 import {
-  bindAgentCommand,
-  newAgentCommand,
-} from "../server/entrypoints/commands/launcher";
+  agentCommandRequestSchema,
+  symphonyCommandSchema,
+} from "../shared/symphonies/commands";
+import { commandServer } from "../server/entrypoints/commands/server";
 import { symphonyAck } from "../server/entrypoints/commands/ack";
 import { symphonyExecution } from "../server/symphonies/execution";
 import { contentHash, fileSymphonyStore } from "../server/symphonies/store";
 import { testDirectory } from "./fixtures";
+import {
+  boundArgs,
+  boundMcpClient as client,
+  toolResultSchema,
+} from "./mcp-client";
 import {
   fixtureAttempt,
   fixtureLaunch,
@@ -28,87 +29,9 @@ import {
 } from "./symphony-fixtures";
 import type { TaskReport } from "../shared/symphonies/models";
 
-const responseSchema = z.object({
-  id: z.union([z.string(), z.number(), z.null()]),
-  result: z.record(z.string(), z.unknown()).optional(),
-  error: z.object({ code: z.number(), message: z.string() }).optional(),
-});
-const toolResultSchema = z.object({
-  content: z.array(z.object({ type: z.literal("text"), text: z.string() })),
-  isError: z.boolean(),
-  structuredContent: z.record(z.string(), z.unknown()).optional(),
-});
-
-async function client(
-  access: { commandPath: string; socketPath: string },
-  agentId: string,
-) {
-  const launcher = await bindAgentCommand(
-    { ...access, available: true, message: null },
-    newAgentCommand(access.commandPath),
-    agentId,
-  );
-  const child = spawn(process.execPath, [launcher, "mcp"], {
-    env: {},
-    stdio: ["pipe", "pipe", "pipe"],
-  });
-  const lines = createInterface({ input: child.stdout });
-  const iterator = lines[Symbol.asyncIterator]();
-  let sequence = 0;
-  let stderr = "";
-  child.stderr.on("data", (chunk: Buffer) => {
-    stderr += chunk.toString();
-  });
-  async function raw(message: string) {
-    child.stdin.write(message);
-    const next = await iterator.next();
-    assert.equal(next.done, false, stderr);
-    return responseSchema.parse(JSON.parse(next.value ?? "null") as unknown);
-  }
-  async function request(method: string, params?: unknown) {
-    const id = ++sequence;
-    const response = await raw(
-      JSON.stringify({
-        jsonrpc: "2.0",
-        id,
-        method,
-        ...(params === undefined ? {} : { params }),
-      }) + "\n",
-    );
-    assert.equal(response.id, id);
-    return response;
-  }
-  return {
-    child,
-    raw,
-    request,
-    async initialize(version = "2025-11-25") {
-      const result = await request("initialize", {
-        protocolVersion: version,
-        capabilities: {},
-        clientInfo: { name: "test", version: "1" },
-      });
-      child.stdin.write(
-        JSON.stringify({
-          jsonrpc: "2.0",
-          method: "notifications/initialized",
-        }) + "\n",
-      );
-      return result;
-    },
-    async call(name: string, args: unknown) {
-      return request("tools/call", { name, arguments: args });
-    },
-    async close() {
-      const closed = once(child, "close");
-      child.stdin.end();
-      await closed;
-      lines.close();
-      assert.equal(stderr, "");
-      assert.equal(child.exitCode, 0);
-    },
-  };
-}
+const allTools = symphonyCommandSchema.options
+  .map((schema) => schema.shape.kind.value)
+  .sort();
 
 void test(
   "host-launched MCP saves and verifies reports with bound identity and existing validation",
@@ -460,9 +383,8 @@ void test(
     t.after(() => server.close());
     const { commandPath, socketPath } = server.access;
     assert.ok(commandPath && socketPath);
-    const launcher = await bindAgentCommand(
-      { ...server.access, commandPath, socketPath },
-      newAgentCommand(commandPath),
+    const serverArgs = await boundArgs(
+      { commandPath, socketPath },
       "sdk-worker",
     );
     const sdk = new Client({ name: "conductor-interop-test", version: "1" });
@@ -470,13 +392,13 @@ void test(
     await sdk.connect(
       new StdioClientTransport({
         command: process.execPath,
-        args: [launcher, "mcp"],
+        args: serverArgs,
         env: {},
       }),
     );
     assert.deepEqual(
       (await sdk.listTools()).tools.map((tool) => tool.name).sort(),
-      ["block", "get", "report", "widen"],
+      allTools,
     );
     const args = {
       symphonyId: "f1151538-5302-4fbf-b50b-f6a55f2a5940",
@@ -503,7 +425,7 @@ void test(
 );
 
 void test(
-  "MCP negotiates versions, advertises only worker tools, and rejects protocol overrides",
+  "MCP negotiates versions, advertises every command as a tool, and rejects protocol overrides",
   { timeout: 10000 },
   async (t) => {
     const requests: unknown[] = [];
@@ -541,16 +463,12 @@ void test(
             name: z.string(),
             description: z.string(),
             inputSchema: z.record(z.string(), z.unknown()),
+            annotations: z.object({ readOnlyHint: z.boolean() }).optional(),
           }),
         ),
       })
       .parse((await worker.request("tools/list")).result).tools;
-    assert.deepEqual(tools.map((tool) => tool.name).sort(), [
-      "block",
-      "get",
-      "report",
-      "widen",
-    ]);
+    assert.deepEqual(tools.map((tool) => tool.name).sort(), allTools);
     for (const tool of tools) {
       assert.equal(tool.inputSchema.additionalProperties, false);
       assert.equal(
@@ -575,7 +493,10 @@ void test(
       byName.get("block")?.description ?? "",
       /The Conductor resumes you with an answer/,
     );
-    assert.equal((await worker.call("finish", {})).error?.code, -32602);
+    assert.match(byName.get("define")?.description ?? "", /Conductor only/);
+    assert.equal(byName.get("list")?.annotations?.readOnlyHint, true);
+    assert.equal(byName.get("dispatch")?.annotations?.readOnlyHint, false);
+    assert.equal((await worker.call("help", {})).error?.code, -32602);
     assert.equal(
       (await worker.call("get", { symphonyId: "id", kind: "finish" })).error
         ?.code,

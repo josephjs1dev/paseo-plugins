@@ -190,7 +190,6 @@ async function fixture(
     store,
     () => runtime,
     () => workers,
-    undefined,
     profilesSource,
   );
   const send = (agentId: string, command: unknown) =>
@@ -266,7 +265,6 @@ async function fixture(
         store,
         () => runtime,
         () => workers,
-        undefined,
         profilesSource,
       );
     },
@@ -791,7 +789,10 @@ void test("a requesting agent coordinates its own symphony without creating a Co
   assert.equal(symphony.execution.conducting?.conductor, "self");
   assert.equal(symphony.execution.conducting?.conductorLaunch, "started");
   assert.equal(f.launches.size, 0);
-  assert.match(String(first.instructions), /--agent 'requester'/);
+  assert.match(String(first.instructions), /Call define with arguments/);
+  for (const shell of ["node ", "--agent", "CONDUCTOR_JSON", "stdin"]) {
+    assert.equal(String(first.instructions).includes(shell), false, shell);
+  }
   assert.match(String(first.instructions), /do not edit this checkout/);
   const replay = await f.orchestrate("self");
   assert.ok("symphony" in replay);
@@ -1802,7 +1803,7 @@ void test("a blocked retry with a changed worker choice rebinds to a new agent w
   assert.match(prompt, /Writes: src/);
   assert.match(prompt, /Required checks: none/);
   assert.match(prompt, /up to 3 rounds/);
-  assert.match(prompt, /\[Conductor agent commands\]/);
+  assert.match(prompt, /If the Conductor tools are\nmissing, say so/);
   // The handoff keeps the worker's block message, which is overwritten on the
   // attempt, and names the changed paths as unknown until fingerprinting lands.
   assert.match(prompt, /Attempt 1 of 1 for task a\./);

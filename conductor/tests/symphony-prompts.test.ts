@@ -1,14 +1,9 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { spawn } from "node:child_process";
-import { join } from "node:path";
-import { commandServer } from "../server/entrypoints/commands/server";
 import {
-  agentCommand,
   assignmentPrompt,
   continuationPrompt,
   handoffInstructions,
-  jsonCommand,
   nudgePrompt,
   unionChangedPaths,
 } from "../server/symphonies/prompts";
@@ -17,47 +12,7 @@ import {
   type TaskFinding,
   type TaskReport,
 } from "../shared/symphonies/models";
-import { testDirectory } from "./fixtures";
 import { fixtureSymphonyId } from "./symphony-fixtures";
-
-void test("assigned command works without Conductor environment variables and safely quotes paths", async () => {
-  const directory = join(await testDirectory(), "command's location");
-  const server = await commandServer(directory, async (input) => ({
-    acknowledged: input,
-  }));
-  assert.equal(server.access.available, true);
-  try {
-    const command = jsonCommand(
-      agentCommand(server.access, "worker-1", "get"),
-      { symphonyId: fixtureSymphonyId },
-    );
-    const result = await new Promise<{
-      code: number | null;
-      stdout: string;
-      stderr: string;
-    }>((resolve, reject) => {
-      const child = spawn("/bin/bash", ["-c", command], {
-        env: { PATH: process.env.PATH ?? "/usr/bin:/bin" },
-      });
-      let stdout = "",
-        stderr = "";
-      child.stdout.on("data", (chunk: Buffer) => (stdout += chunk.toString()));
-      child.stderr.on("data", (chunk: Buffer) => (stderr += chunk.toString()));
-      child.on("error", reject);
-      child.on("close", (code) => resolve({ code, stdout, stderr }));
-    });
-    assert.equal(result.code, 0, result.stderr);
-    assert.deepEqual(JSON.parse(result.stdout) as unknown, {
-      acknowledged: {
-        agentId: "worker-1",
-        command: { kind: "get", symphonyId: fixtureSymphonyId },
-      },
-    });
-    assert.equal(command.includes("$CONDUCTOR_COMMAND"), false);
-  } finally {
-    await server.close();
-  }
-});
 
 void test("the assignment states what to do without payload samples or shell commands", () => {
   const prompt = assignmentPrompt({
@@ -89,7 +44,10 @@ void test("the assignment states what to do without payload samples or shell com
   assert.match(prompt, /Conductor `report` tool/);
   assert.match(prompt, /call `widen` before/);
   assert.match(prompt, /call `block`/);
-  assert.match(prompt, /\[Conductor agent commands\]/);
+  assert.match(
+    prompt,
+    /If the Conductor tools are\nmissing, say so and end your turn\./,
+  );
   assert.match(prompt, /End your turn only after the report is accepted\./);
   assertNoPayloadSamples(prompt);
 });

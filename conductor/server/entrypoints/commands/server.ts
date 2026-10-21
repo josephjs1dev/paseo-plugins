@@ -8,6 +8,7 @@ import { join } from "node:path";
 import { z } from "zod";
 import { SYMPHONY_COMMAND_SOURCE } from "./source";
 import { COMMAND_LIMITS } from "./limits";
+import { removeLegacyLaunchers } from "./launcher";
 import { SymphonyError } from "../../symphonies/errors";
 import {
   ensureSymphonyDirectory,
@@ -121,8 +122,7 @@ export async function commandServer(
         message = error.message;
       }
       if (error instanceof z.ZodError) {
-        message =
-          "Invalid command fields. Run command help for the supported format.";
+        message = "Invalid command fields. Check the tool's input schema.";
       }
       respond(response, 400, { error: message });
     } finally {
@@ -158,6 +158,8 @@ export async function commandServer(
   try {
     await chmod(socketPath, 0o600);
     await writeSymphonyFile(commandPath, SYMPHONY_COMMAND_SOURCE);
+    // Best effort: a leftover launcher is inert once nothing references it.
+    await removeLegacyLaunchers(commandPath).catch(() => undefined);
   } catch (error) {
     await close();
     throw error;

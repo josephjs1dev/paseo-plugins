@@ -27,8 +27,6 @@ import {
 import { SymphonyError } from "./errors";
 import { contentHash, type SymphonyStore } from "./store";
 import { orchestration } from "./orchestration";
-import type { SymphonyCommandAccess } from "./command-access";
-import { agentCommand } from "./prompts";
 import type { WorkerRuntime } from "./workers";
 import { catalogView, route, type RoutingCatalogSource } from "./routing";
 import { profileStoreSource } from "./profiles";
@@ -46,7 +44,6 @@ export function symphonyExecution(
   store: SymphonyStore,
   getRuntime: () => ExecutionRuntime & Partial<SymphonyChangesRuntime>,
   getWorkers?: () => WorkerRuntime,
-  getAccess?: () => SymphonyCommandAccess,
   routing: RoutingCatalogSource = profileStoreSource(null),
 ) {
   const conductor = orchestration(
@@ -58,7 +55,6 @@ export function symphonyExecution(
       }
       return getWorkers();
     },
-    (agentId, verb) => agentCommand(getAccess?.(), agentId, verb),
     routing,
   );
   // Serializes read/version/mutate in this controller; SymphonyStore fences other processes too.

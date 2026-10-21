@@ -7,32 +7,6 @@ import {
   type TaskReport,
 } from "../../shared/symphonies/models";
 import { loopPrerequisites } from "../../shared/symphonies/score";
-import type { SymphonyCommandAccess } from "./command-access";
-
-export type CommandLine = (agentId: string, verb: string) => string;
-const shellQuote = (value: string) => `'${value.replaceAll("'", "'\\''")}'`;
-
-export function launcherCommand(path: string, verb: string): string {
-  return `node ${shellQuote(path)} ${verb}`;
-}
-
-export function agentCommand(
-  access: SymphonyCommandAccess | undefined,
-  agentId: string,
-  verb: string,
-): string {
-  const script = access?.commandPath
-    ? shellQuote(access.commandPath)
-    : '"${CONDUCTOR_COMMAND:?Missing Conductor command}"';
-  const socket = access?.socketPath
-    ? shellQuote(access.socketPath)
-    : '"${CONDUCTOR_SOCKET:?Missing Conductor socket}"';
-  return `node ${script} ${verb} --agent ${shellQuote(agentId)} --socket ${socket}`;
-}
-
-export function jsonCommand(command: string, input: unknown): string {
-  return `${command} <<'CONDUCTOR_JSON'\n${JSON.stringify(input, null, 2)}\nCONDUCTOR_JSON`;
-}
 
 function clamp(value: string, max: number): string {
   return value.length > max ? value.slice(0, max) : value;
@@ -304,7 +278,7 @@ function fitPrompt(
 /**
  * The full assignment for a new task agent. It states what to do and which
  * checks to run, not how to format a tool call: the harness already carries the
- * MCP schemas and a "[Conductor agent commands]" system prompt. Findings are
+ * Conductor MCP schemas and a "[Conductor agent commands]" system prompt. Findings are
  * shortened only when the full prompt would exceed `budget` characters.
  */
 export function assignmentPrompt(
@@ -365,8 +339,8 @@ function renderAssignment(
     "  `failed` for a failing check.",
     "",
     "If your change breaks a file outside your write paths, call `widen` before",
-    "editing it. If you can't continue, call `block`. If you can't find the",
-    "Conductor tools, follow [Conductor agent commands] in your instructions.",
+    "editing it. If you can't continue, call `block`. If the Conductor tools are",
+    "missing, say so and end your turn.",
     "End your turn only after the report is accepted.",
   );
   if (input.review) {

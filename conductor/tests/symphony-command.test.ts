@@ -1,9 +1,10 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { execFile, spawn } from "node:child_process";
+import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { request } from "node:http";
-import { stat } from "node:fs/promises";
+import { mkdir, readFile, stat, writeFile } from "node:fs/promises";
+import { dirname, join } from "node:path";
 import { z } from "zod";
 import { commandServer } from "../server/entrypoints/commands/server";
 import { symphonyExecution } from "../server/symphonies/execution";
@@ -11,41 +12,14 @@ import { contentHash, fileSymphonyStore } from "../server/symphonies/store";
 import { SymphonyError } from "../server/symphonies/errors";
 import { placement, planContext } from "./symphony-fixtures";
 import { testDirectory } from "./fixtures";
+import { boundMcpClient, mcpClient } from "./mcp-client";
 
-function cli(
-  file: string,
-  socket: string,
-  command: string,
-  input: unknown,
-  agentId = "agent-1",
-) {
-  return new Promise<{ code: number | null; output: string; error: string }>(
-    (resolve, reject) => {
-      const child = spawn(
-        process.execPath,
-        [file, command, "--agent", agentId, "--socket", socket],
-        { stdio: ["pipe", "pipe", "pipe"] },
-      );
-      let output = "";
-      let error = "";
-      child.stdout.on("data", (data: Buffer) => {
-        output += data.toString();
-      });
-      child.stderr.on("data", (data: Buffer) => {
-        error += data.toString();
-      });
-      child.once("error", reject);
-      child.once("exit", (code) => resolve({ code, output, error }));
-      child.stdin.end(JSON.stringify(input));
-    },
-  );
-}
 const responseSchema = z.object({
   symphony: z.object({ id: z.string(), status: z.string() }),
   attempt: z.object({ id: z.string() }).optional(),
 });
 
-void test("standalone command supports a real start/claim/report/finish over an owner-only socket", async () => {
+void test("MCP supports a real start/claim/report/finish over an owner-only socket", async (t) => {
   const directory = await testDirectory();
   const store = fileSymphonyStore(directory);
   const runtime = {
@@ -60,60 +34,59 @@ void test("standalone command supports a real start/claim/report/finish over an 
   const server = await commandServer(directory, engine.execute);
   const { socketPath, commandPath } = server.access;
   assert.ok(socketPath && commandPath);
+  const agent = await boundMcpClient({ commandPath, socketPath }, "agent-1");
+  t.after(() => agent.child.kill());
   try {
     assert.equal((await stat(socketPath)).mode & 0o777, 0o600);
-    const started = await cli(commandPath, socketPath, "start", {
-      key: "cli",
-      title: "CLI fix",
+    await agent.initialize();
+    const started = await agent.tool("start", {
+      key: "mcp",
+      title: "MCP fix",
       goal: "Verify the real command",
     });
-    assert.equal(started.code, 0, started.error);
-    const symphonyId = responseSchema.parse(
-      JSON.parse(started.output) as unknown,
-    ).symphony.id;
-    const claimed = await cli(commandPath, socketPath, "claim", {
+    assert.equal(started.isError, false, started.content[0]?.text);
+    const symphonyId = responseSchema.parse(started.structuredContent).symphony
+      .id;
+    const claimed = await agent.tool("claim", {
       symphonyId: symphonyId,
       taskId: "work",
     });
-    assert.equal(claimed.code, 0, claimed.error);
-    const attemptId = responseSchema.parse(
-      JSON.parse(claimed.output) as unknown,
-    ).attempt?.id;
+    assert.equal(claimed.isError, false, claimed.content[0]?.text);
+    const attemptId = responseSchema.parse(claimed.structuredContent).attempt
+      ?.id;
     assert.ok(attemptId);
     await server.close();
     const resumed = await commandServer(directory, engine.execute);
     try {
-      const result = await cli(commandPath, socketPath, "report", {
+      const result = await agent.tool("report", {
         symphonyId: symphonyId,
         attemptId,
         report: {
           outcome: "completed",
           summary: "Verified the command",
-          evidence: ["CLI completed after reconnect"],
+          evidence: ["MCP completed after reconnect"],
           checks: [],
         },
       });
-      assert.equal(result.code, 0, result.error);
-      assert.equal(
-        (
-          await cli(commandPath, socketPath, "finish", {
-            symphonyId: symphonyId,
-            summary: "All command operations passed",
-          })
-        ).code,
-        0,
-      );
+      assert.equal(result.isError, false, result.content[0]?.text);
+      const finished = await agent.tool("finish", {
+        symphonyId: symphonyId,
+        summary: "All command operations passed",
+      });
+      assert.equal(finished.isError, false, finished.content[0]?.text);
       assert.equal((await store.read(symphonyId)).symphony.status, "completed");
-      assert.equal((await cli(commandPath, socketPath, "help", {})).code, 0);
+      const listed = await agent.tool("list");
+      assert.equal(listed.isError, false, listed.content[0]?.text);
     } finally {
       await resumed.close();
     }
+    await agent.close();
   } finally {
     await server.close();
   }
 });
 
-void test("the CLI routes widen and publishes a runnable stdin example in help", async () => {
+void test("MCP routes widen for the assigned task agent", async (t) => {
   const directory = await testDirectory();
   const store = fileSymphonyStore(directory);
   const runtime = {
@@ -207,34 +180,45 @@ void test("the CLI routes widen and publishes a runnable stdin example in help",
   const { commandPath, socketPath } = server.access;
   assert.ok(commandPath && socketPath);
   try {
-    const widened = await cli(
-      commandPath,
-      socketPath,
-      "widen",
-      {
-        symphonyId,
-        attemptId,
-        paths: ["shared/schema.ts"],
-        reason: "Typecheck reads the exported schema",
-      },
+    const worker = await boundMcpClient(
+      { commandPath, socketPath },
       "worker-writer",
     );
-    assert.equal(widened.code, 0, widened.error);
-    const parsed = JSON.parse(widened.output) as {
-      acknowledged: boolean;
-      grantedWrites: { path: string; reason: string }[];
-    };
+    t.after(() => worker.child.kill());
+    await worker.initialize();
+    const widened = await worker.tool("widen", {
+      symphonyId,
+      attemptId,
+      paths: ["shared/schema.ts"],
+      reason: "Typecheck reads the exported schema",
+    });
+    assert.equal(widened.isError, false, widened.content[0]?.text);
+    const parsed = z
+      .object({
+        acknowledged: z.boolean(),
+        grantedWrites: z.array(z.object({ path: z.string() })),
+      })
+      .parse(widened.structuredContent);
     assert.equal(parsed.acknowledged, true);
     assert.equal(parsed.grantedWrites[0]?.path, "shared/schema.ts");
+    await worker.close();
+  } finally {
+    await server.close();
+  }
+});
 
-    const help = await cli(commandPath, socketPath, "help", {});
-    assert.equal(help.code, 0, help.error);
-    const commands = (
-      JSON.parse(help.output) as {
-        commands: { widen?: { example?: string } };
-      }
-    ).commands;
-    assert.match(commands.widen?.example ?? "", /widen --agent/);
+void test("starting the command server removes legacy per-agent launchers", async () => {
+  const directory = await testDirectory();
+  const legacy = join(directory, "agent-commands");
+  await mkdir(legacy, { recursive: true });
+  await writeFile(join(legacy, "old.mjs"), "// legacy launcher\n");
+  await writeFile(join(legacy, "kept.json"), "{}\n");
+  const server = await commandServer(directory, async () => ({}));
+  try {
+    await assert.rejects(readFile(join(legacy, "old.mjs")), {
+      code: "ENOENT",
+    });
+    assert.equal(await readFile(join(legacy, "kept.json"), "utf8"), "{}\n");
   } finally {
     await server.close();
   }
@@ -256,7 +240,7 @@ void test("a second command server cannot steal ownership and cleanup releases t
   await replacement.close();
 });
 
-void test("CLI reports missing runtime context and refuses malformed command fields", async () => {
+void test("MCP reports missing runtime context and refuses malformed command fields", async (t) => {
   const directory = await testDirectory();
   const engine = symphonyExecution(fileSymphonyStore(directory), () => {
     throw new SymphonyError("Runtime context unavailable");
@@ -264,24 +248,25 @@ void test("CLI reports missing runtime context and refuses malformed command fie
   const server = await commandServer(directory, engine.execute);
   const { commandPath, socketPath } = server.access;
   assert.ok(commandPath && socketPath);
+  const agent = await boundMcpClient({ commandPath, socketPath }, "agent-1");
+  t.after(() => agent.child.kill());
   try {
-    const result = await cli(commandPath, socketPath, "start", {
+    await agent.initialize();
+    const result = await agent.tool("start", {
       key: "one",
       title: "One",
       goal: "One",
     });
-    assert.equal(result.code, 1);
-    assert.match(result.error, /Runtime context unavailable/);
-    const invalid = await cli(commandPath, socketPath, "start", {
-      kind: "finish",
-    });
-    assert.equal(invalid.code, 1);
-    assert.match(invalid.error, /without a kind/);
-    const huge = await cli(commandPath, socketPath, "start", {
-      key: "x".repeat(270000),
-    });
-    assert.equal(huge.code, 1);
-    assert.match(huge.error, /256 KiB/);
+    assert.equal(result.isError, true);
+    assert.match(result.content[0]?.text ?? "", /Runtime context unavailable/);
+    assert.equal(
+      (await agent.call("start", { kind: "finish" })).error?.code,
+      -32602,
+    );
+    const huge = await agent.tool("start", { key: "x".repeat(270000) });
+    assert.equal(huge.isError, true);
+    assert.match(huge.content[0]?.text ?? "", /256 KiB/);
+    await agent.close();
   } finally {
     await server.close();
   }
@@ -346,6 +331,10 @@ void test("session hooks preserve configuration and inject command context witho
   ) => Requests[K] | void | Promise<Requests[K] | void>;
   let create: Handler<"agent.create"> | undefined;
   let open: Handler<"agent.session_open"> | undefined;
+  type Events = import("@getpaseo/plugin/server").PluginLifecycleEvents;
+  let archived:
+    | ((event: Events["agent.archived"], context: Context) => Promise<void>)
+    | undefined;
   let remembered = 0;
   let removed = 0;
   const commands = await commandServer(
@@ -365,7 +354,11 @@ void test("session hooks preserve configuration and inject command context witho
         removed++;
       };
     },
-    on() {
+    on(name, handler) {
+      // As above, the generic handler is narrowed by its registered name.
+      if (name === "agent.archived") {
+        archived = handler as typeof archived;
+      }
       return () => {
         removed++;
       };
@@ -410,13 +403,17 @@ void test("session hooks preserve configuration and inject command context witho
       original.config.mcpServers?.existing,
     );
     assert.equal(configured.env?.KEEP, "value");
-    assert.equal(configured.env?.CONDUCTOR_SOCKET, commands.access.socketPath);
-    const launcher = configured.env?.CONDUCTOR_COMMAND;
-    assert.ok(launcher);
+    assert.equal(configured.env?.CONDUCTOR_SOCKET, undefined);
+    assert.equal(configured.env?.CONDUCTOR_COMMAND, undefined);
+    const binding = configured.env?.CONDUCTOR_BINDING;
+    const { commandPath } = commands.access;
+    assert.ok(binding && commandPath);
+    assert.match(binding, /agent-commands\/[0-9a-f-]{36}\.json$/);
     assert.deepEqual(configured.config.mcpServers?.conductor, {
       type: "stdio",
       command: process.execPath,
-      args: [launcher, "mcp"],
+      args: [commandPath, "mcp", binding],
+      env: { ELECTRON_RUN_AS_NODE: "1" },
       alwaysLoad: true,
     });
     assert.match(configured.config.systemPrompt ?? "", /conductor MCP server/);
@@ -454,7 +451,7 @@ void test("session hooks preserve configuration and inject command context witho
     );
     assert.match(
       preserved?.config.systemPrompt ?? "",
-      /Use the injected conductor_3 MCP server/,
+      /tools on the injected conductor_3 MCP server/,
     );
     for (const provider of ["claude", "opencode", "pi", "custom-provider"]) {
       const configuredProvider: Requests["agent.create"] | void = await create(
@@ -472,11 +469,13 @@ void test("session hooks preserve configuration and inject command context witho
       );
       assert.equal(configuredProvider?.config.modeId, original.config.modeId);
     }
-    assert.ok(configured.config.systemPrompt?.includes(launcher));
-    assert.equal(
-      configured.config.systemPrompt?.includes("$CONDUCTOR_COMMAND"),
-      false,
-    );
+    for (const shell of [binding, commandPath, "node ", "help"]) {
+      assert.equal(
+        configured.config.systemPrompt?.includes(shell),
+        false,
+        `guidance must not offer a shell command: ${shell}`,
+      );
+    }
     assert.equal(
       await create({ request: configured }, context),
       undefined,
@@ -491,51 +490,61 @@ void test("session hooks preserve configuration and inject command context witho
       purpose: "interactive",
       env: configured.env ?? {},
     };
-    const session = await open({ request }, context);
-    assert.ok(session);
-    assert.equal(session.env.KEEP, "value");
-    assert.equal(session.env.CONDUCTOR_AGENT_ID, "agent-1");
-    assert.equal(session.env.CONDUCTOR_COMMAND, launcher);
-    const result = await promisify(execFile)(
-      process.execPath,
-      [launcher, "list"],
-      {
-        env: {},
-        timeout: 5000,
-      },
-    );
-    assert.equal(result.stderr, "");
-    assert.deepEqual(JSON.parse(result.stdout) as unknown, {
+    assert.equal(await open({ request }, context), undefined);
+    assert.deepEqual(JSON.parse(await readFile(binding, "utf8")) as unknown, {
+      agentId: "agent-1",
+      socketPath: commands.access.socketPath,
+    });
+    const serverArgs = configured.config.mcpServers?.conductor?.args ?? [];
+    const bound = mcpClient(serverArgs);
+    await bound.initialize();
+    assert.deepEqual((await bound.tool("list")).structuredContent, {
       acknowledged: { agentId: "agent-1", command: { kind: "list" } },
     });
-    const resumed = await open(
-      { request: { ...request, reason: "resume" } },
-      context,
+    await bound.close();
+    await assert.rejects(
+      promisify(execFile)(process.execPath, [commandPath, "list"], {
+        env: {},
+        timeout: 5000,
+      }),
+      /only as an MCP server/,
+      "The server offers no shell command interface",
     );
-    assert.equal(resumed?.env.CONDUCTOR_COMMAND, launcher);
-    const mcpBefore = configured.config.mcpServers?.conductor;
-    assert.equal(
-      mcpBefore?.type,
-      "stdio",
-      "The same bound launcher serves MCP across session resumes",
-    );
+    await open({ request: { ...request, reason: "resume" } }, context);
     await assert.rejects(async () => {
       assert.ok(open);
       return open(
         { request: { ...request, agentId: "different-agent" } },
         context,
       );
-    }, /already bound/);
-    const unrelated = await open(
+    }, /already belongs/);
+    const unrelated = join(dirname(binding), "unrelated.json");
+    await open(
+      { request: { ...request, env: { CONDUCTOR_BINDING: unrelated } } },
+      context,
+    );
+    await assert.rejects(readFile(unrelated), { code: "ENOENT" });
+    assert.ok(archived);
+    await archived(
       {
-        request: {
-          ...request,
-          env: { CONDUCTOR_COMMAND: "/tmp/unrelated-command.mjs" },
+        agent: {
+          id: "agent-1",
+          workspaceId: null,
+          parentAgentId: null,
+          provider: "codex",
+          cwd: "/test/repo",
+          title: null,
         },
+        archivedAt: "2026-10-21T00:00:00.000Z",
       },
       context,
     );
-    assert.equal(unrelated?.env.CONDUCTOR_COMMAND, commands.access.commandPath);
+    await assert.rejects(readFile(binding), { code: "ENOENT" });
+    await open({ request: { ...request, reason: "resume" } }, context);
+    assert.ok(
+      await readFile(binding, "utf8"),
+      "A reopened session writes its binding again",
+    );
     assert.equal(
       await open({ request: { ...request, purpose: "history" } }, context),
       undefined,

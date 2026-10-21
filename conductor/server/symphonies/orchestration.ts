@@ -6,7 +6,6 @@ import {
   prerequisiteResults,
   unionChangedPaths,
   type AttemptPosition,
-  type CommandLine,
   type PreviousFindingsInput,
   type RecheckPromptInput,
 } from "./prompts";
@@ -278,7 +277,6 @@ export function orchestration(
   store: SymphonyStore,
   runtime: () => ExecutionRuntime & Partial<SymphonyChangesRuntime>,
   workers: () => WorkerRuntime,
-  command: CommandLine,
   routing: RoutingCatalogSource,
 ) {
   const change = async (
@@ -297,7 +295,6 @@ export function orchestration(
     runtime,
     workers,
     change,
-    command,
     routing,
   );
   /**
