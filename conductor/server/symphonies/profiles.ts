@@ -21,6 +21,9 @@ import {
 import type {
   ImportProfilesResult,
   ImportSkip,
+  SyncPreview,
+  SyncPreviewEntry,
+  SyncProfilesResult,
 } from "../../shared/symphonies/profiles-rpc";
 import {
   isClassifiedRouting,
@@ -52,7 +55,49 @@ export interface ProfilesSource {
     operation: ProfileOperation,
   ): Promise<SaveProfilesResult>;
   importFromPaseo(expectedRevision: string): Promise<ImportProfilesResult>;
+  /** Plans exporting the Conductor profiles without writing anything. */
+  syncPreview(): Promise<SyncPreview>;
+  /**
+   * Exports the selected Conductor profiles to the daemon's Paseo agent
+   * profiles. Writing is refused when either side changed since the preview.
+   */
+  syncToPaseo(
+    expectedRevision: string,
+    expectedPaseoRevision: string,
+    profileIds: readonly string[],
+  ): Promise<SyncProfilesResult>;
 }
+
+/**
+ * One raw Paseo agent profile entry. The entry stays loose so icon, color,
+ * feature values and fields Conductor does not know survive an export.
+ */
+export type PaseoProfileRecord = {
+  id: string;
+  name: string;
+  provider: string;
+  icon?: string | undefined;
+  color?: string | undefined;
+  model?: string | undefined;
+  modeId?: string | undefined;
+  thinkingOptionId?: string | undefined;
+  featureValues?: Record<string, unknown> | undefined;
+  notes?: string | undefined;
+  [field: string]: unknown;
+};
+
+/** Reads and replaces the daemon's Paseo agent profile list. */
+export interface PaseoProfilesPort {
+  read(): Promise<PaseoProfileRecord[]>;
+  write(next: readonly PaseoProfileRecord[]): Promise<PaseoProfileRecord[]>;
+}
+
+/** The message an export returns when either side changed since the preview. */
+export const STALE_SYNC_MESSAGE = "Profiles changed. Review and sync again.";
+
+/** The message a rejected patch returns when the daemon dropped the write. */
+export const SYNC_NOT_SAVED_MESSAGE =
+  "This Paseo daemon did not save agent profiles. Update Paseo and retry.";
 
 /** Recursively sorts object keys so a content hash ignores key order. */
 export function canonicalJson(value: unknown): string {
@@ -261,6 +306,338 @@ function clampText(value: string, max: number): string {
   return value.length > max ? value.slice(0, max) : value;
 }
 
+/** The Paseo fields Conductor owns; every other field is preserved verbatim. */
+interface ExportedProfile {
+  readonly name: string;
+  readonly provider: string;
+  readonly model: string | undefined;
+  readonly modeId: string | undefined;
+  readonly thinkingOptionId: string | undefined;
+  readonly notes: string | undefined;
+}
+
+function exportedProfile(profile: ConductorProfile): ExportedProfile {
+  return {
+    name: profile.name,
+    provider: profile.provider,
+    model: profile.model,
+    modeId: profile.modeId,
+    thinkingOptionId: profile.thinkingOptionId,
+    notes: profile.notes === "" ? undefined : profile.notes,
+  };
+}
+
+/** Treats an empty Paseo value as absent so a no-op edit does not write. */
+function present(value: string | undefined): string | undefined {
+  return value === undefined || value.trim() === "" ? undefined : value;
+}
+
+/**
+ * True when every exported field already equals the Conductor value exactly.
+ * A stored optional field that is present but blank differs from an unset one,
+ * so the row updates and the export removes it (and verification fails if the
+ * daemon keeps it).
+ */
+function sameExported(
+  record: PaseoProfileRecord,
+  exported: ExportedProfile,
+): boolean {
+  return (
+    record.name === exported.name &&
+    record.provider === exported.provider &&
+    record.model === exported.model &&
+    record.modeId === exported.modeId &&
+    record.thinkingOptionId === exported.thinkingOptionId &&
+    record.notes === exported.notes
+  );
+}
+
+/**
+ * Builds the Paseo entry to write: the exported fields are set (or removed
+ * when unset), and every other field, known or unknown, is kept unchanged.
+ */
+function withExported(
+  record: PaseoProfileRecord,
+  exported: ExportedProfile,
+): PaseoProfileRecord {
+  const next: PaseoProfileRecord = {
+    ...record,
+    name: exported.name,
+    provider: exported.provider,
+  };
+  if (exported.model === undefined) {
+    delete next.model;
+  } else {
+    next.model = exported.model;
+  }
+  if (exported.modeId === undefined) {
+    delete next.modeId;
+  } else {
+    next.modeId = exported.modeId;
+  }
+  if (exported.thinkingOptionId === undefined) {
+    delete next.thinkingOptionId;
+  } else {
+    next.thinkingOptionId = exported.thinkingOptionId;
+  }
+  if (exported.notes === undefined) {
+    delete next.notes;
+  } else {
+    next.notes = exported.notes;
+  }
+  return next;
+}
+
+/** One planned export row, with the Conductor profile and Paseo entry behind it. */
+export interface PaseoSyncPlanEntry {
+  /** The client-facing preview row. */
+  readonly preview: SyncPreviewEntry;
+  /** The Conductor profile this row plans for. */
+  readonly profile: ConductorProfile;
+  /** The Paseo entry to write; null when the row writes nothing. */
+  readonly next: PaseoProfileRecord | null;
+}
+
+function skipEntry(
+  profile: ConductorProfile,
+  reason: string,
+): PaseoSyncPlanEntry {
+  return {
+    preview: {
+      profileId: profile.id,
+      name: clampText(profile.name, 160),
+      action: "skip",
+      reason: clampText(reason, 300),
+    },
+    profile,
+    next: null,
+  };
+}
+
+/** The matched Paseo name, omitted when the entry's name is blank. */
+function paseoNameField(record: PaseoProfileRecord): { paseoName?: string } {
+  const name = present(record.name);
+  return name === undefined ? {} : { paseoName: clampText(name, 160) };
+}
+
+/** Why a name fallback cannot use a Paseo profile another row already owns. */
+export const SYNC_TARGET_ALIAS_REASON =
+  "Another Conductor profile already syncs to this Paseo profile.";
+
+/**
+ * Plans one export row per Conductor profile. A Paseo profile is matched by
+ * the Conductor id first, then by a unique case-insensitive name; otherwise the
+ * row creates a Paseo profile with the Conductor id. A duplicate name or a
+ * rename onto another Paseo profile's name is skipped.
+ *
+ * Target collisions are resolved over the whole store before any row is
+ * planned, so the preview and the sync agree regardless of source order and no
+ * two rows ever target the same Paseo profile: an id match always wins, and a
+ * name fallback that would land on an entry another Conductor profile already
+ * matches is skipped instead.
+ */
+export function planPaseoSync(
+  conductor: readonly ConductorProfile[],
+  paseo: readonly PaseoProfileRecord[],
+): PaseoSyncPlanEntry[] {
+  const byId = new Map<string, PaseoProfileRecord>();
+  const idTargets = new Set<string>();
+  for (const profile of conductor) {
+    const record = paseo.find((entry) => entry.id === profile.id);
+    if (record) {
+      byId.set(profile.id, record);
+      idTargets.add(record.id);
+    }
+  }
+  const candidatesOf = new Map<string, PaseoProfileRecord[]>();
+  // Profile ids that name-match each Paseo entry, so an entry several rows
+  // name-match is claimed by more than one and neither may use it.
+  const nameClaimants = new Map<string, Set<string>>();
+  for (const profile of conductor) {
+    if (byId.has(profile.id)) {
+      continue;
+    }
+    const key = profileNameKey(profile.name);
+    const candidates = paseo.filter(
+      (entry) => profileNameKey(entry.name) === key,
+    );
+    candidatesOf.set(profile.id, candidates);
+    for (const candidate of candidates) {
+      const claimants = nameClaimants.get(candidate.id) ?? new Set<string>();
+      claimants.add(profile.id);
+      nameClaimants.set(candidate.id, claimants);
+    }
+  }
+  return conductor.map((profile) => {
+    const exported = exportedProfile(profile);
+    let matched = byId.get(profile.id);
+    if (!matched) {
+      const candidates = candidatesOf.get(profile.id) ?? [];
+      // Ambiguity is judged over every Paseo entry with this name, before
+      // reservations: a name two entries share stays ambiguous even when one
+      // of them is another profile's id target, and is never silently narrowed
+      // to the other entry.
+      if (candidates.length > 1) {
+        return skipEntry(profile, "Several Paseo profiles share this name.");
+      }
+      const [candidate] = candidates;
+      if (candidate) {
+        const reserved =
+          idTargets.has(candidate.id) ||
+          (nameClaimants.get(candidate.id)?.size ?? 0) > 1;
+        if (reserved) {
+          return skipEntry(profile, SYNC_TARGET_ALIAS_REASON);
+        }
+        matched = candidate;
+      }
+    }
+    if (!matched) {
+      return {
+        preview: {
+          profileId: profile.id,
+          name: clampText(profile.name, 160),
+          action: "create",
+        },
+        profile,
+        next: withExported(
+          {
+            id: profile.id,
+            name: profile.name,
+            provider: profile.provider,
+          },
+          exported,
+        ),
+      };
+    }
+    const renaming =
+      profileNameKey(matched.name) !== profileNameKey(profile.name);
+    const clash =
+      renaming &&
+      paseo.some(
+        (entry) =>
+          entry.id !== matched.id &&
+          profileNameKey(entry.name) === profileNameKey(profile.name),
+      );
+    if (clash) {
+      return skipEntry(
+        profile,
+        `Another Paseo profile is already named "${profile.name}".`,
+      );
+    }
+    if (sameExported(matched, exported)) {
+      return {
+        preview: {
+          profileId: profile.id,
+          name: clampText(profile.name, 160),
+          action: "unchanged",
+          ...paseoNameField(matched),
+        },
+        profile,
+        next: null,
+      };
+    }
+    return {
+      preview: {
+        profileId: profile.id,
+        name: clampText(profile.name, 160),
+        action: "update",
+        ...paseoNameField(matched),
+      },
+      profile,
+      next: withExported(matched, exported),
+    };
+  });
+}
+
+/** The full Paseo list to write plus the counts the dialog reports. */
+export interface PaseoSyncOutcome {
+  readonly list: PaseoProfileRecord[];
+  /** The rows that actually write a Paseo entry. */
+  readonly written: PaseoSyncPlanEntry[];
+  readonly created: number;
+  readonly updated: number;
+  readonly unchanged: number;
+  readonly skipped: ImportSkip[];
+}
+
+/**
+ * Applies a plan to the Paseo list for the selected Conductor profiles only.
+ * Unselected and unmatched Paseo entries keep their values and order.
+ */
+export function applyPaseoSync(
+  plan: readonly PaseoSyncPlanEntry[],
+  selectedIds: readonly string[],
+  paseo: readonly PaseoProfileRecord[],
+): PaseoSyncOutcome {
+  const selected = new Set(selectedIds);
+  const list = [...paseo];
+  const written: PaseoSyncPlanEntry[] = [];
+  const skipped: ImportSkip[] = [];
+  let created = 0;
+  let updated = 0;
+  let unchanged = 0;
+  for (const entry of plan) {
+    if (!selected.has(entry.profile.id)) {
+      continue;
+    }
+    if (entry.preview.action === "skip") {
+      skipped.push({
+        name: clampText(entry.profile.name, 160),
+        reason: entry.preview.reason ?? "This profile cannot be synced.",
+      });
+      continue;
+    }
+    const next = entry.next;
+    if (entry.preview.action === "unchanged" || next === null) {
+      unchanged += 1;
+      continue;
+    }
+    const index = list.findIndex((record) => record.id === next.id);
+    if (index === -1) {
+      list.push(next);
+      created += 1;
+    } else {
+      list[index] = next;
+      updated += 1;
+    }
+    written.push(entry);
+  }
+  return { list, written, created, updated, unchanged, skipped };
+}
+
+/** The preview the dialog redraws from. */
+function syncPreviewOf(
+  catalog: ProfilesCatalog,
+  paseo: readonly PaseoProfileRecord[],
+): SyncPreview {
+  return {
+    revision: catalog.revision,
+    paseoRevision: digest(paseo),
+    entries: planPaseoSync(catalog.profiles, paseo).map(
+      (entry) => entry.preview,
+    ),
+  };
+}
+
+/**
+ * Fails when the patch returned a list without the values Conductor wrote.
+ * `sameExported` compares stored values exactly, so a daemon that kept a field
+ * the export removed (including a present-but-blank one) is a dropped write.
+ */
+function verifySynced(
+  outcome: PaseoSyncOutcome,
+  saved: readonly PaseoProfileRecord[],
+): void {
+  for (const entry of outcome.written) {
+    const next = entry.next;
+    const stored =
+      next === null ? undefined : saved.find((record) => record.id === next.id);
+    if (!stored || !sameExported(stored, exportedProfile(entry.profile))) {
+      throw new SymphonyError(SYNC_NOT_SAVED_MESSAGE);
+    }
+  }
+}
+
 /**
  * Builds the Conductor profile store reader/writer. Reads never follow symlinks
  * and reject a file past the size cap; writes are atomic and serialized, and a
@@ -269,6 +646,7 @@ function clampText(value: string, max: number): string {
 export function profileStoreSource(
   path: string | null,
   paseoProfiles?: () => Promise<readonly AgentProfile[]>,
+  paseoPort?: () => PaseoProfilesPort,
 ): ProfilesSource {
   const load = async (): Promise<ProfilesCatalog> => {
     if (path === null) {
@@ -366,6 +744,13 @@ export function profileStoreSource(
     }
     await atomicJson(path, store);
     return catalogOf(store, "valid");
+  };
+
+  const requirePaseoPort = (): PaseoProfilesPort => {
+    if (!paseoPort) {
+      throw new SymphonyError("Paseo profiles are unavailable.");
+    }
+    return paseoPort();
   };
 
   return {
@@ -483,6 +868,60 @@ export function profileStoreSource(
             state: profilesState(catalog),
             imported,
             skipped,
+          };
+        }),
+      ),
+    syncPreview: () =>
+      serialize(async () => {
+        const current = await load();
+        const paseo = await requirePaseoPort().read();
+        return syncPreviewOf(current, paseo);
+      }),
+    syncToPaseo: (expectedRevision, expectedPaseoRevision, profileIds) =>
+      serialize(() =>
+        withFilesystemLock(async () => {
+          const current = await load();
+          const port = requirePaseoPort();
+          const paseo = await port.read();
+          const known = new Set(current.profiles.map((profile) => profile.id));
+          // A selected id the store no longer has is stale even if the
+          // revision somehow matches, so a vanished row is never a silent
+          // no-op.
+          if (
+            current.revision !== expectedRevision ||
+            digest(paseo) !== expectedPaseoRevision ||
+            profileIds.some((id) => !known.has(id))
+          ) {
+            return {
+              status: "stale",
+              preview: syncPreviewOf(current, paseo),
+              message: STALE_SYNC_MESSAGE,
+            };
+          }
+          const outcome = applyPaseoSync(
+            planPaseoSync(current.profiles, paseo),
+            profileIds,
+            paseo,
+          );
+          if (outcome.written.length === 0) {
+            return {
+              status: "saved",
+              preview: syncPreviewOf(current, paseo),
+              created: 0,
+              updated: 0,
+              unchanged: outcome.unchanged,
+              skipped: outcome.skipped,
+            };
+          }
+          const saved = await port.write(outcome.list);
+          verifySynced(outcome, saved);
+          return {
+            status: "saved",
+            preview: syncPreviewOf(current, saved),
+            created: outcome.created,
+            updated: outcome.updated,
+            unchanged: outcome.unchanged,
+            skipped: outcome.skipped,
           };
         }),
       ),

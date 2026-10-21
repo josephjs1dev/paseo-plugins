@@ -1,6 +1,6 @@
 /**
  * Domain agent types shared by the host ports. They are declared explicitly and
- * never derived from Paseo SDK types; `server/paseo/mapping.ts` translates
+ * never derived from Paseo SDK types; `server/engine/paseo/mapping.ts` translates
  * Paseo records into these shapes.
  */
 export type AgentStatus =

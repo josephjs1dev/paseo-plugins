@@ -1,0 +1,6 @@
+{"type":"session","version":3,"id":"session-pi","cwd":"/workspace","timestamp":"2026-10-18T12:00:00.000Z"}
+{"type":"model_change","id":"model-1","timestamp":"2026-10-18T12:00:00.000Z","provider":"openai-codex","modelId":"gpt-5"}
+{"type":"message","id":"pi-1","timestamp":"2026-10-18T12:00:10.000Z","message":{"role":"assistant","provider":"openai-codex","model":"gpt-5","content":"private response","usage":{"input":10,"output":5,"cacheRead":2,"cacheWrite":1,"reasoning":3}}}
+{"type":"message","id":"pi-user","timestamp":"2026-10-18T12:00:15.000Z","message":{"role":"user","content":"private prompt"}}
+{"type":"message","id":"pi-2","timestamp":"2026-10-18T12:00:20.000Z","message":{"role":"assistant","provider":"anthropic","model":"claude-sonnet","usage":{"input":20,"output":10,"cacheRead":4,"cacheWrite":2,"reasoning":5}}}
+{"type":"usage","id":"pi-3","timestamp":"2026-10-18T12:00:30.000Z","provider":"openai-codex","model":"gpt-5","usage":{"input":2,"output":1,"cacheRead":0,"cacheWrite":0,"reasoning":0}}

@@ -3,9 +3,12 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { AgentsHost } from "../server/agents/host";
-import type { AgentPermissionRequest, PaseoAgent } from "../server/paseo/types";
+import type {
+  AgentPermissionRequest,
+  PaseoAgent,
+} from "../server/engine/paseo/types";
 import type { AgentSnapshot } from "../shared/agents/agent";
-import { toAgentSnapshot } from "../server/paseo/mapping";
+import { toAgentSnapshot } from "../server/engine/paseo/mapping";
 
 export function question(
   overrides: Partial<AgentPermissionRequest> = {},

@@ -5,6 +5,8 @@ import {
   listProfileProviders,
   listProfiles,
   saveProfiles,
+  syncPreview,
+  syncProfiles,
 } from "../../shared/symphonies/profiles-rpc";
 import type {
   ProfileOperation,
@@ -36,6 +38,8 @@ export function useProfiles(
   const save = useRpc(saveProfiles);
   const providers = useRpc(listProfileProviders);
   const importPaseoRpc = useRpc(importPaseoProfiles);
+  const syncPreviewRpc = useRpc(syncPreview);
+  const syncProfilesRpc = useRpc(syncProfiles);
   const cache = useQueryClient();
   const state = useQuery({
     queryKey: stateKey(hostId),
@@ -77,6 +81,28 @@ export function useProfiles(
       }
       const result = await importPaseoRpc({ expectedRevision });
       cache.setQueryData(stateKey(hostId), result.state);
+      return result;
+    },
+    previewPaseoSync: () => syncPreviewRpc({}),
+    syncPaseo: async (
+      profileIds: readonly string[],
+      expectedRevision: string,
+      expectedPaseoRevision: string,
+    ) => {
+      if (!expectedRevision) {
+        throw new Error("Profiles are still loading. Try again.");
+      }
+      const result = await syncProfilesRpc({
+        profileIds: [...profileIds],
+        expectedRevision,
+        expectedPaseoRevision,
+      });
+      if (result.status === "saved") {
+        // The Conductor store is untouched, but its cached revision must not
+        // be trusted by the next mutation after a dialog cycle; refetch so it
+        // carries the revision the server just verified against.
+        void cache.invalidateQueries({ queryKey: stateKey(hostId) });
+      }
       return result;
     },
     refresh: async () => {

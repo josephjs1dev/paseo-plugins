@@ -30,6 +30,116 @@ import {
  * checks and screenshots can reach them through `?symphony-fixture=`.
  */
 const extendedFixtureSymphonies: Record<string, () => StoredSymphony> = {
+  // Work/blocked durations and token usage: one task with a blocked full
+  // attempt plus a tracked partial one, one legacy task recorded before
+  // blocked time and usage existed. All times are settled, so the rendered
+  // labels are deterministic.
+  metrics: () => {
+    const implement = task("export", {
+      title: "Export the pagination report",
+      worker: { role: "implementation", profile: "default" },
+      writes: ["server/export.ts"],
+    });
+    const docs = task("docs", {
+      title: "Document the report format",
+      worker: { role: "exploration", profile: "default" },
+    });
+    const cache = task("cache", {
+      title: "Cache the report responses",
+      worker: { role: "implementation", profile: "default" },
+      writes: ["server/cache.ts"],
+    });
+    const base = storedSymphony();
+    return {
+      ...base,
+      id: "f1151538-5302-4fbf-b50b-f6a55f2a5c31",
+      title: "Usage and duration fixtures",
+      status: "completed",
+      revisions: [
+        {
+          number: 1,
+          parent: null,
+          reason: "Conductor task breakdown",
+          acceptedAt: LOOP_T0,
+          score: { tasks: [implement, docs, cache] },
+        },
+      ],
+      execution: {
+        origin: "conducted",
+        attempts: [
+          loopAttempt("export", "completed", 1, 1, 204, {
+            // 12m of work either side of a 3h blocker, then completion.
+            startedAt: LOOP_T0,
+            blocked: [
+              {
+                from: LOOP_T0 + 12 * LOOP_MINUTE,
+                to: LOOP_T0 + 192 * LOOP_MINUTE,
+              },
+            ],
+            usage: {
+              input: 48_000,
+              cached: 40_000,
+              output: 6_000,
+              collectedAt: LOOP_T0 + 205 * LOOP_MINUTE,
+            },
+            report: {
+              outcome: "completed",
+              summary: "Export endpoint streams the pagination report.",
+              evidence: ["export tests pass"],
+              checks: [
+                { name: "export test", status: "passed", detail: "green" },
+              ],
+            },
+          }),
+          loopAttempt("export", "completed", 2, 1, 248, {
+            // A retry that never blocked and reported no cached tokens.
+            startedAt: LOOP_T0 + 240 * LOOP_MINUTE,
+            blocked: [],
+            usage: {
+              input: 14_000,
+              output: 2_000,
+              collectedAt: LOOP_T0 + 249 * LOOP_MINUTE,
+            },
+            report: {
+              outcome: "completed",
+              summary: "Finished the export after the blocker cleared.",
+              evidence: ["export tests pass"],
+              checks: [
+                { name: "export test", status: "passed", detail: "green" },
+              ],
+            },
+          }),
+          // A record stored before blocked time and usage were tracked.
+          loopAttempt("docs", "completed", 3, 1, 305, {
+            report: {
+              outcome: "completed",
+              summary: "Documented the report format.",
+              evidence: ["docs reviewed"],
+              checks: [],
+            },
+          }),
+          // An attempt whose reader only learned the cached count: no input
+          // or output, so its cached sum must stand alone, never as "—".
+          loopAttempt("cache", "completed", 4, 1, 312, {
+            blocked: [],
+            usage: {
+              cached: 40_000,
+              collectedAt: LOOP_T0 + 313 * LOOP_MINUTE,
+            },
+            report: {
+              outcome: "completed",
+              summary: "Cached the report responses.",
+              evidence: ["cache test passes"],
+              checks: [],
+            },
+          }),
+        ],
+        summary: "Export and docs completed.",
+        finishedAt: LOOP_T0 + 320 * LOOP_MINUTE,
+        interruption: null,
+      },
+    };
+  },
   "agent-reuse": () => {
     const symphony = recoverySymphony();
     const attempt = symphony.execution.attempts[0];
@@ -1108,6 +1218,12 @@ export const workerFixtureProfiles: ProfilesData = {
     throw new Error("This fixture's profiles are read-only.");
   },
   importPaseo: async () => {
+    throw new Error("This fixture's profiles are read-only.");
+  },
+  previewPaseoSync: async () => {
+    throw new Error("This fixture's profiles are read-only.");
+  },
+  syncPaseo: async () => {
     throw new Error("This fixture's profiles are read-only.");
   },
   refresh: async () => WORKER_FIXTURE_STATE,

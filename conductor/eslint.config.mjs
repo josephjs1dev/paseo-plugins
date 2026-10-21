@@ -12,6 +12,11 @@ const sdkPeerImports = {
 };
 const usePaseoMessage =
   "usePaseo is allowed only in client/paseo/; keep Paseo data access behind that module.";
+const harnessImports = {
+  group: ["**/engine/harnesses", "**/engine/harnesses/*"],
+  message:
+    "Only server/symphonies/metrics.ts and server/entrypoints may import harness log readers. Domain code sees tokens through metrics.",
+};
 export default tseslint.config(
   { ignores: ["dist/**", "test-results/**", "playwright-report/**"] },
   ...tseslint.configs.recommendedTypeChecked,
@@ -40,19 +45,35 @@ export default tseslint.config(
     files: [
       "index.*.ts",
       "index.*.tsx",
-      "server/paseo/**",
+      "server/engine/paseo/**",
       "server/entrypoints/**",
     ],
     rules: {
       "no-restricted-imports": ["error", { patterns: [sdkPeerImports] }],
     },
   },
+  // The server entry file is not part of server/entrypoints; it may import the
+  // Paseo SDK but not the harness readers.
+  {
+    files: ["index.*.ts", "index.*.tsx"],
+    rules: {
+      "no-restricted-imports": [
+        "error",
+        { patterns: [sdkPeerImports, harnessImports] },
+      ],
+    },
+  },
   // Only the Paseo adapter, the entrypoints, and the server entry file may
-  // import the Paseo SDK or server/paseo modules. Domain code reaches Paseo
-  // through the host.ts ports; tests exercise the adapter directly.
+  // import the Paseo SDK or server/engine/paseo modules. Domain code reaches Paseo
+  // through the host.ts ports; tests exercise the adapter directly. Harness
+  // readers are likewise visible only to metrics collection and entrypoints.
   {
     files: ["server/**", "shared/**"],
-    ignores: ["server/paseo/**", "server/entrypoints/**"],
+    ignores: [
+      "server/engine/paseo/**",
+      "server/entrypoints/**",
+      "server/symphonies/metrics.ts",
+    ],
     rules: {
       "no-restricted-imports": [
         "error",
@@ -66,14 +87,15 @@ export default tseslint.config(
                 "**/paseo/*",
               ],
               message:
-                "Only server/paseo, server/entrypoints, and index.server.ts may import the Paseo SDK or server/paseo modules. Domain code calls Paseo through its host.ts interface.",
+                "Only server/engine/paseo, server/entrypoints, and index.server.ts may import the Paseo SDK or server/engine/paseo modules. Domain code calls Paseo through its host.ts interface.",
             },
+            harnessImports,
           ],
         },
       ],
     },
   },
-  // The client never imports the Paseo SDK server side or server/paseo at all;
+  // The client never imports the Paseo SDK server side or server/engine/paseo at all;
   // its Paseo data access lives behind client/paseo/.
   {
     files: ["client/**"],
@@ -87,11 +109,12 @@ export default tseslint.config(
               group: [
                 "@getpaseo/plugin/server",
                 "@getpaseo/plugin/server/*",
-                "**/server/paseo/*",
+                "**/server/engine/paseo/*",
               ],
               message:
-                "The client must not import the Paseo SDK server side or server/paseo modules; use client/paseo/ for Paseo data access.",
+                "The client must not import the Paseo SDK server side or server/engine/paseo modules; use client/paseo/ for Paseo data access.",
             },
+            harnessImports,
           ],
         },
       ],

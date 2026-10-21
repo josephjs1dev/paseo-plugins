@@ -52,6 +52,16 @@ export function usePreviewProfiles(
       bump();
       return result;
     },
+    previewPaseoSync: () => controller.syncPreview(),
+    syncPaseo: async (profileIds, expectedRevision, expectedPaseoRevision) => {
+      const result = await controller.syncToPaseo(
+        expectedRevision,
+        expectedPaseoRevision,
+        profileIds,
+      );
+      bump();
+      return result;
+    },
     refresh: async () => controller.state(),
   };
   return data;

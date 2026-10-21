@@ -4,6 +4,8 @@ import type { PluginTheme } from "@getpaseo/plugin";
 import type {
   ImportProfilesResult,
   ProviderCatalog,
+  SyncPreview,
+  SyncProfilesResult,
 } from "../../shared/symphonies/profiles-rpc";
 import type {
   ProfilesState,
@@ -46,6 +48,24 @@ export interface ProfilesData {
   ): Promise<SaveProfilesResult>;
   /** Runs the one-time import from the Paseo agent profiles. */
   importPaseo(expectedRevision: string): Promise<ImportProfilesResult>;
+  /**
+   * Plans exporting the Conductor profiles to the daemon's Paseo agent
+   * profiles without writing. The result binds the Conductor revision and
+   * the Paseo list digest the plan was computed from; the sync confirms
+   * against both.
+   */
+  previewPaseoSync(this: void): Promise<SyncPreview>;
+  /**
+   * Exports the selected profiles against the revisions the preview was
+   * planned from. Either side having changed since is rejected as stale with
+   * a fresh preview to redraw from; a saved result means the daemon applied
+   * and verified the write.
+   */
+  syncPaseo(
+    profileIds: readonly string[],
+    expectedRevision: string,
+    expectedPaseoRevision: string,
+  ): Promise<SyncProfilesResult>;
   /**
    * Reloads profiles after a stale save or failure and resolves the fresh
    * store state, so a caller can rebase its draft revision on it.

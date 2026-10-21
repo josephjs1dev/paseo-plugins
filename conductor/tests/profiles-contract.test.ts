@@ -21,6 +21,12 @@ import {
   listProfiles,
   providerCatalogSchema,
   saveProfiles,
+  syncActionSchema,
+  syncPreview as syncPreviewRpc,
+  syncPreviewEntrySchema,
+  syncPreviewSchema,
+  syncProfiles as syncProfilesRpc,
+  syncProfilesResultSchema,
 } from "../shared/symphonies/profiles-rpc";
 import { attemptSchema, symphonySchema } from "../shared/symphonies/models";
 import { storedSymphony } from "./symphony-fixtures";
@@ -583,5 +589,142 @@ void test("task and reopen workers accept a profile-name snapshot", () => {
     symphonySchema.parse(withNames).revisions[0]?.score.tasks[0]?.worker
       .profileName,
     "Small Worker",
+  );
+});
+
+void test("a sync preview bounds its rows and both revisions", () => {
+  const row = { profileId: smallId, name: "Small Worker", action: "create" };
+  const preview = syncPreviewSchema.parse({
+    revision,
+    paseoRevision: "b".repeat(64),
+    entries: [row],
+  });
+  assert.equal(preview.entries[0]?.action, "create");
+  assert.equal(preview.entries[0]?.paseoName, undefined);
+  assert.equal(preview.entries[0]?.reason, undefined);
+  assert.equal(
+    syncPreviewSchema.safeParse({ ...preview, paseoRevision: "short" }).success,
+    false,
+  );
+  assert.equal(
+    syncPreviewSchema.safeParse({ ...preview, extra: true }).success,
+    false,
+    "unknown keys are rejected",
+  );
+  const tooMany = Array.from({ length: 33 }, () => row);
+  assert.equal(
+    syncPreviewSchema.safeParse({ ...preview, entries: tooMany }).success,
+    false,
+  );
+  assert.equal(syncActionSchema.safeParse("delete").success, false);
+  assert.equal(
+    syncPreviewEntrySchema.safeParse({ ...row, action: "delete" }).success,
+    false,
+  );
+  assert.equal(
+    syncPreviewEntrySchema.safeParse({ ...row, profileId: "nope" }).success,
+    false,
+  );
+  assert.equal(
+    syncPreviewEntrySchema.safeParse({ ...row, reason: "" }).success,
+    false,
+    "a skip reason is non-empty when present",
+  );
+  assert.equal(
+    syncPreviewEntrySchema.safeParse({ ...row, paseoName: "x".repeat(161) })
+      .success,
+    false,
+  );
+});
+
+void test("sync results report counts or staleness with a fresh preview", () => {
+  const preview = syncPreviewSchema.parse({
+    revision,
+    paseoRevision: "b".repeat(64),
+    entries: [],
+  });
+  const saved = syncProfilesResultSchema.parse({
+    status: "saved",
+    preview,
+    created: 1,
+    updated: 2,
+    unchanged: 3,
+    skipped: [],
+  });
+  assert.equal(saved.status, "saved");
+  if (saved.status !== "saved") {
+    assert.fail("expected a saved result");
+  }
+  assert.deepEqual([saved.created, saved.updated, saved.unchanged], [1, 2, 3]);
+  const defaulted = syncProfilesResultSchema.parse({
+    status: "saved",
+    preview,
+    created: 0,
+    updated: 0,
+    unchanged: 0,
+  });
+  assert.equal(defaulted.status, "saved");
+  if (defaulted.status !== "saved") {
+    assert.fail("expected a saved result");
+  }
+  assert.deepEqual(defaulted.skipped, [], "skipped defaults to empty");
+  const stale = syncProfilesResultSchema.parse({
+    status: "stale",
+    preview,
+    message: "Profiles changed. Review and sync again.",
+  });
+  assert.equal(stale.status, "stale");
+  assert.equal(
+    syncProfilesResultSchema.safeParse({ status: "stale", preview }).success,
+    false,
+  );
+  assert.equal(
+    syncProfilesResultSchema.safeParse({
+      status: "saved",
+      preview,
+      created: -1,
+      updated: 0,
+      unchanged: 0,
+    }).success,
+    false,
+  );
+});
+
+void test("the sync RPCs require both revisions and one to 32 ids", () => {
+  assert.equal(syncPreviewRpc.name, "profiles.sync-preview");
+  assert.equal(syncProfilesRpc.name, "profiles.sync");
+  assert.equal(syncPreviewRpc.input.safeParse({}).success, true);
+  assert.equal(
+    syncPreviewRpc.input.safeParse({ revision }).success,
+    false,
+    "the preview takes no input",
+  );
+  const input = {
+    expectedRevision: revision,
+    expectedPaseoRevision: "b".repeat(64),
+    profileIds: [smallId],
+  };
+  assert.equal(syncProfilesRpc.input.safeParse(input).success, true);
+  assert.equal(
+    syncProfilesRpc.input.safeParse({ ...input, profileIds: [] }).success,
+    false,
+  );
+  assert.equal(
+    syncProfilesRpc.input.safeParse({
+      ...input,
+      profileIds: Array.from({ length: 33 }, () => smallId),
+    }).success,
+    false,
+  );
+  assert.equal(
+    syncProfilesRpc.input.safeParse({ ...input, unexpected: true }).success,
+    false,
+  );
+  assert.equal(
+    syncProfilesRpc.input.safeParse({
+      ...input,
+      expectedPaseoRevision: "short",
+    }).success,
+    false,
   );
 });

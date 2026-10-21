@@ -11,7 +11,7 @@ import { agentKey } from "../agents/identity";
 import { snapshot } from "../agents/snapshot";
 import type { AgentsStore } from "../agents/store";
 import type { TurnJournal } from "../agents/turns";
-import { paseoAgentsHost } from "../paseo/agents-host";
+import { paseoAgentsHost } from "../engine/paseo/agents-host";
 
 export function registerAgentsRpc(
   server: Pick<PluginServerContext, "handle">,

@@ -6,6 +6,7 @@ import {
   type ExecutionRuntime,
 } from "../server/symphonies/identity";
 import { contentHash, fileSymphonyStore } from "../server/symphonies/store";
+import { symphonyMetrics } from "../server/symphonies/metrics";
 import { placement, planContext, task } from "./symphony-fixtures";
 import {
   latestAttempt,
@@ -791,4 +792,218 @@ void test("a later attempt may reuse the previous failed agent", async () => {
     ["worker-writer", "worker-writer"],
   );
   assert.equal(latestAttempt(stored, "writer")?.id, attemptId(10));
+});
+
+void test("worker blocks and reload interruptions record closed work intervals", async () => {
+  const f = await fixture();
+  const id = await f.start("intervals");
+  const attempt = await f.claim(id);
+  await f.send({
+    kind: "block",
+    symphonyId: id,
+    attemptId: attempt.id,
+    message: "Need the user's decision",
+  });
+  let blocked = latestAttempt(await f.read(id), "work");
+  assert.equal(blocked?.state, "blocked");
+  assert.equal(blocked?.blocked?.length, 1);
+  const first = blocked?.blocked?.[0];
+  assert.ok(first);
+  assert.equal(first.to, null);
+
+  await f.claim(id);
+  blocked = latestAttempt(await f.read(id), "work");
+  assert.equal(blocked?.state, "running");
+  assert.ok(blocked?.blocked?.[0]?.to !== null);
+  assert.ok((blocked?.blocked?.[0]?.to ?? 0) >= first.from);
+
+  await f.engine.interrupt("agent-1", "Turn ended without a report");
+  blocked = latestAttempt(await f.read(id), "work");
+  assert.equal(blocked?.state, "blocked");
+  assert.equal(blocked?.blocked?.length, 2);
+  assert.equal(blocked?.blocked?.[1]?.to, null);
+
+  await f.claim(id);
+  blocked = latestAttempt(await f.read(id), "work");
+  assert.deepEqual(
+    blocked?.blocked?.map((interval) => interval.to === null),
+    [false, false],
+  );
+});
+
+void test("a report settles a blocked attempt and closes its interval", async () => {
+  const f = await fixture();
+  const id = await f.start("report-closes-block");
+  const attempt = await f.claim(id);
+  await f.send({
+    kind: "block",
+    symphonyId: id,
+    attemptId: attempt.id,
+    message: "Waiting before reporting",
+  });
+  await f.send({
+    kind: "report",
+    symphonyId: id,
+    attemptId: attempt.id,
+    report,
+  });
+  const reported = latestAttempt(await f.read(id), "work");
+  assert.equal(reported?.state, "completed");
+  assert.ok(reported?.endedAt !== null);
+  assert.equal(reported?.blocked?.length, 1);
+  assert.ok(
+    (reported?.blocked?.[0]?.to ?? 0) >= (reported?.blocked?.[0]?.from ?? 0),
+  );
+});
+
+void test("a report schedules usage collection for the settled attempt", async () => {
+  const f = await fixture();
+  const collected: string[] = [];
+  const engine = symphonyExecution(
+    f.store,
+    () => runtime,
+    undefined,
+    undefined,
+    () => ({
+      async observe() {},
+      collect(_symphonyId, attemptId) {
+        collected.push(attemptId);
+      },
+      async close() {},
+    }),
+  );
+  const send = (command: unknown) =>
+    engine.execute({ agentId: "agent-1", command });
+  await send({
+    kind: "start",
+    key: "collection",
+    title: "Agent-owned work",
+    goal: "Implement the requested fix",
+  });
+  const id = commandSymphonyId("agent-1", "collection");
+  await send({ kind: "claim", symphonyId: id, taskId: "work" });
+  const attempt = latestAttempt(await f.read(id), "work");
+  assert.ok(attempt);
+  await send({
+    kind: "report",
+    symphonyId: id,
+    attemptId: attempt.id,
+    report,
+  });
+  assert.deepEqual(collected, [attempt.id]);
+});
+
+function metricScheduler() {
+  let clock = 1_700_000_000_000;
+  let nextHandle = 1;
+  let queue: Array<{ handle: number; runAt: number; callback: () => void }> =
+    [];
+  return {
+    now: () => clock,
+    setTimer: (callback: () => void, delayMs: number) => {
+      const handle = nextHandle++;
+      queue.push({ handle, runAt: clock + delayMs, callback });
+      return handle;
+    },
+    clearTimer: (handle: unknown) => {
+      queue = queue.filter((entry) => entry.handle !== handle);
+    },
+    runAll: async () => {
+      for (let guard = 0; guard < 80 && queue.length; guard += 1) {
+        const next = queue
+          .slice()
+          .sort((left, right) => left.runAt - right.runAt)[0];
+        assert.ok(next);
+        queue = queue.filter((entry) => entry.handle !== next.handle);
+        clock = Math.max(clock, next.runAt);
+        next.callback();
+        await new Promise<void>((resolve) => setImmediate(resolve));
+      }
+    },
+  };
+}
+
+void test("a tracked claim records its session before archive and collects after report", async () => {
+  const f = await fixture();
+  const scheduler = metricScheduler();
+  let sessionAvailable = true;
+  const windows: Array<[string, number, number]> = [];
+  const metrics = symphonyMetrics(f.store, {
+    now: scheduler.now,
+    setTimer: scheduler.setTimer,
+    clearTimer: scheduler.clearTimer,
+    async sessionOf(agentId) {
+      return sessionAvailable
+        ? { provider: "codex", id: `session-${agentId}` }
+        : null;
+    },
+    readerFor: (provider) =>
+      provider === "codex"
+        ? {
+            provider: "codex",
+            async read(id, from, to) {
+              windows.push([id, from, to]);
+              return { input: 5, output: 2 };
+            },
+          }
+        : undefined,
+    collectDelayMs: 0,
+    retryDelaysMs: [],
+  });
+  const engine = symphonyExecution(
+    f.store,
+    () => runtime,
+    undefined,
+    undefined,
+    () => metrics,
+  );
+  const send = (command: unknown) =>
+    engine.execute({ agentId: "agent-1", command });
+  await send({
+    kind: "start",
+    key: "tracked-session",
+    title: "Agent-owned work",
+    goal: "Implement the requested fix",
+  });
+  const id = commandSymphonyId("agent-1", "tracked-session");
+  await send({ kind: "claim", symphonyId: id, taskId: "work" });
+  const attempt = latestAttempt(await f.read(id), "work");
+  assert.ok(attempt);
+  assert.deepEqual(attempt.blocked, []);
+  assert.deepEqual(attempt.sessions, [
+    {
+      provider: "codex",
+      id: `session-${attempt.agentId}`,
+      from: attempt.startedAt,
+      to: null,
+    },
+  ]);
+  await send({
+    kind: "report",
+    symphonyId: id,
+    attemptId: attempt.id,
+    report,
+  });
+  // The agent is archived before the collection delay expires.
+  sessionAvailable = false;
+  await scheduler.runAll();
+  let stored = latestAttempt(await f.read(id), "work");
+  for (let tries = 0; tries < 100 && !stored?.usage; tries += 1) {
+    await new Promise<void>((resolve) => setTimeout(resolve, 5));
+    stored = latestAttempt(await f.read(id), "work");
+  }
+  assert.ok(stored?.endedAt !== null);
+  assert.deepEqual(stored?.usage, {
+    input: 5,
+    output: 2,
+    collectedAt: 1_700_000_000_000,
+  });
+  assert.deepEqual(windows, [
+    [
+      `session-${attempt.agentId}`,
+      attempt.startedAt,
+      stored.endedAt ?? attempt.startedAt,
+    ],
+  ]);
+  await metrics.close();
 });

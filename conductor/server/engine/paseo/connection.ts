@@ -1,4 +1,4 @@
-import { SymphonyError } from "../symphonies/errors";
+import { SymphonyError } from "../../symphonies/errors";
 import type { PaseoApi } from "./types";
 
 /** Holds the latest daemon connection that a handler or hook received. */

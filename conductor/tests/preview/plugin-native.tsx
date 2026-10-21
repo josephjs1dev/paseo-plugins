@@ -1,3 +1,12 @@
+import { useEffect, type ReactNode } from "react";
+import { createPortal } from "react-dom";
+import {
+  Pressable,
+  Text,
+  View,
+  type PressableProps,
+  type ViewStyle,
+} from "react-native";
 import type { PluginIconProps } from "@getpaseo/plugin/client";
 
 /**
@@ -155,6 +164,11 @@ const LUCIDE_SHAPES = {
       "M16.376 3.622a1 1 0 0 1 3.002 3.002L7.368 18.635a2 2 0 0 1-.855.506l-2.872.838.838-2.872a2 2 0 0 1 .506-.854z",
     ],
   ],
+  Upload: [
+    ["path", "M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"],
+    ["polyline", "17 8 12 3 7 8"],
+    ["line", 12, 3, 12, 15],
+  ],
   TriangleAlert: [
     [
       "path",
@@ -174,6 +188,97 @@ const LUCIDE_SHAPES = {
 } satisfies Record<string, readonly LucideShape[]>;
 
 type IconName = keyof typeof LUCIDE_SHAPES;
+
+interface ModalProps {
+  title: string;
+  icon?: ReactNode;
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  children: ReactNode;
+}
+
+interface ModalContentProps {
+  children: ReactNode;
+  style?: ViewStyle;
+}
+
+/**
+ * Minimal host-Modal shim: a fixed overlay portal to the document body, with
+ * a titled panel and the content body. The portal is not cosmetic: the
+ * dialog opens inside the profiles list, whose cards sit in later stacking
+ * contexts, so an in-place overlay would paint underneath them. Escaping
+ * closes through the same onOpenChange the host gestures would use; the
+ * dialog itself still owns its Cancel action.
+ */
+const OVERLAY_STYLE = {
+  position: "fixed",
+  left: 0,
+  right: 0,
+  top: 0,
+  bottom: 0,
+  zIndex: 40,
+  backgroundColor: "rgba(0, 0, 0, 0.45)",
+  alignItems: "center",
+  justifyContent: "center",
+  padding: 24,
+} as unknown as ViewStyle;
+
+export function Modal({ title, open, onOpenChange, children }: ModalProps) {
+  useEffect(() => {
+    if (!open) {
+      return undefined;
+    }
+    const onKey = (event: KeyboardEvent): void => {
+      if (event.key === "Escape") {
+        onOpenChange(false);
+      }
+    };
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, [open, onOpenChange]);
+  if (!open) {
+    return null;
+  }
+  // RN 0.72 prop unions predate the dialog role and aria-modal; RNW accepts
+  // both at runtime.
+  const panelProps = {
+    accessibilityRole: "dialog",
+    "aria-modal": true,
+  } as unknown as PressableProps;
+  return createPortal(
+    <View testID="preview-modal-overlay" style={OVERLAY_STYLE}>
+      <Pressable
+        testID="preview-modal-panel"
+        {...panelProps}
+        style={{
+          width: "100%",
+          maxWidth: 560,
+          maxHeight: "88%",
+          overflow: "scroll",
+          borderRadius: 12,
+          backgroundColor: "#ffffff",
+          shadowColor: "#000000",
+          shadowOpacity: 0.25,
+          shadowRadius: 16,
+        }}
+      >
+        <View style={{ padding: 20, paddingBottom: 8 }}>
+          <Text style={{ color: "#1F2A37", fontSize: 17, fontWeight: "600" }}>
+            {title}
+          </Text>
+        </View>
+        <ModalContent>{children}</ModalContent>
+      </Pressable>
+    </View>,
+    document.body,
+  );
+}
+
+function ModalContent({ children, style }: ModalContentProps) {
+  return <View style={[{ padding: 20, gap: 14 }, style]}>{children}</View>;
+}
+
+Modal.Content = ModalContent;
 
 /** Fixture equivalent of Paseo's host-provided Lucide icon; no host runtime in Vite. */
 export function Icon({ name, size = 18, color }: PluginIconProps) {

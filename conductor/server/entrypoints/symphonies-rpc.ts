@@ -8,10 +8,11 @@ import {
 import { SymphonyError } from "../symphonies/errors";
 import { listWithProjects } from "../symphonies/projects";
 import { symphonyService } from "./symphonies-service";
-import { paseoSymphonyHost } from "../paseo/symphony-host";
-import { paseoAgentsHost } from "../paseo/agents-host";
+import { paseoSymphonyHost } from "../engine/paseo/symphony-host";
+import { paseoAgentsHost } from "../engine/paseo/agents-host";
+import { paseoProfilesPort } from "../engine/paseo/profiles-port";
 import { pages } from "../agents/directory";
-import { paseoConnection } from "../paseo/connection";
+import { paseoConnection } from "../engine/paseo/connection";
 import { commandHooks } from "./symphonies-hooks";
 import { registerProfilesRpc } from "./profiles-rpc";
 
@@ -36,6 +37,7 @@ export function registerSymphonies(
   const service = symphonyService({
     directory,
     host: () => paseoSymphonyHost(connection.require()),
+    paseoProfilesPort: () => paseoProfilesPort(connection.require()),
     connected: () => connection.available,
     hooksAvailable: typeof server.before === "function",
   });

@@ -21,12 +21,17 @@ import {
 } from "../shared/symphonies/profiles";
 import { SymphonyError } from "../server/symphonies/errors";
 import {
+  SYNC_TARGET_ALIAS_REASON,
   profileStoreSource,
   profilesState,
+  type PaseoProfileRecord,
+  type PaseoProfilesPort,
+  type ProfilesSource,
 } from "../server/symphonies/profiles";
+import type { SyncProfilesResult } from "../shared/symphonies/profiles-rpc";
 import { readBoundedHandle } from "../server/files";
-import { providerCatalog } from "../server/paseo/provider-catalog";
-import type { PaseoApi } from "../server/paseo/types";
+import { providerCatalog } from "../server/engine/paseo/provider-catalog";
+import type { PaseoApi } from "../server/engine/paseo/types";
 
 async function directory(): Promise<string> {
   return mkdtemp(join(tmpdir(), "conductor-profiles-"));
@@ -583,4 +588,741 @@ void test("the provider catalog maps models, thinking options and elevated modes
       ["auto", false],
     ],
   );
+});
+
+const syncSmallId = "11111111-2222-4111-8111-111111111111";
+const syncBigId = "22222222-3333-4222-8222-222222222222";
+
+const copyEntries = (
+  entries: readonly PaseoProfileRecord[],
+): PaseoProfileRecord[] => entries.map((entry) => ({ ...entry }));
+
+/** An in-memory Paseo agent profile list that records every write. */
+function fakePaseo(
+  initial: readonly PaseoProfileRecord[],
+  options: { dropWrites?: boolean; keepBlankModel?: boolean } = {},
+) {
+  let current = copyEntries(initial);
+  const writes: PaseoProfileRecord[][] = [];
+  const port: PaseoProfilesPort = {
+    read: async () => copyEntries(current),
+    write: async (next) => {
+      writes.push(copyEntries(next));
+      if (options.dropWrites) {
+        // An old daemon parses strictly and drops agentProfiles.
+        return [];
+      }
+      current = copyEntries(next).map((entry) =>
+        options.keepBlankModel && entry.model === undefined
+          ? { ...entry, model: "" }
+          : entry,
+      );
+      return copyEntries(current);
+    },
+  };
+  return {
+    port,
+    writes,
+    list: () => current,
+    set: (entries: readonly PaseoProfileRecord[]) => {
+      current = copyEntries(entries);
+    },
+  };
+}
+
+function savedSync(result: SyncProfilesResult) {
+  assert.equal(result.status, "saved");
+  if (result.status !== "saved") {
+    assert.fail("expected a saved sync");
+  }
+  return result;
+}
+
+async function conductorStore(
+  drafts: ProfileDraft[],
+  port?: () => PaseoProfilesPort,
+): Promise<{
+  store: ProfilesSource;
+  path: string;
+  cleanup: () => Promise<void>;
+}> {
+  const dir = await directory();
+  const path = join(dir, PROFILES_FILE);
+  const store = profileStoreSource(path, undefined, port);
+  for (const profile of drafts) {
+    const saved = await store.save((await store.load()).revision, {
+      kind: "upsert",
+      profile,
+    });
+    assert.equal(saved.status, "saved");
+  }
+  return {
+    store,
+    path,
+    cleanup: async () => rm(dir, { recursive: true, force: true }),
+  };
+}
+
+void test("sync creates a Paseo profile from a Conductor profile", async () => {
+  const fake = fakePaseo([]);
+  const conductor = await conductorStore(
+    [
+      draft("Small Worker", {
+        id: syncSmallId,
+        model: "pi-small",
+        modeId: "auto",
+        thinkingOptionId: "low",
+        notes: "Bounded work.",
+      }),
+    ],
+    () => fake.port,
+  );
+  try {
+    const preview = await conductor.store.syncPreview();
+    const { revision } = await conductor.store.load();
+    assert.equal(preview.revision, revision);
+    assert.equal(preview.paseoRevision.length, 64);
+    assert.deepEqual(preview.entries, [
+      {
+        profileId: syncSmallId,
+        name: "Small Worker",
+        action: "create",
+      },
+    ]);
+
+    const result = savedSync(
+      await conductor.store.syncToPaseo(
+        preview.revision,
+        preview.paseoRevision,
+        [syncSmallId],
+      ),
+    );
+    assert.equal(result.created, 1);
+    assert.equal(result.updated, 0);
+    assert.equal(result.unchanged, 0);
+    assert.deepEqual(result.skipped, []);
+    assert.deepEqual(fake.list(), [
+      {
+        id: syncSmallId,
+        name: "Small Worker",
+        provider: "pi",
+        model: "pi-small",
+        modeId: "auto",
+        thinkingOptionId: "low",
+        notes: "Bounded work.",
+      },
+    ]);
+    assert.equal(fake.writes.length, 1);
+    assert.deepEqual(
+      result.preview.entries.map((entry) => entry.action),
+      ["unchanged"],
+    );
+  } finally {
+    await conductor.cleanup();
+  }
+});
+
+void test("sync updates by id and keeps fields Conductor does not own", async () => {
+  const fake = fakePaseo([
+    {
+      id: syncSmallId,
+      name: "Small Worker",
+      provider: "old-provider",
+      model: "old-model",
+      notes: "old notes",
+      icon: "rocket",
+      color: "purple",
+      featureValues: { fast: true },
+      unmatched: { nested: 1 },
+    },
+  ]);
+  const conductor = await conductorStore(
+    [
+      draft("Small Worker", {
+        id: syncSmallId,
+        model: "pi-small",
+        notes: "new notes",
+      }),
+    ],
+    () => fake.port,
+  );
+  try {
+    const preview = await conductor.store.syncPreview();
+    assert.deepEqual(preview.entries[0], {
+      profileId: syncSmallId,
+      name: "Small Worker",
+      action: "update",
+      paseoName: "Small Worker",
+    });
+    const result = savedSync(
+      await conductor.store.syncToPaseo(
+        preview.revision,
+        preview.paseoRevision,
+        [syncSmallId],
+      ),
+    );
+    assert.equal(result.updated, 1);
+    assert.deepEqual(fake.list(), [
+      {
+        id: syncSmallId,
+        name: "Small Worker",
+        provider: "pi",
+        model: "pi-small",
+        notes: "new notes",
+        icon: "rocket",
+        color: "purple",
+        featureValues: { fast: true },
+        unmatched: { nested: 1 },
+      },
+    ]);
+  } finally {
+    await conductor.cleanup();
+  }
+});
+
+void test("sync matches a Paseo profile by name and keeps its id", async () => {
+  const fake = fakePaseo([
+    {
+      id: "paseo-legacy",
+      name: "REVIEWER",
+      provider: "pi",
+      model: "stale-model",
+    },
+  ]);
+  const conductor = await conductorStore(
+    [draft("Reviewer", { id: syncBigId })],
+    () => fake.port,
+  );
+  try {
+    const preview = await conductor.store.syncPreview();
+    assert.deepEqual(preview.entries[0], {
+      profileId: syncBigId,
+      name: "Reviewer",
+      action: "update",
+      paseoName: "REVIEWER",
+    });
+    const result = savedSync(
+      await conductor.store.syncToPaseo(
+        preview.revision,
+        preview.paseoRevision,
+        [syncBigId],
+      ),
+    );
+    assert.equal(result.created, 0);
+    assert.equal(result.updated, 1);
+    assert.deepEqual(fake.list(), [
+      { id: "paseo-legacy", name: "Reviewer", provider: "pi" },
+    ]);
+  } finally {
+    await conductor.cleanup();
+  }
+});
+
+void test("sync reports an up-to-date profile without writing", async () => {
+  const fake = fakePaseo([
+    {
+      id: syncSmallId,
+      name: "Small Worker",
+      provider: "pi",
+      model: "pi-small",
+      notes: "Same.",
+      icon: "rocket",
+    },
+  ]);
+  const conductor = await conductorStore(
+    [
+      draft("Small Worker", {
+        id: syncSmallId,
+        model: "pi-small",
+        notes: "Same.",
+      }),
+    ],
+    () => fake.port,
+  );
+  try {
+    const preview = await conductor.store.syncPreview();
+    assert.deepEqual(preview.entries[0], {
+      profileId: syncSmallId,
+      name: "Small Worker",
+      action: "unchanged",
+      paseoName: "Small Worker",
+    });
+    const result = savedSync(
+      await conductor.store.syncToPaseo(
+        preview.revision,
+        preview.paseoRevision,
+        [syncSmallId],
+      ),
+    );
+    assert.equal(result.created, 0);
+    assert.equal(result.updated, 0);
+    assert.equal(result.unchanged, 1);
+    assert.deepEqual(fake.writes, []);
+  } finally {
+    await conductor.cleanup();
+  }
+});
+
+void test("sync skips a name several Paseo profiles share", async () => {
+  const fake = fakePaseo([
+    { id: "one", name: "Twin", provider: "pi" },
+    { id: "two", name: "twin", provider: "pi" },
+  ]);
+  const conductor = await conductorStore(
+    [draft("Twin", { id: syncSmallId })],
+    () => fake.port,
+  );
+  try {
+    const preview = await conductor.store.syncPreview();
+    assert.deepEqual(preview.entries[0], {
+      profileId: syncSmallId,
+      name: "Twin",
+      action: "skip",
+      reason: "Several Paseo profiles share this name.",
+    });
+    const result = savedSync(
+      await conductor.store.syncToPaseo(
+        preview.revision,
+        preview.paseoRevision,
+        [syncSmallId],
+      ),
+    );
+    assert.equal(result.created, 0);
+    assert.equal(result.updated, 0);
+    assert.deepEqual(result.skipped, [
+      {
+        name: "Twin",
+        reason: "Several Paseo profiles share this name.",
+      },
+    ]);
+    assert.deepEqual(fake.writes, []);
+  } finally {
+    await conductor.cleanup();
+  }
+});
+
+void test("sync skips a rename onto another Paseo profile's name", async () => {
+  const fake = fakePaseo([
+    { id: syncSmallId, name: "Alpha", provider: "pi" },
+    { id: "taken", name: "Beta", provider: "pi" },
+  ]);
+  const conductor = await conductorStore(
+    [draft("Beta", { id: syncSmallId })],
+    () => fake.port,
+  );
+  try {
+    const preview = await conductor.store.syncPreview();
+    assert.equal(preview.entries[0]?.action, "skip");
+    assert.match(preview.entries[0]?.reason ?? "", /already named "Beta"/);
+    const result = savedSync(
+      await conductor.store.syncToPaseo(
+        preview.revision,
+        preview.paseoRevision,
+        [syncSmallId],
+      ),
+    );
+    assert.equal(result.skipped.length, 1);
+    assert.deepEqual(fake.writes, []);
+  } finally {
+    await conductor.cleanup();
+  }
+});
+
+void test("sync leaves unselected and unmatched Paseo profiles untouched", async () => {
+  const fake = fakePaseo([
+    {
+      id: syncSmallId,
+      name: "Small Worker",
+      provider: "pi",
+      model: "old-model",
+      icon: "rocket",
+    },
+    { id: "unrelated", name: "Other", provider: "codex", color: "red" },
+    { id: "manual", name: "Manual", provider: "pi" },
+  ]);
+  const conductor = await conductorStore(
+    [
+      draft("Small Worker", { id: syncSmallId, model: "pi-small" }),
+      draft("Big Worker", { id: syncBigId, notes: "Not selected." }),
+    ],
+    () => fake.port,
+  );
+  try {
+    const preview = await conductor.store.syncPreview();
+    const result = savedSync(
+      await conductor.store.syncToPaseo(
+        preview.revision,
+        preview.paseoRevision,
+        [syncSmallId],
+      ),
+    );
+    assert.equal(result.created, 0);
+    assert.equal(result.updated, 1);
+    assert.deepEqual(fake.list(), [
+      {
+        id: syncSmallId,
+        name: "Small Worker",
+        provider: "pi",
+        model: "pi-small",
+        icon: "rocket",
+      },
+      { id: "unrelated", name: "Other", provider: "codex", color: "red" },
+      { id: "manual", name: "Manual", provider: "pi" },
+    ]);
+  } finally {
+    await conductor.cleanup();
+  }
+});
+
+void test("sync removes optional fields Conductor no longer sets", async () => {
+  const fake = fakePaseo([
+    {
+      id: syncSmallId,
+      name: "Small Worker",
+      provider: "pi",
+      model: "old-model",
+      modeId: "auto",
+      thinkingOptionId: "low",
+      notes: "old notes",
+      color: "purple",
+    },
+  ]);
+  const conductor = await conductorStore(
+    [draft("Small Worker", { id: syncSmallId })],
+    () => fake.port,
+  );
+  try {
+    const preview = await conductor.store.syncPreview();
+    savedSync(
+      await conductor.store.syncToPaseo(
+        preview.revision,
+        preview.paseoRevision,
+        [syncSmallId],
+      ),
+    );
+    const [updated] = fake.list();
+    assert.ok(updated);
+    assert.equal(updated.model, undefined);
+    assert.equal("model" in updated, false);
+    assert.equal("modeId" in updated, false);
+    assert.equal("thinkingOptionId" in updated, false);
+    assert.equal("notes" in updated, false);
+    assert.equal(updated.color, "purple");
+  } finally {
+    await conductor.cleanup();
+  }
+});
+
+void test("sync cleans up present-but-blank optional Paseo fields", async () => {
+  const fake = fakePaseo([
+    {
+      id: syncSmallId,
+      name: "Small Worker",
+      provider: "pi",
+      model: "",
+      modeId: "",
+      thinkingOptionId: "",
+      notes: "",
+      icon: "rocket",
+    },
+  ]);
+  const conductor = await conductorStore(
+    [draft("Small Worker", { id: syncSmallId })],
+    () => fake.port,
+  );
+  try {
+    const preview = await conductor.store.syncPreview();
+    assert.deepEqual(preview.entries[0], {
+      profileId: syncSmallId,
+      name: "Small Worker",
+      action: "update",
+      paseoName: "Small Worker",
+    });
+    const result = savedSync(
+      await conductor.store.syncToPaseo(
+        preview.revision,
+        preview.paseoRevision,
+        [syncSmallId],
+      ),
+    );
+    assert.equal(result.updated, 1);
+    const [stored] = fake.list();
+    assert.ok(stored);
+    assert.deepEqual(stored, {
+      id: syncSmallId,
+      name: "Small Worker",
+      provider: "pi",
+      icon: "rocket",
+    });
+    for (const field of ["model", "modeId", "thinkingOptionId", "notes"]) {
+      assert.equal(field in stored, false, `${field} is removed`);
+    }
+  } finally {
+    await conductor.cleanup();
+  }
+});
+
+void test("sync fails when the daemon keeps a field the export removed", async () => {
+  const fake = fakePaseo(
+    [{ id: syncSmallId, name: "Small Worker", provider: "pi", model: "" }],
+    { keepBlankModel: true },
+  );
+  const conductor = await conductorStore(
+    [draft("Small Worker", { id: syncSmallId })],
+    () => fake.port,
+  );
+  try {
+    const preview = await conductor.store.syncPreview();
+    assert.equal(preview.entries[0]?.action, "update");
+    await assert.rejects(
+      conductor.store.syncToPaseo(preview.revision, preview.paseoRevision, [
+        syncSmallId,
+      ]),
+      (error: unknown) =>
+        error instanceof SymphonyError &&
+        /did not save agent profiles/.test(error.message),
+    );
+  } finally {
+    await conductor.cleanup();
+  }
+});
+
+/**
+ * A profile renamed in Conductor still matches its Paseo entry by id, while a
+ * second Conductor profile may still carry the old name. The name fallback
+ * must not steal that id match, whichever profile is stored first, and
+ * whichever row would otherwise be unchanged or update.
+ */
+for (const order of ["renamed first", "old name first"] as const) {
+  for (const wouldBeUnchanged of [true, false]) {
+    const candidate = wouldBeUnchanged ? "unchanged" : "update";
+    void test(`sync skips an ${candidate} name fallback onto another profile's id match (${order})`, async () => {
+      const original: PaseoProfileRecord = {
+        id: syncSmallId,
+        name: "Platform",
+        provider: "pi",
+        model: "pi-small",
+        notes: "Pinned.",
+      };
+      const fake = fakePaseo([original]);
+      const renamed = draft("Platform Prime", {
+        id: syncSmallId,
+        model: "pi-small",
+        notes: "Pinned.",
+      });
+      const sameName = draft("Platform", {
+        id: syncBigId,
+        model: wouldBeUnchanged ? "pi-small" : "other-model",
+        notes: "Pinned.",
+      });
+      const conductor = await conductorStore(
+        order === "renamed first" ? [renamed, sameName] : [sameName, renamed],
+        () => fake.port,
+      );
+      try {
+        const preview = await conductor.store.syncPreview();
+        const row = (profileId: string) =>
+          preview.entries.find((entry) => entry.profileId === profileId);
+        assert.equal(row(syncSmallId)?.action, "update");
+        assert.equal(row(syncBigId)?.action, "skip");
+        assert.equal(row(syncBigId)?.reason, SYNC_TARGET_ALIAS_REASON);
+        const result = savedSync(
+          await conductor.store.syncToPaseo(
+            preview.revision,
+            preview.paseoRevision,
+            [syncSmallId, syncBigId],
+          ),
+        );
+        assert.equal(result.created, 0);
+        assert.equal(result.updated, 1);
+        assert.equal(result.unchanged, 0);
+        assert.deepEqual(result.skipped, [
+          { name: "Platform", reason: SYNC_TARGET_ALIAS_REASON },
+        ]);
+        assert.deepEqual(fake.list(), [
+          { ...original, name: "Platform Prime" },
+        ]);
+      } finally {
+        await conductor.cleanup();
+      }
+    });
+  }
+}
+
+void test("sync keeps a name ambiguous even when one Paseo entry is an id target", async () => {
+  const idTarget: PaseoProfileRecord = {
+    id: syncSmallId,
+    name: "Old name",
+    provider: "pi",
+  };
+  const manual: PaseoProfileRecord = {
+    id: "manual",
+    name: "Old name",
+    provider: "pi",
+  };
+  const fake = fakePaseo([idTarget, manual]);
+  const conductor = await conductorStore(
+    [
+      draft("New name", { id: syncSmallId }),
+      draft("Old name", { id: syncBigId }),
+    ],
+    () => fake.port,
+  );
+  try {
+    const preview = await conductor.store.syncPreview();
+    const row = (profileId: string) =>
+      preview.entries.find((entry) => entry.profileId === profileId);
+    assert.equal(row(syncSmallId)?.action, "update");
+    assert.deepEqual(row(syncBigId), {
+      profileId: syncBigId,
+      name: "Old name",
+      action: "skip",
+      reason: "Several Paseo profiles share this name.",
+    });
+    const result = savedSync(
+      await conductor.store.syncToPaseo(
+        preview.revision,
+        preview.paseoRevision,
+        [syncBigId],
+      ),
+    );
+    assert.equal(result.created, 0);
+    assert.equal(result.updated, 0);
+    assert.equal(result.unchanged, 0);
+    assert.deepEqual(result.skipped, [
+      { name: "Old name", reason: "Several Paseo profiles share this name." },
+    ]);
+    assert.deepEqual(fake.writes, []);
+    assert.deepEqual(fake.list(), [idTarget, manual]);
+  } finally {
+    await conductor.cleanup();
+  }
+});
+
+void test("sync refuses a stale Conductor revision without writing", async () => {
+  const fake = fakePaseo([]);
+  const conductor = await conductorStore(
+    [draft("Small Worker", { id: syncSmallId })],
+    () => fake.port,
+  );
+  try {
+    const preview = await conductor.store.syncPreview();
+    const changed = await conductor.store.save(
+      (await conductor.store.load()).revision,
+      {
+        kind: "upsert",
+        profile: draft("Big Worker", { id: syncBigId }),
+      },
+    );
+    assert.equal(changed.status, "saved");
+    const result = await conductor.store.syncToPaseo(
+      preview.revision,
+      preview.paseoRevision,
+      [syncSmallId],
+    );
+    assert.equal(result.status, "stale");
+    if (result.status !== "stale") {
+      assert.fail("expected a stale sync");
+    }
+    assert.match(result.message, /Profiles changed/);
+    assert.equal(result.preview.revision, changed.state.revision);
+    assert.deepEqual(fake.writes, []);
+  } finally {
+    await conductor.cleanup();
+  }
+});
+
+void test("sync refuses a stale Paseo digest without writing", async () => {
+  const fake = fakePaseo([]);
+  const conductor = await conductorStore(
+    [draft("Small Worker", { id: syncSmallId })],
+    () => fake.port,
+  );
+  try {
+    const preview = await conductor.store.syncPreview();
+    fake.set([{ id: "external", name: "External", provider: "pi" }]);
+    const result = await conductor.store.syncToPaseo(
+      preview.revision,
+      preview.paseoRevision,
+      [syncSmallId],
+    );
+    assert.equal(result.status, "stale");
+    if (result.status !== "stale") {
+      assert.fail("expected a stale sync");
+    }
+    assert.equal(result.preview.entries[0]?.action, "create");
+    assert.deepEqual(fake.writes, []);
+  } finally {
+    await conductor.cleanup();
+  }
+});
+
+void test("sync refuses a selected profile id the store does not have", async () => {
+  const fake = fakePaseo([]);
+  const conductor = await conductorStore(
+    [draft("Small Worker", { id: syncSmallId })],
+    () => fake.port,
+  );
+  try {
+    const preview = await conductor.store.syncPreview();
+    const result = await conductor.store.syncToPaseo(
+      preview.revision,
+      preview.paseoRevision,
+      [syncBigId],
+    );
+    assert.equal(result.status, "stale");
+    if (result.status !== "stale") {
+      assert.fail("expected a stale sync");
+    }
+    assert.match(result.message, /Profiles changed/);
+    assert.deepEqual(fake.writes, []);
+  } finally {
+    await conductor.cleanup();
+  }
+});
+
+void test("sync fails when the daemon drops the agent profiles write", async () => {
+  const fake = fakePaseo([], { dropWrites: true });
+  const conductor = await conductorStore(
+    [draft("Small Worker", { id: syncSmallId })],
+    () => fake.port,
+  );
+  try {
+    const preview = await conductor.store.syncPreview();
+    await assert.rejects(
+      conductor.store.syncToPaseo(preview.revision, preview.paseoRevision, [
+        syncSmallId,
+      ]),
+      (error: unknown) =>
+        error instanceof SymphonyError &&
+        /did not save agent profiles/.test(error.message),
+    );
+    assert.equal(fake.writes.length, 1);
+  } finally {
+    await conductor.cleanup();
+  }
+});
+
+void test("sync is unavailable without a Paseo profile port", async () => {
+  const conductor = await conductorStore([
+    draft("Small Worker", { id: syncSmallId }),
+  ]);
+  try {
+    await assert.rejects(
+      conductor.store.syncPreview(),
+      (error: unknown) =>
+        error instanceof SymphonyError &&
+        error.message === "Paseo profiles are unavailable.",
+    );
+    await assert.rejects(
+      conductor.store.syncToPaseo("a".repeat(64), "b".repeat(64), [
+        syncSmallId,
+      ]),
+      (error: unknown) =>
+        error instanceof SymphonyError &&
+        error.message === "Paseo profiles are unavailable.",
+    );
+  } finally {
+    await conductor.cleanup();
+  }
 });

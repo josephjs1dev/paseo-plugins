@@ -27,6 +27,12 @@ import {
 import { SymphonyError } from "./errors";
 import { contentHash, type SymphonyStore } from "./store";
 import { orchestration } from "./orchestration";
+import {
+  closeBlockedInterval,
+  noSymphonyMetrics,
+  openBlockedInterval,
+  type SymphonyMetrics,
+} from "./metrics";
 import type { WorkerRuntime } from "./workers";
 import { catalogView, route, type RoutingCatalogSource } from "./routing";
 import { profileStoreSource } from "./profiles";
@@ -45,18 +51,8 @@ export function symphonyExecution(
   getRuntime: () => ExecutionRuntime & Partial<SymphonyChangesRuntime>,
   getWorkers?: () => WorkerRuntime,
   routing: RoutingCatalogSource = profileStoreSource(null),
+  getMetrics?: () => SymphonyMetrics,
 ) {
-  const conductor = orchestration(
-    store,
-    getRuntime,
-    () => {
-      if (!getWorkers) {
-        throw new SymphonyError("Task agent runtime is unavailable.");
-      }
-      return getWorkers();
-    },
-    routing,
-  );
   // Serializes read/version/mutate in this controller; SymphonyStore fences other processes too.
   let queue = Promise.resolve();
   const serialize = <T>(action: () => Promise<T>): Promise<T> => {
@@ -67,6 +63,24 @@ export function symphonyExecution(
     );
     return pending;
   };
+  // Metric writes join the same queue so they cannot stale a command's read.
+  const metrics = (): SymphonyMetrics => {
+    const current = (getMetrics ?? noSymphonyMetrics)();
+    current.setMutation?.((action) => serialize(action));
+    return current;
+  };
+  const conductor = orchestration(
+    store,
+    getRuntime,
+    () => {
+      if (!getWorkers) {
+        throw new SymphonyError("Task agent runtime is unavailable.");
+      }
+      return getWorkers();
+    },
+    routing,
+    metrics,
+  );
   const start = async (
     agentId: string,
     command: Extract<SymphonyCommand, { kind: "start" }>,
@@ -372,6 +386,7 @@ export function symphonyExecution(
             previous &&
             (previous.state === "running" || previous.state === "blocked")
           ) {
+            closeBlockedInterval(previous, Date.now());
             previous.state = "running";
             previous.message = null;
           } else {
@@ -387,6 +402,7 @@ export function symphonyExecution(
               state: "running",
               startedAt: Date.now(),
               endedAt: null,
+              blocked: [],
               message: null,
               report: null,
               reportHash: null,
@@ -429,6 +445,7 @@ export function symphonyExecution(
               }
               attempt.launch.settled = false;
             }
+            openBlockedInterval(attempt, Date.now());
             attempt.state = "blocked";
             attempt.message = command.message;
             // Record the classification atomically with the state. Reconcile
@@ -469,7 +486,11 @@ export function symphonyExecution(
             attempt.report = command.report;
             attempt.reportHash = digest;
             attempt.state = command.report.outcome;
+            // A late worker report can replace a server settlement, so the
+            // previous usage belongs to a different window.
+            delete attempt.usage;
             attempt.endedAt = Date.now();
+            closeBlockedInterval(attempt, attempt.endedAt);
             attempt.message = null;
             Object.assign(attempt, changed);
             // A completed or failed attempt never resumes, so its baseline is no
@@ -482,6 +503,28 @@ export function symphonyExecution(
         return current;
       },
     );
+    if (command.kind === "claim" || command.kind === "report") {
+      const attempt =
+        command.kind === "claim"
+          ? latestAttempt(symphony, command.taskId)
+          : symphony.execution.attempts.find(
+              (entry) => entry.id === command.attemptId,
+            );
+      if (attempt) {
+        try {
+          await metrics().observe(symphony.id, attempt.id);
+        } catch {
+          // A later observation retries; the report or claim still succeeds.
+        }
+      }
+    }
+    if (command.kind === "report") {
+      try {
+        metrics().collect(symphony.id, command.attemptId);
+      } catch {
+        // Collection is best effort and must never fail the report.
+      }
+    }
     return {
       symphony,
       ...(command.kind === "claim"
@@ -521,8 +564,10 @@ export function symphonyExecution(
         }
         await store.update(symphony.id, symphony.version, (value) => {
           value.execution.interruption = message;
+          const now = Date.now();
           for (const attempt of value.execution.attempts) {
             if (attempt.state === "running") {
+              openBlockedInterval(attempt, now);
               attempt.state = "blocked";
               attempt.message = message;
             }
@@ -782,7 +827,16 @@ export function symphonyExecution(
         return mutate(agentId, command);
       }),
     interrupt,
-    reconcile: () => serialize(() => conductor.reconcile()),
+    reconcile: () =>
+      serialize(async () => {
+        // Observe sessions before reconciliation settles or archives agents.
+        try {
+          await metrics().observeAll?.();
+        } catch {
+          // Observation is best effort; reconciliation still runs.
+        }
+        return conductor.reconcile();
+      }),
     drain: () => queue,
   };
 }

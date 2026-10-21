@@ -12,6 +12,7 @@ import {
   type TaskDefinition,
 } from "../../shared/symphonies/models";
 import { attemptLoop } from "../../shared/symphonies/score";
+import { taskMetrics } from "../../shared/symphonies/metrics";
 import type {
   AttemptRouting,
   RoutingWarning,
@@ -23,6 +24,11 @@ import {
   warningLine,
 } from "./routing";
 import { Button, Disclosure, Notice } from "../ui/controls";
+import {
+  formatDuration,
+  tokenTotalsLabel,
+  workTotalsLabel,
+} from "./inspection";
 import { HarnessMark } from "../ui/harness-mark";
 import { RoleChip } from "../ui/role-chip";
 import { cardSurface } from "../ui/card";
@@ -163,6 +169,9 @@ export function SymphonyTaskCard({
     : 0;
   const grantedWrites = attempt?.grantedWrites ?? [];
   const addedWrites = addedWritesFor(symphony, task.id);
+  // Summed work time, elapsed span, and tokens over every attempt of the
+  // task, including retries on other agents and earlier loops.
+  const metrics = taskMetrics(taskAttempts(symphony, task.id), Date.now());
   // The worker line and the task card share the graph's resolution order: an
   // unresolvable worker leaves the row out instead of naming a placeholder.
   const identity = taskIdentity(symphony, task, profiles, catalog);
@@ -351,6 +360,25 @@ export function SymphonyTaskCard({
           </Text>
         )}
       </View>
+      {metrics.attemptCount > 0 && (
+        <Text
+          testID={`symphony-task-${task.id}-metrics`}
+          selectable
+          numberOfLines={1}
+          style={{
+            color: theme.colors.foregroundMuted,
+            fontSize: 12,
+            lineHeight: 17,
+            fontVariant: ["tabular-nums"],
+          }}
+        >
+          {[
+            workTotalsLabel(metrics),
+            `${formatDuration(metrics.elapsedMs)} elapsed`,
+            tokenTotalsLabel(metrics.tokens),
+          ].join(" · ")}
+        </Text>
+      )}
       {cardRouting && (
         <Text
           testID={`symphony-task-${task.id}-routing`}

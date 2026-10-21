@@ -75,6 +75,27 @@ compact search, and list rows as Agents, and groups rows under project headings 
 the Agents queue; a row omits the concert name when the concert shares the project's
 name. Symphonies track executed work.
 
+### Task duration and token usage
+
+Each attempt records the time its task agent worked separately from the time it
+was blocked, so History can show both without counting a blocker as work. After
+an attempt settles, Conductor reads that provider's own session log on the
+daemon host for the attempt's session and time window, then shows token usage
+per attempt, task, and symphony. Missing values show as "—"; a total over only
+some attempts is marked as a lower bound (for example "≥ 54k"). The logs are
+read on the daemon host and nothing is sent off the machine.
+
+| Harness     | Default location                                    | Environment override                                                                                        |
+| ----------- | --------------------------------------------------- | ----------------------------------------------------------------------------------------------------------- |
+| Codex       | `~/.codex/sessions/`, `~/.codex/archived_sessions/` | `CODEX_HOME`                                                                                                |
+| Claude Code | `~/.claude/projects/`                               | `CLAUDE_CONFIG_DIR`                                                                                         |
+| Pi          | `~/.pi/agent/sessions/`                             | `PI_USAGE_SESSION_DIR`, `PI_CODING_AGENT_SESSION_DIR`, or `PI_CODING_AGENT_DIR` (with `sessions/` below it) |
+| OpenCode    | `~/.local/share/opencode/opencode.db`               | `XDG_DATA_HOME`                                                                                             |
+
+Conductor reads only the given session's log; it does not scan unrelated
+session contents. Harness-specific reader code lives in `server/engine/harnesses/`
+behind one harness-neutral interface.
+
 Up to four read-only task agents can run concurrently (three by default). Task agents share
 the current checkout; writers are serialized, including against existing recorded
 Symphonies. Scope declarations guide task assignment and prompts; they are not filesystem
@@ -164,7 +185,11 @@ profiles are missing at least one role or a size; never infer size from a model 
 and edit profiles in Podium › Profiles. The provider/model pickers use the
 `profiles.providers` catalog, which includes thinking options and modes. The
 Profiles tab also offers a one-time import from Paseo profiles; imported entries
-become independent Conductor profiles. Only the Conductor agent can define or
+become independent Conductor profiles. **Sync to Paseo** goes the other way: it
+exports selected Conductor profiles into the daemon's Paseo agent profiles,
+matching by ID then by name, preserving each Paseo profile's icon, color and
+other fields, and never deleting or touching Paseo profiles the user did not
+select. Routing and instructions stay Conductor-only. Only the Conductor agent can define or
 dispatch its symphony. `define` arguments:
 
 ```json
@@ -243,7 +268,10 @@ ceiling. Put skill names the agent should use in the instructions; Conductor
 does not discover skills. Set routing in Podium › Profiles with the **Enforce
 routing** switch: off is `warn` (the default), and on is `strict`. A missing
 store means no profiles are configured. Unknown and stale IDs appear in
-diagnostics.
+diagnostics. In the same tab, **Sync to Paseo** opens a dialog listing the
+Conductor profiles with checkboxes; each row says whether the export would
+create a Paseo profile, update a matched one, or leave it up to date, and the
+sync is rejected as stale if either side changed since the dialog was opened.
 
 When a profile is eligible, omitted worker fields resolve to the first eligible
 route: the smallest size, then store order. Automatic routing does not read the
@@ -617,18 +645,19 @@ For focused checks, use `npm run typecheck`, `npm test`, or `npm run test:ui`.
 `npm run preview` serves fixtures at `http://127.0.0.1:5178`;
 `npm run build:preview` builds them. `npm run audit` checks high/critical advisories.
 
-| Path                  | Responsibility                                                              |
-| --------------------- | --------------------------------------------------------------------------- |
-| `index.client.tsx`    | Client entry point and feature registration.                                |
-| `client/podium/`      | Podium shell and shared navigation.                                         |
-| `client/agents/`      | Agent snapshots, queue, request UI, drafts, navigation, and subscriptions.  |
-| `client/symphonies/`  | Symphony score, task progress, blockers, and reports.                       |
-| `server/agents/`      | Agent snapshots, request delivery, turn observation, and guarded archiving. |
-| `server/symphonies/`  | Symphony orchestration, execution, persistence, and recovery.               |
-| `server/entrypoints/` | Server RPC registration and command handling.                               |
-| `server/paseo/`       | Paseo SDK integration and host adapters.                                    |
-| `shared/`             | Runtime-neutral Zod RPC contracts, request models, filters, and hierarchy.  |
-| `tests/`              | Unit tests, fixture preview, browser tests, and optional host smoke tests.  |
+| Path                       | Responsibility                                                              |
+| -------------------------- | --------------------------------------------------------------------------- |
+| `index.client.tsx`         | Client entry point and feature registration.                                |
+| `client/podium/`           | Podium shell and shared navigation.                                         |
+| `client/agents/`           | Agent snapshots, queue, request UI, drafts, navigation, and subscriptions.  |
+| `client/symphonies/`       | Symphony score, task progress, blockers, and reports.                       |
+| `server/agents/`           | Agent snapshots, request delivery, turn observation, and guarded archiving. |
+| `server/symphonies/`       | Symphony orchestration, execution, persistence, and recovery.               |
+| `server/entrypoints/`      | Server RPC registration and command handling.                               |
+| `server/engine/paseo/`     | Paseo SDK integration and host adapters.                                    |
+| `server/engine/harnesses/` | Harness session log readers for per-attempt token usage.                    |
+| `shared/`                  | Runtime-neutral Zod RPC contracts, request models, filters, and hierarchy.  |
+| `tests/`                   | Unit tests, fixture preview, browser tests, and optional host smoke tests.  |
 
 - Read the repository's [AGENTS.md](../AGENTS.md),
   [security rules](../.agents/rules/security.md), and

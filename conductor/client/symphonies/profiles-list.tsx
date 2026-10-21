@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { Pressable, Text, View, type PressableProps } from "react-native";
 import type { PluginTheme } from "@getpaseo/plugin";
 import {
@@ -13,6 +13,7 @@ import { HarnessMark } from "../ui/harness-mark";
 import { cardSurface } from "../ui/card";
 import { RoleChip } from "../ui/role-chip";
 import { StatusNotice, TintedView } from "./profiles-controls";
+import { ProfilesSyncDialog } from "./profiles-sync";
 import { identityLabel, profileIdentity } from "./worker-identity";
 import type { ProfilesData } from "./profiles";
 
@@ -123,6 +124,8 @@ export function ProfilesPanel({
   empty: boolean;
   onNew(this: void): void;
 }) {
+  const syncTriggerRef = useRef<View>(null);
+  const [syncOpen, setSyncOpen] = useState(false);
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState<{
     text: string;
@@ -209,7 +212,36 @@ export function ProfilesPanel({
             run("import").catch(() => undefined);
           }}
         />
+        <Button
+          ref={syncTriggerRef}
+          theme={theme}
+          testID="profile-sync"
+          dense={!compact}
+          label="Sync to Paseo"
+          icon="Upload"
+          disabled={busy || empty}
+          onPress={() => {
+            setNotice(null);
+            setError(null);
+            setSyncOpen(true);
+          }}
+        />
       </View>
+      {syncOpen && (
+        <ProfilesSyncDialog
+          theme={theme}
+          data={data}
+          onSaved={(text) => {
+            setNotice({ text, tone: "success" });
+            setSyncOpen(false);
+            syncTriggerRef.current?.focus();
+          }}
+          onClose={() => {
+            setSyncOpen(false);
+            syncTriggerRef.current?.focus();
+          }}
+        />
+      )}
       {/* A settings row, not a card: no frame or fill, so it never reads as
           one more profile in the list below. A hairline separates the
           list-wide setting from the cards it governs. */}

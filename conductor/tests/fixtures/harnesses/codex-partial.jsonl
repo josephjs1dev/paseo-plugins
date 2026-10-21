@@ -1,0 +1,4 @@
+{"type":"session_meta","payload":{"id":"session-codex-partial","cwd":"/workspace"}}
+{"type":"turn_context","payload":{"model":"gpt-5"}}
+{"timestamp":"2026-10-18T10:20:00.000Z","type":"event_msg","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":100,"output_tokens":10}}}}
+{"timestamp":"2026-10-18T10:20:10.000Z","type":"event_msg","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":150,"output_tokens":20}}}}

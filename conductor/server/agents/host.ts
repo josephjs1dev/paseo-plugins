@@ -9,7 +9,7 @@ export interface Directory<T> {
   next: string | null;
 }
 
-/** Paseo operations that the Podium's Agents section needs. server/paseo/agents-host.ts implements it. */
+/** Paseo operations that the Podium's Agents section needs. server/engine/paseo/agents-host.ts implements it. */
 export interface AgentsHost {
   agents(cursor?: string): Promise<Directory<AgentSnapshot>>;
   concerts(cursor?: string): Promise<Directory<ConcertEntry>>;

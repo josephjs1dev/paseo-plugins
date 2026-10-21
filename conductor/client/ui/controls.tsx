@@ -1,5 +1,5 @@
 import { Pressable, Text, View, type ViewStyle } from "react-native";
-import { useState, type ReactNode } from "react";
+import { forwardRef, useState, type ReactNode } from "react";
 import { Icon } from "@getpaseo/plugin/client/react-native";
 import type { PluginTheme } from "@getpaseo/plugin";
 import type { PluginIconProps } from "@getpaseo/plugin/client/react-native";
@@ -22,23 +22,31 @@ export interface ButtonProps {
   /** Leading host Lucide icon; decorative, the label keeps the a11y name. */
   icon?: PluginIconProps["name"];
 }
-export function Button({
-  theme,
-  label,
-  onPress,
-  disabled = false,
-  selected,
-  primary = false,
-  danger = false,
-  testID,
-  variant = "default",
-  dense = false,
-  count,
-  role = "button",
-  accessibilityLabel,
-  expanded,
-  icon,
-}: ButtonProps) {
+/**
+ * The shared button pill. The forwarded ref lands on the underlying
+ * pressable element, so callers can move focus back to a trigger after a
+ * dialog on top of it closes; existing call sites keep working unchanged.
+ */
+export const Button = forwardRef<View, ButtonProps>(function Button(
+  {
+    theme,
+    label,
+    onPress,
+    disabled = false,
+    selected,
+    primary = false,
+    danger = false,
+    testID,
+    variant = "default",
+    dense = false,
+    count,
+    role = "button",
+    accessibilityLabel,
+    expanded,
+    icon,
+  },
+  ref,
+) {
   const [focused, setFocused] = useState(false);
   // Accent fills pair with the theme's own accentForeground.
   const color = primary
@@ -46,6 +54,7 @@ export function Button({
     : theme.colors.foreground;
   return (
     <Pressable
+      ref={ref}
       testID={testID}
       accessibilityRole={role}
       accessibilityLabel={accessibilityLabel ?? label}
@@ -154,7 +163,7 @@ export function Button({
         ))}
     </Pressable>
   );
-}
+});
 export function Label({
   theme,
   children,

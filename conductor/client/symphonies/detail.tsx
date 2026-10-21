@@ -9,6 +9,7 @@ import {
   type StoredSymphony,
 } from "../../shared/symphonies/models";
 import { currentLoop } from "../../shared/symphonies/score";
+import { symphonyMetrics } from "../../shared/symphonies/metrics";
 import { taskState } from "../../shared/symphonies/task-state";
 import { StatusMarker, symphonyStatusPresentation } from "../ui/status";
 import { SymphonyProgress } from "../ui/progress";
@@ -22,6 +23,11 @@ import { LoopSelector } from "./loop-selector";
 import { Button, Label, Notice } from "../ui/controls";
 import { cardSurface } from "../ui/card";
 import { SymphonyDeleteAction } from "./delete-action";
+import {
+  formatDuration,
+  tokenTotalsLabel,
+  workTotalsLabel,
+} from "./inspection";
 import { SymphonyInspection } from "./inspection";
 import type { ProfilesData } from "./profiles";
 import {
@@ -93,6 +99,9 @@ export function SymphonyDetail({
     symphony.execution.origin === "conducted"
       ? "RESULT · REPORTED BY THE CONDUCTOR AGENT"
       : "RESULT · REPORTED BY THE SOURCE AGENT";
+  // Whole-symphony figures: elapsed from creation to finish (or now), the
+  // summed work of every attempt, and their tokens.
+  const metrics = symphonyMetrics(symphony, Date.now());
   // A conducted symphony shows its loop against the budget chosen at
   // `orchestrate`; records without one use the default budget.
   const loopNote =
@@ -157,6 +166,27 @@ export function SymphonyDetail({
           {symphony.source.branch ?? "Branch unknown"}
           {loopNote}
         </Text>
+        {metrics.attemptCount > 0 && (
+          <Text
+            testID="symphony-detail-metrics"
+            selectable
+            style={{
+              color: theme.colors.foregroundMuted,
+              fontSize: 12,
+              lineHeight: 20,
+              fontVariant: ["tabular-nums"],
+            }}
+          >
+            {[
+              `${formatDuration(metrics.elapsedMs)} elapsed`,
+              workTotalsLabel(metrics),
+              ...(metrics.blockedMs > 0
+                ? [`${formatDuration(metrics.blockedMs)} blocked`]
+                : []),
+              tokenTotalsLabel(metrics.tokens),
+            ].join(" · ")}
+          </Text>
+        )}
       </View>
       <SymphonyProgress
         theme={theme}

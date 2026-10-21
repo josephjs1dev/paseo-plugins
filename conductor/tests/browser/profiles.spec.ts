@@ -439,7 +439,8 @@ test("The Enforce routing switch is the only switch and toggles with Space", asy
   await expect(page.getByRole("switch")).toHaveCount(1);
   // Tabbing from the header buttons reaches the switch; Space toggles it
   // exactly once per press, like a native switch, and Enter already works.
-  await page.getByTestId("profile-import").focus();
+  // The sync trigger is the last header button before the switch.
+  await page.getByTestId("profile-sync").focus();
   await page.keyboard.press("Tab");
   await expect(toggle).toBeFocused();
   await page.keyboard.press("Space");
@@ -936,4 +937,61 @@ test("The selected card fills with the accent tint, not just the border", async 
   expect(
     await selected.evaluate((element) => getComputedStyle(element).opacity),
   ).toBe("0.12");
+});
+
+test("Sync to Paseo needs a selection, exports it, and returns focus to the trigger", async ({
+  page,
+}) => {
+  await openProfiles(page);
+  await page.getByTestId("profile-sync").click();
+  const dialog = page.getByTestId("profile-sync-dialog");
+  await expect(dialog).toBeVisible();
+  // The fixture store's profiles are all unmatched in Paseo, so every row
+  // plans a create; nothing is checked before the user picks one.
+  const row = page.getByTestId("profile-sync-row-Fast responder");
+  await expect(row).toContainText("New in Paseo");
+  await expect(row).toHaveAttribute("aria-checked", "false");
+  const confirm = page.getByTestId("profile-sync-confirm");
+  await expect(confirm).toHaveText("Sync 0 profiles");
+  await expect(confirm).toBeDisabled();
+  // Selecting the one profile arms the confirm button.
+  await row.click();
+  await expect(row).toHaveAttribute("aria-checked", "true");
+  await expect(confirm).toHaveText("Sync 1 profile");
+  await expect(confirm).toBeEnabled();
+  await confirm.click();
+  // The dialog closes, the panel reports the export, and focus is restored.
+  await expect(dialog).toHaveCount(0);
+  await expect(page.getByTestId("profiles-panel-notice")).toContainText(
+    "Synced to Paseo: 1 created, 0 updated.",
+  );
+  await expect(page.getByTestId("profile-sync")).toBeFocused();
+});
+
+test("A stale sync keeps the dialog open on the refreshed plan (real query path)", async ({
+  page,
+}) => {
+  await page.goto("/?profiles-real");
+  await page.getByTestId("profile-sync").click();
+  const dialog = page.getByTestId("profile-sync-dialog");
+  const row = page.getByTestId("profile-sync-row-Fast responder");
+  await expect(row).toBeVisible();
+  // Another client saves to the store after the preview was computed, so the
+  // confirm carries a revision that no longer matches.
+  await page.evaluate(() => {
+    (
+      window as unknown as { __profilesReal?: PreviewHandle }
+    ).__profilesReal?.otherClientSaves("Deep reviewer", {
+      instructions: "Remote hand edit after the preview.",
+    });
+  });
+  await row.click();
+  await page.getByTestId("profile-sync-confirm").click();
+  // The export writes nothing; the dialog stays open, redrawn from the fresh
+  // preview the stale result returned, with the stale message shown.
+  await expect(page.getByTestId("profile-sync-notice")).toContainText(
+    "Profiles changed. Review and sync again.",
+  );
+  await expect(dialog).toBeVisible();
+  await expect(row).toBeVisible();
 });

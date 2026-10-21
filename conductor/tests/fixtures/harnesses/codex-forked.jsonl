@@ -1,0 +1,5 @@
+{"type":"session_meta","payload":{"id":"session-codex-fork","cwd":"/workspace","forked_from_id":"session-codex-parent"}}
+{"type":"turn_context","payload":{"model":"gpt-5"}}
+{"timestamp":"2026-10-18T10:10:00.000Z","type":"event_msg","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":1000,"cached_input_tokens":100,"output_tokens":500,"reasoning_output_tokens":50}}}}
+{"timestamp":"2026-10-18T10:10:10.000Z","type":"event_msg","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":1050,"cached_input_tokens":110,"output_tokens":510,"reasoning_output_tokens":52}}}}
+{"timestamp":"2026-10-18T10:10:20.000Z","type":"event_msg","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":1080,"cached_input_tokens":110,"output_tokens":520,"reasoning_output_tokens":54}}}}

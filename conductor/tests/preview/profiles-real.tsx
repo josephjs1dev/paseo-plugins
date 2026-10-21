@@ -26,10 +26,23 @@ installRpcHandlers({
   }) => controller.save(input.expectedRevision, input.operation),
   "profiles.import": (input: { expectedRevision: string }) =>
     controller.importFromPaseo(input.expectedRevision),
+  "profiles.sync-preview": () => controller.syncPreview(),
+  "profiles.sync": (input: {
+    expectedRevision: string;
+    expectedPaseoRevision: string;
+    profileIds: string[];
+  }) =>
+    controller.syncToPaseo(
+      input.expectedRevision,
+      input.expectedPaseoRevision,
+      input.profileIds,
+    ),
 });
 
 /** The browser tests drive the "another client" from here. */
 (window as unknown as Record<string, unknown>).__profilesReal = controller;
+(window as unknown as Record<string, unknown>).__profilesRealPaseo =
+  (): unknown[] => controller.paseoList();
 
 const previewQueryClient = new QueryClient({
   defaultOptions: { queries: { retry: false } },

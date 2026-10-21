@@ -9,6 +9,11 @@ import { symphonyExecution } from "../server/symphonies/execution";
 import { launchChoice } from "../server/symphonies/orchestration";
 import { fileSymphonyStore } from "../server/symphonies/store";
 import {
+  noSymphonyMetrics,
+  symphonyMetrics,
+  type SymphonyMetrics,
+} from "../server/symphonies/metrics";
+import {
   canonicalJson,
   type ProfilesCatalog,
   type ProfilesSource,
@@ -135,6 +140,12 @@ async function fixture(
     importFromPaseo: async () => {
       throw new Error("profile imports are not used by this fixture");
     },
+    syncPreview: async () => {
+      throw new Error("profile sync previews are not used by this fixture");
+    },
+    syncToPaseo: async () => {
+      throw new Error("profile syncs are not used by this fixture");
+    },
   };
   let validateScore: (score: {
     tasks: { writes: string[] }[];
@@ -186,11 +197,13 @@ async function fixture(
     // reports an unavailable observation, as a non-Git checkout would.
     fingerprint: async (checkout, writes) => fingerprintImpl(checkout, writes),
   };
+  let metricsRuntime: () => SymphonyMetrics = noSymphonyMetrics;
   let engine = symphonyExecution(
     store,
     () => runtime,
     () => workers,
     profilesSource,
+    () => metricsRuntime(),
   );
   const send = (agentId: string, command: unknown) =>
     engine.execute({ agentId, command });
@@ -266,7 +279,11 @@ async function fixture(
         () => runtime,
         () => workers,
         profilesSource,
+        () => metricsRuntime(),
       );
+    },
+    setMetrics: (next: () => SymphonyMetrics) => {
+      metricsRuntime = next;
     },
     busy,
     undeliverable,
@@ -523,6 +540,7 @@ void test("a stopped task agent is nudged once, then failed as a harness failure
   const symphony = await f.define(plan, [task("a", [], ["src"])]);
   const a = latestAttempt(symphony, "a");
   assert.ok(a && plan.source.agentId);
+  assert.deepEqual(a.blocked, [], "a new reservation tracks work time");
   f.active.set(a.agentId, false);
   await f.reconcile();
   // The first stop without a report only nudges the same task agent.
@@ -561,6 +579,7 @@ void test("a stopped task agent is nudged once, then failed as a harness failure
   const second = latestAttempt(await f.read(plan.id), "a");
   assert.ok(second && second.id !== a.id);
   assert.equal(second.agentId, a.agentId);
+  assert.deepEqual(second.blocked, [], "a continuation tracks work time");
   assert.equal(f.launches.size, 2);
   const resumed = f.wakePrompts.find((w) =>
     w.key?.startsWith(`continue:${second.id}`),
@@ -5127,4 +5146,296 @@ void test("a strict retry preflight validates the persisted profile id after a r
   assert.equal(retried.agentId, first.agentId, "the same agent continues");
   assert.equal(retried.launch?.profileId, originalId);
   assert.equal(retried.launch?.profileName, "Original name");
+});
+
+void test("reconcile records sessions and settlement schedules usage collection", async () => {
+  const f = await fixture();
+  const observed: string[] = [];
+  const collected: string[] = [];
+  f.setMetrics(() => ({
+    async observe(_symphonyId, attemptId) {
+      observed.push(attemptId);
+    },
+    collect(_symphonyId, attemptId) {
+      collected.push(attemptId);
+    },
+    async close() {},
+  }));
+  const plan = await f.start("metrics");
+  const symphony = await f.define(plan, [task("a")]);
+  const a = latestAttempt(symphony, "a");
+  assert.ok(a, "the task agent starts without a session snapshot");
+  await f.reconcile();
+  assert.ok(
+    observed.includes(a.id),
+    "reconciliation observes the agent snapshot for a session",
+  );
+  // The first stop nudges; the second settles the attempt as a server failure.
+  f.active.set(a.agentId, false);
+  await f.reconcile();
+  assert.equal(collected.includes(a.id), false);
+  f.active.set(a.agentId, false);
+  await f.reconcile();
+  const failed = latestAttempt(await f.read(plan.id), "a");
+  assert.equal(failed?.state, "failed");
+  assert.ok(
+    collected.includes(a.id),
+    "settlement schedules collection for the settled attempt",
+  );
+});
+
+void test("a worker block resumes with its interval closed", async () => {
+  const f = await fixture();
+  const plan = await f.start("block-interval");
+  const symphony = await f.define(plan, [task("a")]);
+  const a = latestAttempt(symphony, "a");
+  assert.ok(a && plan.source.agentId);
+  await f.send(a.agentId, {
+    kind: "block",
+    symphonyId: plan.id,
+    attemptId: a.id,
+    message: "Need a decision before continuing",
+  });
+  const blocked = latestAttempt(await f.read(plan.id), "a");
+  assert.equal(blocked?.state, "blocked");
+  assert.equal(blocked?.blocked?.length, 1);
+  assert.equal(blocked?.blocked?.[0]?.to, null);
+  f.active.set(a.agentId, false);
+  await f.reconcile();
+  await f.send(plan.source.agentId, {
+    kind: "dispatch",
+    symphonyId: plan.id,
+    retryTaskId: "a",
+  });
+  const resumed = latestAttempt(await f.read(plan.id), "a");
+  assert.equal(resumed?.id, a.id);
+  assert.equal(resumed?.state, "running");
+  assert.equal(resumed?.endedAt, null);
+  assert.ok(
+    (resumed?.blocked?.[0]?.to ?? 0) >= (resumed?.blocked?.[0]?.from ?? 0),
+  );
+});
+
+void test("a settled failure closes blocked time and reopening leaves it closed", async () => {
+  const f = await fixture();
+  const plan = await f.start("reopen-interval");
+  assert.ok(plan.source.agentId);
+  f.loseAck();
+  let symphony = await f.define(plan, [task("a")]);
+  const a = latestAttempt(symphony, "a");
+  assert.ok(a);
+  assert.equal(a.launch?.state, "uncertain");
+  // Model an attempt that was blocked before its unconfirmed launch settled.
+  symphony = await f.store.update(symphony.id, symphony.version, (current) => {
+    const active = latestAttempt(current, "a");
+    assert.ok(active);
+    active.blocked = [{ from: active.startedAt, to: null }];
+    return current;
+  });
+  f.workers.launchCheckDelaysMs = [];
+  f.workers.inspect = async () => ({
+    exists: false,
+    active: false,
+    deliverable: false,
+  });
+  await f.reconcile();
+  await f.reconcile();
+  const settled = latestAttempt(await f.read(plan.id), "a");
+  assert.equal(settled?.state, "failed");
+  assert.equal(settled?.blocked?.length, 1);
+  assert.ok(
+    (settled?.blocked?.[0]?.to ?? 0) >= (settled?.blocked?.[0]?.from ?? 0),
+  );
+  // A collection that finished before the reopen must not survive into the
+  // next settlement window.
+  const withUsage = await f.read(plan.id);
+  await f.store.update(withUsage.id, withUsage.version, (current) => {
+    const failed = latestAttempt(current, "a");
+    assert.ok(failed);
+    failed.usage = { input: 12, collectedAt: 1 };
+    return current;
+  });
+  // The delayed agent appeared; retrying replays the same identity and reopens
+  // the server failure without leaving an open interval across the gap.
+  f.workers.inspect = async (id) => ({
+    exists: f.launches.has(id),
+    active: f.active.get(id) ?? false,
+    deliverable: f.launches.has(id),
+  });
+  f.active.set(a.agentId, false);
+  await f.send(plan.source.agentId, {
+    kind: "dispatch",
+    symphonyId: plan.id,
+    retryTaskId: "a",
+  });
+  const reopened = latestAttempt(await f.read(plan.id), "a");
+  assert.equal(reopened?.id, a.id);
+  assert.equal(reopened?.state, "running");
+  assert.equal(reopened?.endedAt, null);
+  assert.equal(reopened?.usage, undefined);
+  assert.deepEqual(
+    reopened?.blocked?.map((interval) => interval.to === null),
+    [false],
+  );
+});
+
+void test("a blocked rebind closes the old session and records the new one", async () => {
+  const f = await fixture();
+  let firstAgent = "";
+  const metrics = symphonyMetrics(f.store, {
+    now: () => Date.now(),
+    setTimer: () => 0,
+    clearTimer: () => {},
+    async sessionOf(agentId) {
+      return agentId === firstAgent
+        ? { provider: "codex", id: "session-old" }
+        : { provider: "pi", id: `session-${agentId}` };
+    },
+    readerFor: () => undefined,
+  });
+  f.setMetrics(() => metrics);
+  const plan = await f.start("segments");
+  const symphony = await f.define(plan, [task("a", [], ["src"])]);
+  const a = latestAttempt(symphony, "a");
+  assert.ok(a && plan.source.agentId);
+  firstAgent = a.agentId;
+  await f.reconcile();
+  const observed = latestAttempt(await f.read(plan.id), "a");
+  assert.deepEqual(observed?.sessions, [
+    {
+      provider: "codex",
+      id: "session-old",
+      from: a.startedAt,
+      to: null,
+    },
+  ]);
+  await f.send(a.agentId, {
+    kind: "block",
+    symphonyId: plan.id,
+    attemptId: a.id,
+    message: "Need a different provider for this decision",
+  });
+  f.active.set(a.agentId, false);
+  await f.reconcile();
+  await f.send(plan.source.agentId, {
+    kind: "dispatch",
+    symphonyId: plan.id,
+    retryTaskId: "a",
+    provider: "pi",
+  });
+  const rebound = latestAttempt(await f.read(plan.id), "a");
+  assert.ok(rebound);
+  assert.notEqual(rebound.agentId, a.agentId);
+  assert.equal(rebound.sessions?.length, 1);
+  const closed = rebound.sessions?.[0];
+  assert.ok(closed?.to !== null);
+  await f.reconcile();
+  const after = latestAttempt(await f.read(plan.id), "a");
+  assert.deepEqual(after?.sessions, [
+    closed,
+    {
+      provider: "pi",
+      id: `session-${rebound.agentId}`,
+      from: closed?.to,
+      to: null,
+    },
+  ]);
+  await metrics.close();
+});
+
+void test("a usage collection cannot reject a report waiting on its fingerprint", async () => {
+  const f = await fixture();
+  const scheduled: Array<() => void> = [];
+  let markRead: () => void = () => {};
+  const readStarted = new Promise<void>((resolve) => {
+    markRead = resolve;
+  });
+  const metrics = symphonyMetrics(f.store, {
+    now: () => Date.now(),
+    setTimer: (callback) => {
+      scheduled.push(callback);
+      return scheduled.length;
+    },
+    clearTimer: () => {},
+    async sessionOf(agentId) {
+      return { provider: "codex", id: `session-${agentId}` };
+    },
+    readerFor: () => ({
+      provider: "codex",
+      async read() {
+        markRead();
+        return { input: 1 };
+      },
+    }),
+    collectDelayMs: 0,
+    retryDelaysMs: [],
+  });
+  f.setMetrics(() => metrics);
+  f.setFingerprint(async () => ({ paths: [] }));
+  const plan = await f.start("collection-race");
+  const symphony = await f.define(plan, [task("a"), task("b")]);
+  assert.ok(plan.source.agentId);
+  await f.reconcile();
+  const b = latestAttempt(symphony, "b");
+  assert.ok(b);
+  await f.report(plan.id, "b");
+  assert.equal(scheduled.length, 1, "the settled attempt scheduled a read");
+
+  let release: () => void = () => {};
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  let markFingerprint: () => void = () => {};
+  const fingerprintStarted = new Promise<void>((resolve) => {
+    markFingerprint = resolve;
+  });
+  f.setFingerprint(async () => {
+    markFingerprint();
+    await gate;
+    return { paths: [] };
+  });
+  const reportPromise = f.report(plan.id, "a");
+  await fingerprintStarted;
+  // Start the collection while the report holds the command queue.
+  const timer = scheduled.shift();
+  assert.ok(timer);
+  timer();
+  await readStarted;
+  release();
+  await reportPromise;
+  const reported = latestAttempt(await f.read(plan.id), "a");
+  assert.equal(reported?.state, "completed");
+
+  let settled = latestAttempt(await f.read(plan.id), "b");
+  for (let tries = 0; tries < 100 && !settled?.usage; tries += 1) {
+    await new Promise<void>((resolve) => setTimeout(resolve, 5));
+    settled = latestAttempt(await f.read(plan.id), "b");
+  }
+  assert.equal(settled?.usage?.input, 1);
+  await metrics.close();
+});
+
+void test("a late worker report clears usage from the server settlement window", async () => {
+  const f = await fixture();
+  const plan = await f.start("late-usage-reset");
+  const symphony = await f.define(plan, [task("a")]);
+  const a = latestAttempt(symphony, "a");
+  assert.ok(a);
+  f.active.set(a.agentId, false);
+  await f.reconcile();
+  f.active.set(a.agentId, false);
+  await f.reconcile();
+  const failed = latestAttempt(await f.read(plan.id), "a");
+  assert.equal(failed?.reportedBy, "server");
+  const before = await f.read(plan.id);
+  await f.store.update(before.id, before.version, (current) => {
+    const active = latestAttempt(current, "a");
+    assert.ok(active);
+    active.usage = { input: 99, collectedAt: 1 };
+    return current;
+  });
+  await f.report(plan.id, "a");
+  const completed = latestAttempt(await f.read(plan.id), "a");
+  assert.equal(completed?.state, "completed");
+  assert.equal(completed?.usage, undefined);
 });

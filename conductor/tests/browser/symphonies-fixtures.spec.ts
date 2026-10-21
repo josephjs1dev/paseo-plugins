@@ -1609,3 +1609,58 @@ test("fixture symphonies serialize under the production symphony schema", async 
     expect(parsed.success, `${name} must satisfy symphonySchema`).toBe(true);
   }
 });
+
+test("attempt, task and symphony durations and tokens render from the metrics fixture", async ({
+  page,
+}) => {
+  const detail = page.getByTestId("symphony-detail");
+
+  await openSymphony(page, "metrics");
+
+  // Header: whole-symphony elapsed, summed work, the blocked span, and token
+  // totals. Two attempts lack usage entirely, so every token sum is a lower
+  // bound marked "≥".
+  await expect(page.getByTestId("symphony-detail-metrics")).toContainText(
+    "5h 20m elapsed · 52m work · 3h blocked · ≥ 62k in (≥ 80k cached) · ≥ 8k out",
+  );
+
+  // Task cards: summed work, the first-start-to-last-end span, and tokens.
+  await expect(page.getByTestId("symphony-task-export-metrics")).toContainText(
+    "32m work · 4h 8m elapsed · 62k in (≥ 40k cached) · 8k out",
+  );
+  // The docs task only has a legacy attempt: its work time is wall time and
+  // its tokens are unknown, never zero.
+  await expect(page.getByTestId("symphony-task-docs-metrics")).toContainText(
+    "10m wall · 10m elapsed · —",
+  );
+  // A cached-only usage record still reads its known count: it stands alone
+  // because there is no input sum to attach it to.
+  await expect(page.getByTestId("symphony-task-cache-metrics")).toContainText(
+    "10m work · 10m elapsed · 40k cached",
+  );
+
+  // History rows: per-attempt duration and tokens.
+  await detailButton(detail, "History").click();
+  const blockedRow = page.getByTestId("history-attempt-export-1");
+  await expect(blockedRow).toContainText("· 24m work · 3h blocked");
+  await expect(page.getByTestId("history-attempt-export-1-tokens")).toHaveText(
+    "48k in (40k cached) · 6k out",
+  );
+  const retryRow = page.getByTestId("history-attempt-export-2");
+  await expect(retryRow).toContainText("· 8m work");
+  await expect(retryRow).not.toContainText("blocked");
+  await expect(page.getByTestId("history-attempt-export-2-tokens")).toHaveText(
+    "14k in · 2k out",
+  );
+  const legacyRow = page.getByTestId("history-attempt-docs");
+  // A legacy row shows its wall duration with no "work" label.
+  await expect(legacyRow).toContainText("· 10m");
+  await expect(legacyRow).not.toContainText("work");
+  await expect(page.getByTestId("history-attempt-docs-tokens")).toHaveText("—");
+  const cacheRow = page.getByTestId("history-attempt-cache");
+  await expect(cacheRow).toContainText("· 10m work");
+  await expect(page.getByTestId("history-attempt-cache-tokens")).toHaveText(
+    "40k cached",
+  );
+  expect(await noPageOverflow(page)).toBe(true);
+});

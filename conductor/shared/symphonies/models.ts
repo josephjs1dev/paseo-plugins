@@ -14,6 +14,10 @@ export const SYMPHONY_LIMITS = {
   snapshotBytes: 2_000_000,
   contextBytes: 128_000,
   attempts: 120,
+  /** Closed or open blocked intervals one attempt may record. */
+  blockedIntervalsPerAttempt: 24,
+  /** Provider-session windows one attempt may record across agent rebinds. */
+  sessionsPerAttempt: 8,
   /** Paths the Conductor may add to one task attempt with `addWrites`. */
   addedWritesPerAttempt: 32,
   /** Paths a task agent may add in one `widen` call. */
@@ -244,6 +248,38 @@ export const grantedWriteSchema = z
     at: z.number().int().nonnegative(),
   })
   .strict();
+// Closed and open intervals in one attempt, oldest first. An open interval has
+// `to: null` and counts up to the current time. Absent on records stored before
+// blocked time was tracked; those attempts' work time equals wall time.
+export const blockedIntervalSchema = z
+  .object({
+    from: z.number().int().nonnegative(),
+    to: z.number().int().nonnegative().nullable(),
+  })
+  .strict();
+// One provider session's window inside an attempt, oldest first. A blocked
+// retry can rebind the attempt to another agent, so an attempt may hold several
+// segments. An open segment has `to: null`; absent on records stored before
+// sessions were tracked.
+export const attemptSessionSegmentSchema = z
+  .object({
+    provider: text(64),
+    id: text(160),
+    from: z.number().int().nonnegative(),
+    to: z.number().int().nonnegative().nullable(),
+  })
+  .strict();
+// Tokens the harness session log records inside the attempt's window. Absent
+// fields are unknown, never zero. `input` excludes cache reads; `output`
+// includes reasoning tokens when the harness reports them separately.
+export const attemptUsageSchema = z
+  .object({
+    input: z.number().int().nonnegative().optional(),
+    cached: z.number().int().nonnegative().optional(),
+    output: z.number().int().nonnegative().optional(),
+    collectedAt: z.number().int().nonnegative(),
+  })
+  .strict();
 export const attemptSchema = z
   .object({
     id: uuidSchema,
@@ -258,6 +294,15 @@ export const attemptSchema = z
     ]),
     startedAt: z.number().int().nonnegative(),
     endedAt: z.number().int().nonnegative().nullable(),
+    blocked: z
+      .array(blockedIntervalSchema)
+      .max(SYMPHONY_LIMITS.blockedIntervalsPerAttempt)
+      .optional(),
+    sessions: z
+      .array(attemptSessionSegmentSchema)
+      .max(SYMPHONY_LIMITS.sessionsPerAttempt)
+      .optional(),
+    usage: attemptUsageSchema.optional(),
     message: text(4000).nullable(),
     report: taskReportSchema.nullable(),
     reportHash: hash.nullable(),
@@ -579,6 +624,13 @@ export type StoredSymphony = z.infer<typeof symphonySchema>;
 export type SymphonySummary = z.infer<typeof symphonySummarySchema>;
 export type SymphonyListEntry = z.infer<typeof symphonyListEntrySchema>;
 export type Attempt = z.infer<typeof attemptSchema>;
+export type BlockedInterval = z.infer<typeof blockedIntervalSchema>;
+export type AttemptSessionSegment = z.infer<typeof attemptSessionSegmentSchema>;
+/** Token counts a harness reader returns; the Conductor adds `collectedAt`. */
+export type AttemptUsage = Omit<
+  z.infer<typeof attemptUsageSchema>,
+  "collectedAt"
+>;
 export type TaskReport = z.infer<typeof taskReportSchema>;
 export type TaskDiagnosis = z.infer<typeof taskDiagnosisSchema>;
 export type TaskFinding = z.infer<typeof findingSchema>;

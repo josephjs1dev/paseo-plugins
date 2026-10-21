@@ -74,6 +74,12 @@ import {
   launchUncertain,
   symphonyHoldsResources,
 } from "./results";
+import {
+  closeBlockedInterval,
+  closeSessionSegments,
+  noSymphonyMetrics,
+  type SymphonyMetrics,
+} from "./metrics";
 import { nextLaunchCheckDelay, type WorkerRuntime } from "./workers";
 import {
   choiceKind,
@@ -278,17 +284,37 @@ export function orchestration(
   runtime: () => ExecutionRuntime & Partial<SymphonyChangesRuntime>,
   workers: () => WorkerRuntime,
   routing: RoutingCatalogSource,
+  metrics: () => SymphonyMetrics = noSymphonyMetrics,
 ) {
   const change = async (
     id: string,
     update: (symphony: StoredSymphony) => void,
   ) => {
     const { symphony } = await store.read(id);
-    return store.update(id, symphony.version, (value) => {
+    const settledBefore = new Map(
+      symphony.execution.attempts.map((attempt) => [
+        attempt.id,
+        attempt.endedAt,
+      ]),
+    );
+    const updated = await store.update(id, symphony.version, (value) => {
       update(value);
       value.status = executionStatus(value);
       return value;
     });
+    // Observe the session and schedule usage collection for attempts this
+    // change settled. This runs inside the command queue like every command.
+    for (const attempt of updated.execution.attempts) {
+      if (attempt.endedAt !== null && settledBefore.get(attempt.id) === null) {
+        try {
+          await metrics().observe(updated.id, attempt.id);
+          metrics().collect(updated.id, attempt.id);
+        } catch {
+          // Usage stays absent; orchestration continues.
+        }
+      }
+    }
+    return updated;
   };
   const { owner, start, define } = symphonyConductor(
     store,
@@ -1021,6 +1047,7 @@ export function orchestration(
         state: "running",
         startedAt: Date.now(),
         endedAt: null,
+        blocked: [],
         message: "Starting task agent…",
         report: null,
         reportHash: null,
@@ -1163,7 +1190,9 @@ export function orchestration(
               })),
             };
             active.reportHash = contentHash(JSON.stringify(active.report));
+            delete active.usage;
             active.endedAt = Date.now();
+            closeBlockedInterval(active, active.endedAt);
             active.message = null;
             // A terminal attempt never resumes, so its baseline (or its
             // unknown marker) is no longer needed and must not grow stored
@@ -1435,6 +1464,7 @@ export function orchestration(
         state: "running",
         startedAt: Date.now(),
         endedAt: null,
+        blocked: [],
         message: "Continuing the assignment on the same task agent…",
         report: null,
         reportHash: null,
@@ -1763,6 +1793,7 @@ export function orchestration(
           await change(symphonyId, (current) => {
             const a = latestAttempt(current, retryTaskId);
             if (a?.launch) {
+              closeBlockedInterval(a, Date.now());
               a.state = "running";
               a.message = null;
               a.launch.settled = false;
@@ -1831,6 +1862,9 @@ export function orchestration(
               return;
             }
             a.agentId = newAgentId;
+            const reboundAt = Date.now();
+            closeBlockedInterval(a, reboundAt);
+            closeSessionSegments(a, reboundAt);
             a.state = "running";
             a.message = "Replacing the task agent on this attempt…";
             a.wake = undefined;
@@ -2437,7 +2471,9 @@ export function orchestration(
       diagnosis: { tried: [tried], suspectedCause: message, need: "harness" },
     };
     a.reportHash = contentHash(JSON.stringify(a.report));
+    delete a.usage;
     a.endedAt = Date.now();
+    closeBlockedInterval(a, a.endedAt);
     a.message = null;
     a.wake = undefined;
     Object.assign(a, fields);
@@ -2452,6 +2488,8 @@ export function orchestration(
     a.state = "running";
     a.report = null;
     a.reportHash = null;
+    delete a.usage;
+    closeBlockedInterval(a, Date.now());
     a.endedAt = null;
     delete a.reportedBy;
     delete a.changedPaths;
@@ -2508,6 +2546,15 @@ export function orchestration(
         for (const attempt of symphony.execution.attempts) {
           if (!attempt.launch) {
             continue;
+          }
+          if (!attempt.sessions?.length) {
+            // The snapshot is the earliest source of the provider session; it
+            // must be recorded before the agent can be archived.
+            try {
+              await metrics().observe(symphony.id, attempt.id);
+            } catch {
+              // A later reconcile retries the observation.
+            }
           }
           if (attempt.launch.settled) {
             // A failed attempt whose launch is still unconfirmed keeps its

@@ -1,11 +1,11 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import type { PaseoApi } from "../server/paseo/types";
+import type { PaseoApi } from "../server/engine/paseo/types";
 import {
   LaunchRejectedError,
   SymphonyError,
 } from "../server/symphonies/errors";
-import { paseoWorkers } from "../server/paseo/symphony-host";
+import { paseoWorkers } from "../server/engine/paseo/symphony-host";
 import type { WorkerLaunch } from "../server/symphonies/workers";
 import {
   nextLaunchCheckDelay,

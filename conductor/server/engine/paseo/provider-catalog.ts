@@ -3,8 +3,8 @@ import type {
   ProviderEntry,
   ProviderMode,
   ProviderModel,
-} from "../../shared/symphonies/profiles-rpc";
-import { isKnownElevatedMode } from "../symphonies/workers";
+} from "../../../shared/symphonies/profiles-rpc";
+import { isKnownElevatedMode } from "../../symphonies/workers";
 import type { PaseoApi } from "./types";
 
 /**

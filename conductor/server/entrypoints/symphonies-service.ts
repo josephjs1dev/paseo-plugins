@@ -6,7 +6,13 @@ import { executionRuntime } from "../symphonies/identity";
 import { changesRuntime } from "../symphonies/changes";
 import { workerRuntime } from "../symphonies/workers";
 import { symphonyExecution } from "../symphonies/execution";
-import { PROFILES_FILE, profileStoreSource } from "../symphonies/profiles";
+import { symphonyMetrics } from "../symphonies/metrics";
+import { readerFor } from "../engine/harnesses/usage";
+import {
+  PROFILES_FILE,
+  profileStoreSource,
+  type PaseoProfilesPort,
+} from "../symphonies/profiles";
 import { commandServer } from "./commands/server";
 import { symphonyAck } from "./commands/ack";
 
@@ -14,6 +20,8 @@ export interface SymphonyServiceOptions {
   directory: string;
   /** Throws a SymphonyError while no daemon connection is known. */
   host: () => SymphonyHost;
+  /** Throws a SymphonyError while no daemon connection is known. */
+  paseoProfilesPort: () => PaseoProfilesPort;
   /** Reconciliation waits until a daemon connection is known. */
   connected: () => boolean;
   hooksAvailable: boolean;
@@ -23,18 +31,46 @@ export interface SymphonyServiceOptions {
 export function symphonyService({
   directory,
   host,
+  paseoProfilesPort,
   connected,
   hooksAvailable,
 }: SymphonyServiceOptions) {
   const store = fileSymphonyStore(directory);
-  const profiles = profileStoreSource(join(directory, PROFILES_FILE), () =>
-    host().profiles(),
+  const metrics = symphonyMetrics(store, {
+    now: () => Date.now(),
+    async sessionOf(agentId) {
+      try {
+        const agent = await host().agent(agentId);
+        if (!agent?.sessionId) {
+          return null;
+        }
+        return { provider: agent.provider, id: agent.sessionId };
+      } catch {
+        // A disconnected or archived agent has no readable session now.
+        return null;
+      }
+    },
+    readerFor,
+    setTimer(callback, delayMs) {
+      const timer = setTimeout(callback, delayMs);
+      timer.unref();
+      return timer;
+    },
+    clearTimer(handle) {
+      clearTimeout(handle as ReturnType<typeof setTimeout>);
+    },
+  });
+  const profiles = profileStoreSource(
+    join(directory, PROFILES_FILE),
+    () => host().profiles(),
+    paseoProfilesPort,
   );
   const execution = symphonyExecution(
     store,
     () => ({ ...executionRuntime(host()), ...changesRuntime() }),
     () => workerRuntime(host(), async () => (await profiles.load()).profiles),
     profiles,
+    () => metrics,
   );
   let reconciling = false;
   const reconcile = async () => {
@@ -103,7 +139,10 @@ export function symphonyService({
       clearInterval(timer);
       await ready;
       await commands.close();
+      // Drain commands before metrics shutdown; collection writes share the
+      // same queue and must not race teardown.
       await execution.drain();
+      await metrics.close();
     },
   };
 }

@@ -1,4 +1,4 @@
-import type { AgentsHost } from "../agents/host";
+import type { AgentsHost } from "../../agents/host";
 import { toAgentSnapshot, toConcertEntry } from "./mapping";
 import type { PaseoApi } from "./types";
 

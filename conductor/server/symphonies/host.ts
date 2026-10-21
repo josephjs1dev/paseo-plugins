@@ -16,7 +16,7 @@ export interface CreateAgentInput {
   config: AgentLaunchConfig;
 }
 
-/** Paseo operations that symphonies need. server/paseo/symphony-host.ts implements it. */
+/** Paseo operations that symphonies need. server/engine/paseo/symphony-host.ts implements it. */
 export interface SymphonyHost {
   /** Returns null when Paseo does not know the agent. */
   agent(agentId: string): Promise<AgentSnapshot | null>;

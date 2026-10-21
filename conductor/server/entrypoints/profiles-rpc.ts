@@ -4,8 +4,10 @@ import {
   listProfileProviders,
   listProfiles,
   saveProfiles,
+  syncPreview,
+  syncProfiles,
 } from "../../shared/symphonies/profiles-rpc";
-import { providerCatalog } from "../paseo/provider-catalog";
+import { providerCatalog } from "../engine/paseo/provider-catalog";
 import { SymphonyError } from "../symphonies/errors";
 import { profilesState, type ProfilesSource } from "../symphonies/profiles";
 
@@ -38,5 +40,15 @@ export function registerProfilesRpc(
   );
   server.handle(importPaseoProfiles, (input) =>
     guarded(() => profiles.importFromPaseo(input.expectedRevision)),
+  );
+  server.handle(syncPreview, () => guarded(() => profiles.syncPreview()));
+  server.handle(syncProfiles, (input) =>
+    guarded(() =>
+      profiles.syncToPaseo(
+        input.expectedRevision,
+        input.expectedPaseoRevision,
+        input.profileIds,
+      ),
+    ),
   );
 }
